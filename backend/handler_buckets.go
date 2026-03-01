@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -25,7 +26,11 @@ func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", "application/json")
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			slog.Error("failed to stream garage response", "path", "/v2/bucket", "error", err)
@@ -37,7 +42,7 @@ func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/bucket?id=" + id
+		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodGet, garagePath, nil)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -46,7 +51,11 @@ func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", "application/json")
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
@@ -58,7 +67,7 @@ func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/bucket?id=" + id
+		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPut, garagePath, r.Body)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -67,7 +76,11 @@ func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", "application/json")
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
@@ -79,7 +92,7 @@ func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/bucket?id=" + id
+		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodDelete, garagePath, nil)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -88,7 +101,11 @@ func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", "application/json")
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
@@ -124,7 +141,11 @@ func handleGrantBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", "application/json")
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
@@ -164,7 +185,11 @@ func handleRevokeBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", "application/json")
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			slog.Error("failed to stream garage response", "path", garagePath, "error", err)

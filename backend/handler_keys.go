@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -41,7 +42,7 @@ func handleCreateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleGetKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/key?id=" + id
+		garagePath := "/v2/key?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodGet, garagePath, nil)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -67,7 +68,7 @@ func handleGetKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleUpdateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/key?id=" + id
+		garagePath := "/v2/key?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -92,7 +93,7 @@ func handleUpdateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleDeleteKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/key?id=" + id
+		garagePath := "/v2/key?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodDelete, garagePath, nil)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)

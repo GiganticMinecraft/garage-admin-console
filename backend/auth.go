@@ -266,18 +266,21 @@ func csrfMiddleware(next http.Handler) http.Handler {
 			// Determine if this is a file upload endpoint.
 			isUpload := isUploadPath(r.URL.Path)
 
-			ct := r.Header.Get("Content-Type")
-			if isUpload {
-				// Upload endpoints accept multipart/form-data or application/json.
-				if !strings.HasPrefix(ct, "multipart/form-data") && !strings.HasPrefix(ct, "application/json") {
-					http.Error(w, "Forbidden: invalid Content-Type for upload", http.StatusForbidden)
-					return
-				}
-			} else {
-				// All other mutation endpoints require application/json.
-				if !strings.HasPrefix(ct, "application/json") {
-					http.Error(w, "Forbidden: Content-Type must be application/json", http.StatusForbidden)
-					return
+			// Content-Type validation (only for requests with a body).
+			if r.ContentLength != 0 {
+				ct := r.Header.Get("Content-Type")
+				if isUpload {
+					// Upload endpoints accept multipart/form-data or application/json.
+					if !strings.HasPrefix(ct, "multipart/form-data") && !strings.HasPrefix(ct, "application/json") {
+						http.Error(w, "Forbidden: invalid Content-Type for upload", http.StatusForbidden)
+						return
+					}
+				} else {
+					// Other mutation endpoints with body require application/json.
+					if !strings.HasPrefix(ct, "application/json") {
+						http.Error(w, "Forbidden: Content-Type must be application/json", http.StatusForbidden)
+						return
+					}
 				}
 			}
 		}
