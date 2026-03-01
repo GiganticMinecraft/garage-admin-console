@@ -162,10 +162,6 @@ function BucketDetailPage() {
         <div className="rounded-lg border p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
             <div>
-              <p className="text-muted-foreground">ID</p>
-              <p className="font-mono text-xs break-all">{data.id}</p>
-            </div>
-            <div>
               <p className="text-muted-foreground">Aliases</p>
               <div className="flex flex-wrap gap-1">
                 {data.globalAliases?.length
@@ -185,6 +181,10 @@ function BucketDetailPage() {
                 {data.bytes != null ? formatBytes(data.bytes) : '-'}
               </p>
             </div>
+          </div>
+          <div className="text-sm">
+            <p className="text-muted-foreground">ID</p>
+            <p className="font-mono text-xs text-muted-foreground break-all">{data.id}</p>
           </div>
           {data.quotas && (data.quotas.maxSize || data.quotas.maxObjects) && (
             <div className="text-sm">
