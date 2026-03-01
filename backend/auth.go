@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gorilla/sessions"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -23,7 +24,6 @@ const (
 	sessionKeyState  = "oauth_state"
 	sessionKeyUser   = "username"
 	sessionKeyAvatar = "avatar_url"
-	sessionKeyToken  = "access_token"
 )
 
 var (
@@ -38,22 +38,28 @@ var (
 // GitHub API calls. Call this once from main before registering routes.
 func initAuth() {
 	secret := os.Getenv("SESSION_SECRET")
-	if secret == "" {
-		slog.Error("SESSION_SECRET is required")
+	if len(secret) < 32 {
+		slog.Error("SESSION_SECRET must be at least 32 characters")
 		os.Exit(1)
 	}
-	sessionStore = sessions.NewCookieStore([]byte(secret))
-	sessionStore.Options = &sessions.Options{
-		Path:     "/",
-		MaxAge:   3600,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-	}
+	// Two keys: first for signing (32 bytes), second for encryption (32 bytes).
+	key := []byte(secret)
+	sessionStore = sessions.NewCookieStore(key, key[:32])
 
 	baseURL := os.Getenv("BASE_URL")
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
+	}
+
+	// Secure cookie only when BASE_URL is HTTPS.
+	secureCookie := strings.HasPrefix(baseURL, "https://")
+
+	sessionStore.Options = &sessions.Options{
+		Path:     "/",
+		MaxAge:   3600,
+		HttpOnly: true,
+		Secure:   secureCookie,
+		SameSite: http.SameSiteLaxMode,
 	}
 
 	oauthConfig = &oauth2.Config{
@@ -73,9 +79,10 @@ func initAuth() {
 		githubTeam = "admin"
 	}
 
-	// HTTP client with OTel transport for GitHub API calls.
+	// HTTP client with OTel transport and timeout for GitHub API calls.
 	githubHTTP = &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   10 * time.Second,
 	}
 }
 
@@ -125,7 +132,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	expectedState, _ := sess.Values[sessionKeyState].(string)
 	actualState := r.URL.Query().Get("state")
 	if expectedState == "" || actualState == "" || expectedState != actualState {
-		slog.Warn("OAuth state mismatch", "expected", expectedState, "actual", actualState)
+		slog.Warn("OAuth state mismatch")
 		http.Error(w, "Forbidden: state mismatch", http.StatusForbidden)
 		return
 	}
@@ -171,14 +178,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	newSess.Values[sessionKeyUser] = userInfo.Login
 	newSess.Values[sessionKeyAvatar] = userInfo.AvatarURL
-	newSess.Values[sessionKeyToken] = token.AccessToken
-	newSess.Options = &sessions.Options{
-		Path:     "/",
-		MaxAge:   3600,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-	}
+	newSess.Options = sessionStore.Options
 	if err := newSess.Save(r, w); err != nil {
 		slog.Error("failed to save new session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
