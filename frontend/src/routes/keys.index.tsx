@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/table'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 
-export const Route = createFileRoute('/keys')({
+export const Route = createFileRoute('/keys/')({
   component: KeysPage,
 })
 

@@ -11,9 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkersRouteImport } from './routes/workers'
 import { Route as LayoutRouteImport } from './routes/layout'
-import { Route as KeysRouteImport } from './routes/keys'
-import { Route as BucketsRouteImport } from './routes/buckets'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as KeysIndexRouteImport } from './routes/keys.index'
+import { Route as BucketsIndexRouteImport } from './routes/buckets.index'
 import { Route as KeysIdRouteImport } from './routes/keys.$id'
 import { Route as BucketsIdRouteImport } from './routes/buckets.$id'
 
@@ -27,96 +27,98 @@ const LayoutRoute = LayoutRouteImport.update({
   path: '/layout',
   getParentRoute: () => rootRouteImport,
 } as any)
-const KeysRoute = KeysRouteImport.update({
-  id: '/keys',
-  path: '/keys',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BucketsRoute = BucketsRouteImport.update({
-  id: '/buckets',
-  path: '/buckets',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const KeysIndexRoute = KeysIndexRouteImport.update({
+  id: '/keys/',
+  path: '/keys/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BucketsIndexRoute = BucketsIndexRouteImport.update({
+  id: '/buckets/',
+  path: '/buckets/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KeysIdRoute = KeysIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => KeysRoute,
+  id: '/keys/$id',
+  path: '/keys/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const BucketsIdRoute = BucketsIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => BucketsRoute,
+  id: '/buckets/$id',
+  path: '/buckets/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/buckets': typeof BucketsRouteWithChildren
-  '/keys': typeof KeysRouteWithChildren
   '/layout': typeof LayoutRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
+  '/buckets/': typeof BucketsIndexRoute
+  '/keys/': typeof KeysIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/buckets': typeof BucketsRouteWithChildren
-  '/keys': typeof KeysRouteWithChildren
   '/layout': typeof LayoutRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
+  '/buckets': typeof BucketsIndexRoute
+  '/keys': typeof KeysIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/buckets': typeof BucketsRouteWithChildren
-  '/keys': typeof KeysRouteWithChildren
   '/layout': typeof LayoutRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
+  '/buckets/': typeof BucketsIndexRoute
+  '/keys/': typeof KeysIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/buckets'
-    | '/keys'
     | '/layout'
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
+    | '/buckets/'
+    | '/keys/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/buckets'
-    | '/keys'
     | '/layout'
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
+    | '/buckets'
+    | '/keys'
   id:
     | '__root__'
     | '/'
-    | '/buckets'
-    | '/keys'
     | '/layout'
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
+    | '/buckets/'
+    | '/keys/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  BucketsRoute: typeof BucketsRouteWithChildren
-  KeysRoute: typeof KeysRouteWithChildren
   LayoutRoute: typeof LayoutRoute
   WorkersRoute: typeof WorkersRoute
+  BucketsIdRoute: typeof BucketsIdRoute
+  KeysIdRoute: typeof KeysIdRoute
+  BucketsIndexRoute: typeof BucketsIndexRoute
+  KeysIndexRoute: typeof KeysIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -135,20 +137,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/keys': {
-      id: '/keys'
-      path: '/keys'
-      fullPath: '/keys'
-      preLoaderRoute: typeof KeysRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/buckets': {
-      id: '/buckets'
-      path: '/buckets'
-      fullPath: '/buckets'
-      preLoaderRoute: typeof BucketsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -156,50 +144,45 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/keys/': {
+      id: '/keys/'
+      path: '/keys'
+      fullPath: '/keys/'
+      preLoaderRoute: typeof KeysIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/buckets/': {
+      id: '/buckets/'
+      path: '/buckets'
+      fullPath: '/buckets/'
+      preLoaderRoute: typeof BucketsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/keys/$id': {
       id: '/keys/$id'
-      path: '/$id'
+      path: '/keys/$id'
       fullPath: '/keys/$id'
       preLoaderRoute: typeof KeysIdRouteImport
-      parentRoute: typeof KeysRoute
+      parentRoute: typeof rootRouteImport
     }
     '/buckets/$id': {
       id: '/buckets/$id'
-      path: '/$id'
+      path: '/buckets/$id'
       fullPath: '/buckets/$id'
       preLoaderRoute: typeof BucketsIdRouteImport
-      parentRoute: typeof BucketsRoute
+      parentRoute: typeof rootRouteImport
     }
   }
 }
 
-interface BucketsRouteChildren {
-  BucketsIdRoute: typeof BucketsIdRoute
-}
-
-const BucketsRouteChildren: BucketsRouteChildren = {
-  BucketsIdRoute: BucketsIdRoute,
-}
-
-const BucketsRouteWithChildren =
-  BucketsRoute._addFileChildren(BucketsRouteChildren)
-
-interface KeysRouteChildren {
-  KeysIdRoute: typeof KeysIdRoute
-}
-
-const KeysRouteChildren: KeysRouteChildren = {
-  KeysIdRoute: KeysIdRoute,
-}
-
-const KeysRouteWithChildren = KeysRoute._addFileChildren(KeysRouteChildren)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  BucketsRoute: BucketsRouteWithChildren,
-  KeysRoute: KeysRouteWithChildren,
   LayoutRoute: LayoutRoute,
   WorkersRoute: WorkersRoute,
+  BucketsIdRoute: BucketsIdRoute,
+  KeysIdRoute: KeysIdRoute,
+  BucketsIndexRoute: BucketsIndexRoute,
+  KeysIndexRoute: KeysIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

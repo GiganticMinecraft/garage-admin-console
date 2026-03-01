@@ -15,7 +15,7 @@ import {
   TableCell,
 } from '@/components/ui/table'
 
-export const Route = createFileRoute('/buckets')({
+export const Route = createFileRoute('/buckets/')({
   component: BucketsPage,
 })
 
