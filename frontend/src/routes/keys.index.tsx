@@ -74,7 +74,7 @@ function KeysPage() {
               {createMutation.isPending ? 'Creating...' : 'Create'}
             </Button>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => setShowCreate(false)}
             >
@@ -95,16 +95,16 @@ function KeysPage() {
         <div className="rounded-lg border">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Access Key ID</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+              <TableRow className="bg-muted/50">
+                <TableHead className="px-4">Access Key ID</TableHead>
+                <TableHead className="px-4">Name</TableHead>
+                <TableHead className="px-4 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {keys?.map((key: KeyListItem) => (
                 <TableRow key={key.id}>
-                  <TableCell>
+                  <TableCell className="px-4">
                     <Link
                       to="/keys/$id"
                       params={{ id: key.id }}
@@ -113,14 +113,13 @@ function KeysPage() {
                       {key.id}
                     </Link>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
+                  <TableCell className="px-4 text-muted-foreground">
                     {key.name || '-'}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="px-4 text-right">
                     <Button
-                      variant="link"
+                      variant="destructive"
                       size="sm"
-                      className="text-destructive"
                       onClick={() => setDeleteTarget(key)}
                     >
                       Delete
@@ -130,7 +129,7 @@ function KeysPage() {
               ))}
               {keys?.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
                     No keys found
                   </TableCell>
                 </TableRow>
