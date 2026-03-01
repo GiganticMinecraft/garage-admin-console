@@ -96,8 +96,8 @@ function KeysPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="px-4">Access Key ID</TableHead>
                 <TableHead className="px-4">Name</TableHead>
+                <TableHead className="px-4">Access Key ID</TableHead>
                 <TableHead className="px-4 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -108,13 +108,13 @@ function KeysPage() {
                     <Link
                       to="/keys/$id"
                       params={{ id: key.id }}
-                      className="font-mono text-primary underline-offset-4 hover:underline"
+                      className="text-primary underline-offset-4 hover:underline"
                     >
-                      {key.id}
+                      {key.name || key.id}
                     </Link>
                   </TableCell>
-                  <TableCell className="px-4 text-muted-foreground">
-                    {key.name || '-'}
+                  <TableCell className="px-4 font-mono text-sm text-muted-foreground">
+                    {key.id}
                   </TableCell>
                   <TableCell className="px-4 text-right">
                     <Button
