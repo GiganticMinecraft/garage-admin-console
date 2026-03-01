@@ -51,6 +51,16 @@ func main() {
 			r.Get("/layout", handleClusterLayout(garageAdmin))
 			r.Post("/layout", handleApplyLayout(garageAdmin))
 		})
+
+		r.Route("/api/buckets", func(r chi.Router) {
+			r.Get("/", handleListBuckets(garageAdmin))
+			r.Post("/", handleCreateBucket(garageAdmin))
+			r.Get("/{id}", handleGetBucket(garageAdmin))
+			r.Put("/{id}", handleUpdateBucket(garageAdmin))
+			r.Delete("/{id}", handleDeleteBucket(garageAdmin))
+			r.Post("/{id}/keys", handleGrantBucketKey(garageAdmin))
+			r.Delete("/{id}/keys/{kid}", handleRevokeBucketKey(garageAdmin))
+		})
 	})
 
 	addr := ":8080"
