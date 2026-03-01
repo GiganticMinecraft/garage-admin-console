@@ -16,7 +16,11 @@ export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T>
   if (res.status === 204 || res.headers.get('Content-Length') === '0') {
     return undefined as T
   }
-  return res.json()
+  const contentType = res.headers.get('Content-Type') ?? ''
+  if (contentType.includes('application/json')) {
+    return res.json()
+  }
+  return (await res.text()) as T
 }
 
 export async function fetchMe(): Promise<{ username: string; avatar_url: string }> {
