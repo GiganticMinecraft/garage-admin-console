@@ -30,14 +30,14 @@ func proxyGarageGET(garageAdmin *GarageAdminClient, garagePath string) http.Hand
 	}
 }
 
-// handleClusterHealth proxies GET /api/cluster/health to Garage GET /health.
+// handleClusterHealth proxies GET /api/cluster/health to Garage GET /v2/GetClusterHealth.
 func handleClusterHealth(garageAdmin *GarageAdminClient) http.HandlerFunc {
-	return proxyGarageGET(garageAdmin, "/health")
+	return proxyGarageGET(garageAdmin, "/v2/GetClusterHealth")
 }
 
-// handleClusterStatus proxies GET /api/cluster/status to Garage GET /status.
+// handleClusterStatus proxies GET /api/cluster/status to Garage GET /v2/GetClusterStatus.
 func handleClusterStatus(garageAdmin *GarageAdminClient) http.HandlerFunc {
-	return proxyGarageGET(garageAdmin, "/status")
+	return proxyGarageGET(garageAdmin, "/v2/GetClusterStatus")
 }
 
 // handleClusterLayout proxies GET /api/cluster/layout to Garage GET /v2/layout.
