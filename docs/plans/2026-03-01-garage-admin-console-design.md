@@ -40,7 +40,7 @@ Nginx が SPA 配信 + API リバースプロキシ + OTel トレース伝播を
 |-------|-----------|
 | Frontend | React 19, Vite, shadcn/ui, Tailwind CSS v4, TanStack Router, TanStack Query |
 | Backend | Go 1.26, garage-admin-sdk-golang v2.1.0, aws-sdk-go-v2 |
-| Web Server | nginx:1.27-alpine-otel (OTel Module + Real IP) |
+| Web Server | nginx:1.27-alpine-otel (OTel Module) |
 | Auth | GitHub OAuth → GiganticMinecraft org Garage Admin Team check |
 | Observability | Grafana Faro (FE), OpenTelemetry (BE + Nginx) → Alloy → Tempo |
 | Deploy | K8s (2 Deployments) + Cloudflare Tunnel |
@@ -94,7 +94,7 @@ garage-admin-console/
 | Keys | `/keys` | Access key list, create/delete |
 | Key Detail | `/keys/:id` | Key info, bucket permission editing |
 | Layout | `/layout` | Cluster layout view/modify/apply |
-| Workers | `/workers` | Background worker list and status |
+| Workers | `/workers` | Background worker list (read-only, 操作なし) |
 
 ## API Endpoints
 
@@ -147,34 +147,54 @@ POST   /api/objects/:bucket/upload                    Upload (multipart)
 DELETE /api/objects/:bucket?key=                       Delete object
 ```
 
+Object key は URL エンコードして受け渡す。Frontend で `encodeURIComponent(key)` → Backend で `url.QueryUnescape(key)`。
+スラッシュ等の特殊文字を含むキー名を正しく扱うため必須。
+
 ### Workers
 
 ```
-GET /api/workers   List workers
+GET /api/workers   List workers (read-only)
 ```
 
-## Authentication Flow
+## Security
 
 1. User visits the app → redirected to `/api/auth/login`
-2. Go server redirects to GitHub OAuth authorization page
-3. GitHub returns to `/api/auth/callback` with auth code
-4. Go server exchanges code for token, calls GitHub API to check:
+2. Go server generates random `state` parameter, stores in session, redirects to GitHub OAuth authorization page with `state`
+3. GitHub returns to `/api/auth/callback` with auth code + `state`
+4. Go server verifies `state` matches session value (CSRF protection)
+5. Go server exchanges code for token, calls GitHub API to check:
    - User belongs to `GiganticMinecraft` org
    - User is member of Garage Admin Team
-5. If OK → create session cookie, redirect to `/`
-6. If NG → return 403
-7. All `/api/*` endpoints validate session cookie via middleware
+6. If OK → regenerate session ID (session fixation prevention), set session cookie, redirect to `/`
+7. If NG → return 403
+8. All `/api/*` endpoints validate session cookie via middleware
+
+### Session Cookie 設定
+
+- `Secure: true` (HTTPS only)
+- `HttpOnly: true` (JavaScript からアクセス不可)
+- `SameSite: Lax` (CSRF 防止)
+- `MaxAge: 3600` (1 hour)
+- ログイン時にセッション ID を再生成 (session fixation 防止)
+
+### Mutation API の CSRF 保護
+
+同一オリジンのみアクセスする前提 (Go API は ClusterIP、Nginx 経由のみ) で、以下の多層防御:
+- `SameSite=Lax` Cookie によりクロスサイトからの POST/PUT/DELETE を防止
+- Mutation リクエスト (POST/PUT/DELETE) は `Content-Type: application/json` を強制 (HTML form からの送信を防止)
+- Mutation リクエストに `X-Requested-With: XMLHttpRequest` ヘッダーを要求
 
 ## Distributed Tracing (End-to-End)
 
 Trace ID is propagated across all layers using W3C Trace Context (`traceparent` header).
 
 ```
-[Browser: Faro + TracingInstrumentation]
-    │ fetch auto-instrumented with traceparent
-    │ POST /collect → Nginx → Alloy Faro Receiver (:12347)
+/api/* リクエスト (traceId 一貫):
+[Browser: Faro TracingInstrumentation が fetch に traceparent を付与]
+    │ fetch /api/* with traceparent header
     ↓
 [Nginx: otel_trace on, otel_trace_context propagate]
+    │ traceparent を受け取り Nginx span を生成、Backend に伝播
     │ OTLP gRPC → Alloy (:4317)
     ↓
 [Go: otelhttp.NewHandler (server) + otelhttp.NewTransport (client)]
@@ -184,9 +204,17 @@ Trace ID is propagated across all layers using W3C Trace Context (`traceparent` 
     │ OTLP HTTP → Alloy (:4318)
     ↓
 [Alloy → Tempo]
+
+/collect (Faro テレメトリ送信 — 別 trace):
+[Browser: Faro SDK が収集データを POST /collect]
+    ↓
+[Nginx → Alloy Faro Receiver (:12347)]
+    ↓
+[Alloy → Tempo]
 ```
 
-All spans share the same traceId, viewable as a single waterfall in Grafana.
+`/api/*` へのリクエストは Browser → Nginx → Go → Garage で同一 traceId を共有し、Grafana で単一ウォーターフォールとして表示可能。
+`/collect` への Faro テレメトリ送信は別のトレースとなる (Faro SDK が独立して収集データを送信するため)。
 
 ### Nginx Config
 
@@ -214,10 +242,7 @@ http {
         location /api/ {
             proxy_pass http://garage-admin-api:8080;
             proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            set_real_ip_from 0.0.0.0/0;
-            real_ip_header CF-Connecting-IP;
         }
 
         location / {
@@ -271,3 +296,5 @@ Same pattern as krew-index-visualizer:
 - **GitHub OAuth**: Team-based access control instead of Cloudflare Access
 - **nginx:1.27-alpine-otel**: Pre-built OTel module image, no custom Nginx build needed
 - **krew-index-visualizer pattern**: Proven Faro + OTel + Nginx setup reused
+- **同一オリジンのみ**: Go API は ClusterIP で Nginx 経由のみアクセス可能。CORS 設定不要
+- **Workers は read-only**: ワーカー一覧の表示のみ、操作機能は不要
