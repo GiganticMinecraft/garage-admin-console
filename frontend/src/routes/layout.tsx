@@ -2,6 +2,8 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { getClusterLayout, applyLayout } from '@/api'
+import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 
 export const Route = createFileRoute('/layout')({
   component: LayoutPage,
@@ -11,6 +13,9 @@ function LayoutPage() {
   const queryClient = useQueryClient()
   const [editBody, setEditBody] = useState('')
   const [showEdit, setShowEdit] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [jsonError, setJsonError] = useState('')
+  const [parsedBody, setParsedBody] = useState<unknown>(null)
 
   const layout = useQuery({
     queryKey: ['cluster', 'layout'],
@@ -22,17 +27,18 @@ function LayoutPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cluster', 'layout'] })
       setShowEdit(false)
+      setJsonError('')
     },
   })
 
   const handleApply = () => {
     try {
       const parsed = JSON.parse(editBody)
-      if (confirm('Apply layout changes? This may affect cluster operations.')) {
-        applyMutation.mutate(parsed)
-      }
+      setJsonError('')
+      setParsedBody(parsed)
+      setShowConfirm(true)
     } catch {
-      alert('Invalid JSON')
+      setJsonError('Invalid JSON')
     }
   }
 
@@ -40,15 +46,16 @@ function LayoutPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Cluster Layout</h1>
-        <button
+        <Button
+          variant="outline"
           onClick={() => {
             setEditBody(JSON.stringify(layout.data, null, 2))
             setShowEdit(!showEdit)
+            setJsonError('')
           }}
-          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         >
           {showEdit ? 'Cancel' : 'Edit'}
-        </button>
+        </Button>
       </div>
 
       {layout.isLoading ? (
@@ -59,17 +66,23 @@ function LayoutPage() {
         <div className="space-y-2">
           <textarea
             value={editBody}
-            onChange={(e) => setEditBody(e.target.value)}
+            onChange={(e) => {
+              setEditBody(e.target.value)
+              setJsonError('')
+            }}
             rows={20}
-            className="w-full rounded-md border px-3 py-2 font-mono text-sm"
+            className="w-full rounded-md border px-3 py-2 font-mono text-sm focus-visible:ring-ring/50 focus-visible:ring-[3px]"
           />
-          <button
+          {jsonError && (
+            <p className="text-sm text-destructive">{jsonError}</p>
+          )}
+          <Button
+            variant="default"
             onClick={handleApply}
             disabled={applyMutation.isPending}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             {applyMutation.isPending ? 'Applying...' : 'Apply Layout'}
-          </button>
+          </Button>
           {applyMutation.isError && (
             <p className="text-sm text-destructive">{applyMutation.error.message}</p>
           )}
@@ -81,6 +94,18 @@ function LayoutPage() {
           </pre>
         </div>
       )}
+
+      <ConfirmDialog
+        open={showConfirm}
+        onOpenChange={setShowConfirm}
+        title="Apply Layout"
+        description="Apply layout changes? This may affect cluster operations."
+        confirmLabel="Apply"
+        pendingLabel="Applying..."
+        confirmVariant="default"
+        onConfirm={() => applyMutation.mutate(parsedBody)}
+        isPending={applyMutation.isPending}
+      />
     </div>
   )
 }

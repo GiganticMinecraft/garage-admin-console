@@ -3,6 +3,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { listKeys, createKey, deleteKey } from '@/api'
 import type { KeyListItem } from '@/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 
 export const Route = createFileRoute('/keys')({
   component: KeysPage,
@@ -12,6 +23,7 @@ function KeysPage() {
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<KeyListItem | null>(null)
 
   const { data: keys, isLoading } = useQuery({
     queryKey: ['keys'],
@@ -38,38 +50,36 @@ function KeysPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Keys</h1>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-        >
+        <Button size="sm" onClick={() => setShowCreate(true)}>
           Create Key
-        </button>
+        </Button>
       </div>
 
       {showCreate && (
         <div className="rounded-lg border p-4">
           <h2 className="mb-2 font-semibold">New Key</h2>
           <div className="flex gap-2">
-            <input
+            <Input
               type="text"
               value={newKeyName}
               onChange={(e) => setNewKeyName(e.target.value)}
               placeholder="Key name"
-              className="flex-1 rounded-md border px-3 py-1.5 text-sm"
+              className="flex-1"
             />
-            <button
+            <Button
+              size="sm"
               onClick={() => createMutation.mutate(newKeyName)}
               disabled={!newKeyName || createMutation.isPending}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
               {createMutation.isPending ? 'Creating...' : 'Create'}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setShowCreate(false)}
-              className="rounded-md border px-3 py-1.5 text-sm"
             >
               Cancel
-            </button>
+            </Button>
           </div>
           {createMutation.isError && (
             <p className="mt-2 text-sm text-destructive">
@@ -83,18 +93,18 @@ function KeysPage() {
         <p className="text-muted-foreground">Loading...</p>
       ) : (
         <div className="rounded-lg border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="px-4 py-2 text-left font-medium">Access Key ID</th>
-                <th className="px-4 py-2 text-left font-medium">Name</th>
-                <th className="px-4 py-2 text-right font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Access Key ID</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {keys?.map((key: KeyListItem) => (
-                <tr key={key.accessKeyId} className="border-b last:border-0">
-                  <td className="px-4 py-2">
+                <TableRow key={key.accessKeyId}>
+                  <TableCell>
                     <Link
                       to="/keys/$id"
                       params={{ id: key.accessKeyId }}
@@ -102,34 +112,44 @@ function KeysPage() {
                     >
                       {key.accessKeyId}
                     </Link>
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {key.name || '-'}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete key ${key.accessKeyId}?`))
-                          deleteMutation.mutate(key.accessKeyId)
-                      }}
-                      className="text-sm text-destructive hover:underline"
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="text-destructive"
+                      onClick={() => setDeleteTarget(key)}
                     >
                       Delete
-                    </button>
-                  </td>
-                </tr>
+                    </Button>
+                  </TableCell>
+                </TableRow>
               ))}
               {keys?.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
                     No keys found
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+        title="Delete Key"
+        description={`Key "${deleteTarget?.name || deleteTarget?.accessKeyId}" を削除しますか？この操作は取り消せません。`}
+        onConfirm={() => {
+          if (deleteTarget) deleteMutation.mutate(deleteTarget.accessKeyId)
+        }}
+        isPending={deleteMutation.isPending}
+      />
     </div>
   )
 }

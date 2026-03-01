@@ -4,6 +4,8 @@ import { fetchMe, logout } from '@/api'
 import { AppSidebar } from '@/components/app-sidebar'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 
 function RootLayout() {
   const navigate = useNavigate()
@@ -16,7 +18,10 @@ function RootLayout() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
+        <div className="space-y-4 text-center">
+          <Skeleton className="mx-auto h-8 w-48" />
+          <Skeleton className="mx-auto h-4 w-32" />
+        </div>
       </div>
     )
   }
@@ -32,12 +37,9 @@ function RootLayout() {
           <p className="mb-4 text-destructive">
             Failed to connect to the server. Please try again later.
           </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted"
-          >
+          <Button variant="outline" onClick={() => window.location.reload()}>
             Retry
-          </button>
+          </Button>
         </div>
       </div>
     )
@@ -48,12 +50,9 @@ function RootLayout() {
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
           <h1 className="mb-4 text-2xl font-bold">Garage Admin Console</h1>
-          <a
-            href="/api/auth/login"
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            Sign in with GitHub
-          </a>
+          <Button asChild>
+            <a href="/api/auth/login">Sign in with GitHub</a>
+          </Button>
         </div>
       </div>
     )

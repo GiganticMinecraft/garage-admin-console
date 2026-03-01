@@ -12,6 +12,17 @@ import {
 } from '@/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table'
+import { Skeleton } from '@/components/ui/skeleton'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
@@ -135,7 +146,16 @@ function BucketDetailPage() {
       </h1>
 
       {bucket.isLoading ? (
-        <p className="text-muted-foreground">Loading...</p>
+        <div className="rounded-lg border p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="space-y-1">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-5 w-28" />
+              </div>
+            ))}
+          </div>
+        </div>
       ) : bucket.isError ? (
         <p className="text-destructive">Failed to load bucket</p>
       ) : data ? (
@@ -182,20 +202,19 @@ function BucketDetailPage() {
       <div className="space-y-2">
         <h2 className="text-lg font-semibold">Key Permissions</h2>
         <div className="flex gap-2">
-          <input
-            type="text"
+          <Input
             value={grantKeyId}
             onChange={(e) => setGrantKeyId(e.target.value)}
             placeholder="Access Key ID"
-            className="flex-1 rounded-md border px-3 py-1.5 text-sm"
+            className="flex-1"
           />
-          <button
+          <Button
+            size="sm"
             onClick={() => grantMutation.mutate(grantKeyId)}
             disabled={!grantKeyId || grantMutation.isPending}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             Grant
-          </button>
+          </Button>
         </div>
         {data?.keys?.map((k) => (
           <div key={k.accessKeyId} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
@@ -208,12 +227,14 @@ function BucketDetailPage() {
                 {k.permissions.owner && <Badge variant="outline">owner</Badge>}
               </div>
             </div>
-            <button
+            <Button
+              variant="link"
+              size="sm"
+              className="text-destructive"
               onClick={() => setRevokeTarget(k.accessKeyId)}
-              className="text-destructive hover:underline"
             >
               Revoke
-            </button>
+            </Button>
           </div>
         ))}
       </div>
@@ -222,17 +243,18 @@ function BucketDetailPage() {
       <div className="space-y-2">
         <h2 className="text-lg font-semibold">Objects</h2>
         <div className="flex gap-2">
-          <input
-            type="text"
+          <Input
             value={prefix}
             onChange={(e) => setPrefix(e.target.value)}
             placeholder="Prefix filter"
-            className="flex-1 rounded-md border px-3 py-1.5 text-sm"
+            className="flex-1"
           />
-          <label className="cursor-pointer rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90">
-            Upload
-            <input type="file" className="hidden" onChange={handleFileSelect} />
-          </label>
+          <Button asChild size="sm">
+            <label className="cursor-pointer">
+              Upload
+              <input type="file" className="hidden" onChange={handleFileSelect} />
+            </label>
+          </Button>
         </div>
 
         {uploadMutation.isPending && (
@@ -252,13 +274,15 @@ function BucketDetailPage() {
 
         {/* Prefix navigation */}
         {allPrefixes.map((p: string) => (
-          <button
+          <Button
             key={p}
+            variant="link"
+            size="sm"
+            className="block h-auto p-0"
             onClick={() => setPrefix(p)}
-            className="block text-sm text-primary hover:underline"
           >
             {p}
-          </button>
+          </Button>
         ))}
 
         {objects.isLoading ? (
@@ -267,55 +291,55 @@ function BucketDetailPage() {
           <p className="text-destructive">Failed to load objects</p>
         ) : (
           <div className="rounded-lg border">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="px-4 py-2 text-left font-medium">Key</th>
-                  <th className="px-4 py-2 text-right font-medium">Size</th>
-                  <th className="px-4 py-2 text-right font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Key</TableHead>
+                  <TableHead className="text-right">Size</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {allObjects.map((obj) => (
-                  <tr key={obj.key} className="border-b last:border-0">
-                    <td className="px-4 py-2 font-mono text-xs">{obj.key}</td>
-                    <td className="px-4 py-2 text-right text-muted-foreground">
+                  <TableRow key={obj.key}>
+                    <TableCell className="font-mono text-xs">{obj.key}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">
                       {formatBytes(obj.size)}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <a
-                        href={downloadObjectUrl(id, obj.key)}
-                        className="mr-2 text-primary hover:underline"
-                      >
-                        Download
-                      </a>
-                      <button
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="link" size="sm" asChild className="mr-1">
+                        <a href={downloadObjectUrl(id, obj.key)}>Download</a>
+                      </Button>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="text-destructive"
                         onClick={() => setDeleteObjectTarget(obj.key)}
-                        className="text-destructive hover:underline"
                       >
                         Delete
-                      </button>
-                    </td>
-                  </tr>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 ))}
                 {allObjects.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
+                  <TableRow>
+                    <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
                       No objects found
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 )}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
             {objects.hasNextPage && (
               <div className="border-t px-4 py-2 text-center">
-                <button
+                <Button
+                  variant="link"
+                  size="sm"
                   onClick={() => objects.fetchNextPage()}
                   disabled={objects.isFetchingNextPage}
-                  className="text-sm text-primary hover:underline disabled:opacity-50"
                 >
                   {objects.isFetchingNextPage ? 'Loading...' : 'Load More'}
-                </button>
+                </Button>
               </div>
             )}
           </div>

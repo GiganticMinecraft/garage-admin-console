@@ -1,6 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { listWorkers } from '@/api'
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
 
 export const Route = createFileRoute('/workers')({
   component: WorkersPage,
@@ -22,49 +31,47 @@ function WorkersPage() {
         <p className="text-destructive">Failed to load workers</p>
       ) : (
         <div className="rounded-lg border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="px-4 py-2 text-left font-medium">Name</th>
-                <th className="px-4 py-2 text-left font-medium">State</th>
-                <th className="px-4 py-2 text-left font-medium">Details</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/50">
+                <TableHead>Name</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead>Details</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {workers?.map((worker, i) => (
-                <tr key={i} className="border-b last:border-0">
-                  <td className="px-4 py-2 font-medium">
+                <TableRow key={i}>
+                  <TableCell className="font-medium">
                     {String(worker.name ?? '-')}
-                  </td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                        worker.state === 'idle'
-                          ? 'bg-muted text-muted-foreground'
-                          : worker.state === 'busy'
-                            ? 'bg-primary/10 text-primary'
-                            : 'bg-muted text-muted-foreground'
-                      }`}
-                    >
-                      {String(worker.state ?? 'unknown')}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">
-                    <pre className="text-xs">
-                      {JSON.stringify(worker, null, 2)}
-                    </pre>
-                  </td>
-                </tr>
+                  </TableCell>
+                  <TableCell>
+                    {worker.state === 'idle' ? (
+                      <Badge variant="secondary">idle</Badge>
+                    ) : worker.state === 'busy' ? (
+                      <Badge>busy</Badge>
+                    ) : (
+                      <Badge variant="outline">{String(worker.state ?? 'unknown')}</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    <div className="max-h-40 overflow-auto">
+                      <pre className="text-xs">
+                        {JSON.stringify(worker, null, 2)}
+                      </pre>
+                    </div>
+                  </TableCell>
+                </TableRow>
               ))}
               {workers?.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
                     No workers found
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
