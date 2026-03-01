@@ -21,6 +21,8 @@ func main() {
 	}
 	defer shutdown()
 
+	initAuth()
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
@@ -28,6 +30,20 @@ func main() {
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// OAuth flow routes (no auth required).
+	r.Get("/api/auth/login", handleLogin)
+	r.Get("/api/auth/callback", handleCallback)
+
+	// Protected routes (auth + CSRF required).
+	r.Group(func(r chi.Router) {
+		r.Use(authMiddleware)
+		r.Use(csrfMiddleware)
+
+		r.Get("/api/auth/me", handleMe)
+		r.Post("/api/auth/logout", handleLogout)
+		// Additional protected routes will be added here in later tasks.
 	})
 
 	addr := ":8080"
