@@ -136,13 +136,13 @@ function BucketDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Link to="/buckets" className="hover:underline">Buckets</Link>
+        <Link to="/buckets" className="hover:underline">バケット</Link>
         <span>/</span>
         <span>{id.slice(0, 16)}...</span>
       </div>
 
       <h1 className="text-2xl font-bold">
-        {data?.globalAliases?.[0] || 'Bucket Detail'}
+        {data?.globalAliases?.[0] || 'バケット詳細'}
       </h1>
 
       {bucket.isLoading ? (
@@ -157,12 +157,12 @@ function BucketDetailPage() {
           </div>
         </div>
       ) : bucket.isError ? (
-        <p className="text-destructive">Failed to load bucket</p>
+        <p className="text-destructive">バケットの読み込みに失敗しました</p>
       ) : data ? (
         <div className="rounded-lg border p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
             <div>
-              <p className="text-muted-foreground">Aliases</p>
+              <p className="text-muted-foreground">エイリアス</p>
               <div className="flex flex-wrap gap-1">
                 {data.globalAliases?.length
                   ? data.globalAliases.map((a) => (
@@ -172,11 +172,11 @@ function BucketDetailPage() {
               </div>
             </div>
             <div>
-              <p className="text-muted-foreground">Objects</p>
+              <p className="text-muted-foreground">オブジェクト数</p>
               <p className="font-medium">{data.objects ?? '-'}</p>
             </div>
             <div>
-              <p className="text-muted-foreground">Size</p>
+              <p className="text-muted-foreground">サイズ</p>
               <p className="font-medium">
                 {data.bytes != null ? formatBytes(data.bytes) : '-'}
               </p>
@@ -188,10 +188,10 @@ function BucketDetailPage() {
           </div>
           {data.quotas && (data.quotas.maxSize || data.quotas.maxObjects) && (
             <div className="text-sm">
-              <p className="text-muted-foreground">Quotas</p>
+              <p className="text-muted-foreground">クォータ</p>
               <p>
-                {data.quotas.maxObjects != null && `Max objects: ${data.quotas.maxObjects}`}
-                {data.quotas.maxSize != null && ` / Max size: ${formatBytes(data.quotas.maxSize)}`}
+                {data.quotas.maxObjects != null && `最大オブジェクト数: ${data.quotas.maxObjects}`}
+                {data.quotas.maxSize != null && ` / 最大サイズ: ${formatBytes(data.quotas.maxSize)}`}
               </p>
             </div>
           )}
@@ -200,12 +200,12 @@ function BucketDetailPage() {
 
       {/* Key Permissions */}
       <div className="space-y-2">
-        <h2 className="text-lg font-semibold">Key Permissions</h2>
+        <h2 className="text-lg font-semibold">キーの権限</h2>
         <div className="flex gap-2">
           <Input
             value={grantKeyId}
             onChange={(e) => setGrantKeyId(e.target.value)}
-            placeholder="Access Key ID"
+            placeholder="アクセスキー ID"
             className="flex-1"
           />
           <Button
@@ -213,7 +213,7 @@ function BucketDetailPage() {
             onClick={() => grantMutation.mutate(grantKeyId)}
             disabled={!grantKeyId || grantMutation.isPending}
           >
-            Grant
+            付与
           </Button>
         </div>
         {data?.keys?.map((k) => (
@@ -233,7 +233,7 @@ function BucketDetailPage() {
               className="text-destructive"
               onClick={() => setRevokeTarget(k.accessKeyId)}
             >
-              Revoke
+              取り消し
             </Button>
           </div>
         ))}
@@ -241,24 +241,24 @@ function BucketDetailPage() {
 
       {/* Object Browser */}
       <div className="space-y-2">
-        <h2 className="text-lg font-semibold">Objects</h2>
+        <h2 className="text-lg font-semibold">オブジェクト</h2>
         <div className="flex gap-2">
           <Input
             value={prefix}
             onChange={(e) => setPrefix(e.target.value)}
-            placeholder="Prefix filter"
+            placeholder="プレフィックスで絞り込み"
             className="flex-1"
           />
           <Button asChild size="sm">
             <label className="cursor-pointer">
-              Upload
+              アップロード
               <input type="file" className="hidden" onChange={handleFileSelect} />
             </label>
           </Button>
         </div>
 
         {uploadMutation.isPending && (
-          <p className="text-sm text-muted-foreground">Uploading...</p>
+          <p className="text-sm text-muted-foreground">アップロード中...</p>
         )}
         {uploadMutation.isError && (
           <p className="text-sm text-destructive">{uploadMutation.error.message}</p>
@@ -269,7 +269,7 @@ function BucketDetailPage() {
           onDrop={handleDrop}
           className="rounded-lg border-2 border-dashed p-4 text-center text-sm text-muted-foreground"
         >
-          Drag & drop files here to upload
+          ここにファイルをドラッグ＆ドロップしてアップロード
         </div>
 
         {/* Prefix navigation */}
@@ -286,17 +286,17 @@ function BucketDetailPage() {
         ))}
 
         {objects.isLoading ? (
-          <p className="text-muted-foreground">Loading objects...</p>
+          <p className="text-muted-foreground">オブジェクトを読み込み中...</p>
         ) : objects.isError ? (
-          <p className="text-destructive">Failed to load objects</p>
+          <p className="text-destructive">オブジェクトの読み込みに失敗しました</p>
         ) : (
           <div className="rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Key</TableHead>
-                  <TableHead className="text-right">Size</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>キー</TableHead>
+                  <TableHead className="text-right">サイズ</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -308,7 +308,7 @@ function BucketDetailPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="link" size="sm" asChild className="mr-1">
-                        <a href={downloadObjectUrl(id, obj.key)}>Download</a>
+                        <a href={downloadObjectUrl(id, obj.key)}>ダウンロード</a>
                       </Button>
                       <Button
                         variant="link"
@@ -316,7 +316,7 @@ function BucketDetailPage() {
                         className="text-destructive"
                         onClick={() => setDeleteObjectTarget(obj.key)}
                       >
-                        Delete
+                        削除
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -324,7 +324,7 @@ function BucketDetailPage() {
                 {allObjects.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
-                      No objects found
+                      オブジェクトがありません
                     </TableCell>
                   </TableRow>
                 )}
@@ -338,7 +338,7 @@ function BucketDetailPage() {
                   onClick={() => objects.fetchNextPage()}
                   disabled={objects.isFetchingNextPage}
                 >
-                  {objects.isFetchingNextPage ? 'Loading...' : 'Load More'}
+                  {objects.isFetchingNextPage ? '読み込み中...' : 'さらに読み込む'}
                 </Button>
               </div>
             )}
@@ -349,8 +349,8 @@ function BucketDetailPage() {
       <ConfirmDialog
         open={deleteObjectTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteObjectTarget(null) }}
-        title="Delete Object"
-        description={`"${deleteObjectTarget}" を削除しますか？この操作は取り消せません。`}
+        title="オブジェクトの削除"
+        description={`「${deleteObjectTarget}」を削除しますか？この操作は取り消せません。`}
         onConfirm={() => {
           if (deleteObjectTarget) deleteMutation.mutate(deleteObjectTarget)
         }}
@@ -360,8 +360,10 @@ function BucketDetailPage() {
       <ConfirmDialog
         open={revokeTarget !== null}
         onOpenChange={(open) => { if (!open) setRevokeTarget(null) }}
-        title="Revoke Key"
-        description={`Key "${revokeTarget}" のアクセス権限を取り消しますか？`}
+        title="キーの取り消し"
+        description={`キー「${revokeTarget}」のアクセス権限を取り消しますか？`}
+        confirmLabel="取り消し"
+        pendingLabel="取り消し中..."
         onConfirm={() => {
           if (revokeTarget) revokeMutation.mutate(revokeTarget)
         }}

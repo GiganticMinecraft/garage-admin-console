@@ -49,21 +49,21 @@ function KeysPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Keys</h1>
+        <h1 className="text-2xl font-bold">キー</h1>
         <Button size="sm" onClick={() => setShowCreate(true)}>
-          Create Key
+          キーを作成
         </Button>
       </div>
 
       {showCreate && (
         <div className="rounded-lg border p-4">
-          <h2 className="mb-2 font-semibold">New Key</h2>
+          <h2 className="mb-2 font-semibold">新規キー</h2>
           <div className="flex gap-2">
             <Input
               type="text"
               value={newKeyName}
               onChange={(e) => setNewKeyName(e.target.value)}
-              placeholder="Key name"
+              placeholder="キー名"
               className="flex-1"
             />
             <Button
@@ -71,14 +71,14 @@ function KeysPage() {
               onClick={() => createMutation.mutate(newKeyName)}
               disabled={!newKeyName || createMutation.isPending}
             >
-              {createMutation.isPending ? 'Creating...' : 'Create'}
+              {createMutation.isPending ? '作成中...' : '作成'}
             </Button>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setShowCreate(false)}
             >
-              Cancel
+              キャンセル
             </Button>
           </div>
           {createMutation.isError && (
@@ -90,15 +90,15 @@ function KeysPage() {
       )}
 
       {isLoading ? (
-        <p className="text-muted-foreground">Loading...</p>
+        <p className="text-muted-foreground">読み込み中...</p>
       ) : (
         <div className="rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="px-4">Name</TableHead>
-                <TableHead className="px-4">Access Key ID</TableHead>
-                <TableHead className="px-4 text-right">Actions</TableHead>
+                <TableHead className="px-4">名前</TableHead>
+                <TableHead className="px-4">アクセスキー ID</TableHead>
+                <TableHead className="px-4 text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -122,7 +122,7 @@ function KeysPage() {
                       size="sm"
                       onClick={() => setDeleteTarget(key)}
                     >
-                      Delete
+                      削除
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -130,7 +130,7 @@ function KeysPage() {
               {keys?.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
-                    No keys found
+                    キーがありません
                   </TableCell>
                 </TableRow>
               )}
@@ -142,8 +142,8 @@ function KeysPage() {
       <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
-        title="Delete Key"
-        description={`Key "${deleteTarget?.name || deleteTarget?.id}" を削除しますか？この操作は取り消せません。`}
+        title="キーの削除"
+        description={`キー「${deleteTarget?.name || deleteTarget?.id}」を削除しますか？この操作は取り消せません。`}
         onConfirm={() => {
           if (deleteTarget) deleteMutation.mutate(deleteTarget.id)
         }}

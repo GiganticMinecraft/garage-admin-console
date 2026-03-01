@@ -44,12 +44,12 @@ function KeyDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Link to="/keys" className="hover:underline">Keys</Link>
+        <Link to="/keys" className="hover:underline">キー</Link>
         <span>/</span>
         <span>{data?.name || id}</span>
       </div>
 
-      <h1 className="text-2xl font-bold">{data?.name || 'Key Detail'}</h1>
+      <h1 className="text-2xl font-bold">{data?.name || 'キー詳細'}</h1>
 
       {key.isLoading ? (
         <div className="rounded-lg border p-4 space-y-3">
@@ -63,27 +63,27 @@ function KeyDetailPage() {
           </div>
         </div>
       ) : key.isError ? (
-        <p className="text-destructive">Failed to load key</p>
+        <p className="text-destructive">キーの読み込みに失敗しました</p>
       ) : data ? (
         <>
           <div className="rounded-lg border p-4 space-y-3">
             <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
               <div>
-                <p className="text-muted-foreground">Access Key ID</p>
+                <p className="text-muted-foreground">アクセスキー ID</p>
                 <p className="font-mono text-xs break-all">{data.accessKeyId}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Created</p>
+                <p className="text-muted-foreground">作成日時</p>
                 <p className="font-medium">{new Date(data.created).toLocaleString()}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Expiration</p>
+                <p className="text-muted-foreground">有効期限</p>
                 <p className="font-medium">
-                  {data.expiration ? new Date(data.expiration).toLocaleString() : 'None'}
+                  {data.expiration ? new Date(data.expiration).toLocaleString() : 'なし'}
                 </p>
               </div>
               <div>
-                <p className="text-muted-foreground">Permissions</p>
+                <p className="text-muted-foreground">権限</p>
                 <div className="flex gap-1">
                   {data.permissions.createBucket && (
                     <Badge variant="outline">createBucket</Badge>
@@ -97,16 +97,16 @@ function KeyDetailPage() {
           </div>
 
           <div className="space-y-2">
-            <h2 className="text-lg font-semibold">Buckets</h2>
+            <h2 className="text-lg font-semibold">バケット</h2>
             {data.buckets.length === 0 ? (
-              <p className="text-muted-foreground text-sm">No buckets associated</p>
+              <p className="text-muted-foreground text-sm">関連付けられたバケットはありません</p>
             ) : (
               <div className="rounded-lg border">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Bucket</TableHead>
-                      <TableHead>Permissions</TableHead>
+                      <TableHead>バケット</TableHead>
+                      <TableHead>権限</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

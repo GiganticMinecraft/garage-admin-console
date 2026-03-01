@@ -67,30 +67,30 @@ function HealthCard({ data }: { data: ClusterHealth }) {
   return (
     <div className="rounded-lg border p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <h2 className="text-lg font-semibold">Cluster Health</h2>
+        <h2 className="text-lg font-semibold">クラスタの状態</h2>
         <Badge variant={isHealthy ? 'secondary' : 'destructive'}>
           {data.status}
         </Badge>
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
         <div>
-          <p className="text-muted-foreground">Nodes</p>
+          <p className="text-muted-foreground">ノード</p>
           <p className="font-medium">
-            {data.connectedNodes} / {data.knownNodes} connected
+            {data.connectedNodes} / {data.knownNodes} 接続中
           </p>
         </div>
         <div>
-          <p className="text-muted-foreground">Storage Nodes</p>
+          <p className="text-muted-foreground">ストレージノード</p>
           <p className="font-medium">
-            {data.storageNodesUp} / {data.storageNodes} up
+            {data.storageNodesUp} / {data.storageNodes} 稼働中
           </p>
         </div>
         <div>
-          <p className="text-muted-foreground">Partitions</p>
+          <p className="text-muted-foreground">パーティション</p>
           <p className="font-medium">{data.partitions}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Partitions (quorum)</p>
+          <p className="text-muted-foreground">パーティション (quorum)</p>
           <p className="font-medium">
             {data.partitionsQuorum} / {data.partitions}
           </p>
@@ -119,13 +119,13 @@ function NodeCard({ node }: { node: ClusterNode }) {
         </div>
       </div>
       <ProgressBar
-        label="Data"
+        label="データ"
         used={dataUsed}
         total={node.dataPartition.total}
         color="bg-blue-500"
       />
       <ProgressBar
-        label="Metadata"
+        label="メタデータ"
         used={metaUsed}
         total={node.metadataPartition.total}
         color="bg-purple-500"
@@ -152,7 +152,7 @@ function NodeTableRow({ node }: { node: ClusterNode }) {
       <TableCell className="text-muted-foreground">{node.role.zone}</TableCell>
       <TableCell className="min-w-[200px]">
         <ProgressBar
-          label="Data"
+          label="データ"
           used={dataUsed}
           total={node.dataPartition.total}
           color="bg-blue-500"
@@ -160,7 +160,7 @@ function NodeTableRow({ node }: { node: ClusterNode }) {
       </TableCell>
       <TableCell className="min-w-[200px]">
         <ProgressBar
-          label="Metadata"
+          label="メタデータ"
           used={metaUsed}
           total={node.metadataPartition.total}
           color="bg-purple-500"
@@ -222,22 +222,22 @@ function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <h1 className="text-2xl font-bold">ダッシュボード</h1>
 
       {health.isLoading ? (
         <HealthSkeleton />
       ) : health.isError ? (
-        <p className="text-destructive">Failed to load cluster health</p>
+        <p className="text-destructive">クラスタの状態を読み込めませんでした</p>
       ) : (
         <HealthCard data={health.data!} />
       )}
 
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold">Nodes</h2>
+        <h2 className="text-lg font-semibold">ノード</h2>
         {status.isLoading ? (
           <NodesSkeleton />
         ) : status.isError ? (
-          <p className="text-destructive">Failed to load cluster status</p>
+          <p className="text-destructive">クラスタのステータスを読み込めませんでした</p>
         ) : (
           <>
             {/* Mobile: card layout */}
@@ -252,11 +252,11 @@ function DashboardPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Hostname</TableHead>
-                    <TableHead>Version</TableHead>
-                    <TableHead>Zone</TableHead>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Metadata</TableHead>
+                    <TableHead>ホスト名</TableHead>
+                    <TableHead>バージョン</TableHead>
+                    <TableHead>ゾーン</TableHead>
+                    <TableHead>データ</TableHead>
+                    <TableHead>メタデータ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

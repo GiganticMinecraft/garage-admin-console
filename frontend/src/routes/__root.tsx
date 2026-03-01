@@ -35,10 +35,10 @@ function RootLayout() {
         <div className="text-center">
           <h1 className="mb-4 text-2xl font-bold">Garage Admin Console</h1>
           <p className="mb-4 text-destructive">
-            Failed to connect to the server. Please try again later.
+            サーバーに接続できませんでした。しばらくしてからもう一度お試しください。
           </p>
           <Button variant="outline" onClick={() => window.location.reload()}>
-            Retry
+            再試行
           </Button>
         </div>
       </div>
@@ -51,7 +51,7 @@ function RootLayout() {
         <div className="text-center">
           <h1 className="mb-4 text-2xl font-bold">Garage Admin Console</h1>
           <Button asChild>
-            <a href="/api/auth/login">Sign in with GitHub</a>
+            <a href="/api/auth/login">GitHub でサインイン</a>
           </Button>
         </div>
       </div>

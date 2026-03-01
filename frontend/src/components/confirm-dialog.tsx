@@ -27,8 +27,8 @@ export function ConfirmDialog({
   description,
   onConfirm,
   isPending,
-  confirmLabel = 'Delete',
-  pendingLabel = 'Deleting...',
+  confirmLabel = '削除',
+  pendingLabel = '削除中...',
   confirmVariant = 'destructive',
 }: ConfirmDialogProps) {
   return (
@@ -40,7 +40,7 @@ export function ConfirmDialog({
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            キャンセル
           </Button>
           <Button
             variant={confirmVariant}

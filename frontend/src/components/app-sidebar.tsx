@@ -22,11 +22,11 @@ import {
 } from "@/components/ui/sidebar"
 
 const navItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Buckets", url: "/buckets", icon: Database },
-  { title: "Keys", url: "/keys", icon: KeyRound },
-  { title: "Layout", url: "/layout", icon: Server },
-  { title: "Workers", url: "/workers", icon: Cog },
+  { title: "ダッシュボード", url: "/", icon: LayoutDashboard },
+  { title: "バケット", url: "/buckets", icon: Database },
+  { title: "キー", url: "/keys", icon: KeyRound },
+  { title: "レイアウト", url: "/layout", icon: Server },
+  { title: "ワーカー", url: "/workers", icon: Cog },
 ]
 
 export function AppSidebar({
@@ -49,7 +49,7 @@ export function AppSidebar({
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel>ナビゲーション</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item) => (

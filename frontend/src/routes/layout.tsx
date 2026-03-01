@@ -77,7 +77,7 @@ function LayoutPage() {
       setParsedBody(parsed)
       setShowConfirm(true)
     } catch {
-      setJsonError('Invalid JSON')
+      setJsonError('無効な JSON です')
     }
   }
 
@@ -86,7 +86,7 @@ function LayoutPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Cluster Layout</h1>
+        <h1 className="text-2xl font-bold">クラスタレイアウト</h1>
         <Button
           variant="outline"
           size="sm"
@@ -96,7 +96,7 @@ function LayoutPage() {
             setJsonError('')
           }}
         >
-          {showEdit ? 'Cancel' : 'Edit Raw'}
+          {showEdit ? 'キャンセル' : 'JSON を編集'}
         </Button>
       </div>
 
@@ -115,7 +115,7 @@ function LayoutPage() {
           <Skeleton className="h-48 w-full" />
         </div>
       ) : layout.isError ? (
-        <p className="text-destructive">Failed to load layout</p>
+        <p className="text-destructive">レイアウトの読み込みに失敗しました</p>
       ) : showEdit ? (
         <div className="space-y-2">
           <textarea
@@ -134,7 +134,7 @@ function LayoutPage() {
             onClick={handleApply}
             disabled={applyMutation.isPending}
           >
-            {applyMutation.isPending ? 'Applying...' : 'Apply Layout'}
+            {applyMutation.isPending ? '適用中...' : 'レイアウトを適用'}
           </Button>
           {applyMutation.isError && (
             <p className="text-sm text-destructive">{applyMutation.error.message}</p>
@@ -145,40 +145,40 @@ function LayoutPage() {
           <div className="rounded-lg border p-4">
             <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
               <div>
-                <p className="text-muted-foreground">Version</p>
+                <p className="text-muted-foreground">バージョン</p>
                 <p className="font-medium">{data.version}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Zone Redundancy</p>
+                <p className="text-muted-foreground">ゾーン冗長性</p>
                 <p className="font-medium">{data.parameters.zoneRedundancy}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Partition Size</p>
+                <p className="text-muted-foreground">パーティションサイズ</p>
                 <p className="font-medium">{formatBytes(data.partitionSize)}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Staged Changes</p>
+                <p className="text-muted-foreground">保留中の変更</p>
                 <p className="font-medium">
                   {data.stagedRoleChanges.length > 0
-                    ? <Badge variant="destructive">{data.stagedRoleChanges.length} pending</Badge>
-                    : <span className="text-muted-foreground">None</span>}
+                    ? <Badge variant="destructive">{data.stagedRoleChanges.length} 件保留中</Badge>
+                    : <span className="text-muted-foreground">なし</span>}
                 </p>
               </div>
             </div>
           </div>
 
           <div className="space-y-2">
-            <h2 className="text-lg font-semibold">Roles</h2>
+            <h2 className="text-lg font-semibold">ロール</h2>
             <div className="rounded-lg border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Node ID</TableHead>
-                    <TableHead>Zone</TableHead>
-                    <TableHead className="text-right">Capacity</TableHead>
-                    <TableHead className="text-right">Usable</TableHead>
-                    <TableHead className="text-right">Partitions</TableHead>
-                    <TableHead>Tags</TableHead>
+                    <TableHead>ノード ID</TableHead>
+                    <TableHead>ゾーン</TableHead>
+                    <TableHead className="text-right">容量</TableHead>
+                    <TableHead className="text-right">利用可能</TableHead>
+                    <TableHead className="text-right">パーティション</TableHead>
+                    <TableHead>タグ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -208,10 +208,10 @@ function LayoutPage() {
       <ConfirmDialog
         open={showConfirm}
         onOpenChange={setShowConfirm}
-        title="Apply Layout"
-        description="レイアウト変更を適用しますか？クラスターの動作に影響する可能性があります。"
-        confirmLabel="Apply"
-        pendingLabel="Applying..."
+        title="レイアウトの適用"
+        description="レイアウト変更を適用しますか？クラスタの動作に影響する可能性があります。"
+        confirmLabel="適用"
+        pendingLabel="適用中..."
         confirmVariant="default"
         onConfirm={() => applyMutation.mutate(parsedBody)}
         isPending={applyMutation.isPending}

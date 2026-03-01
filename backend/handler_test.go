@@ -74,7 +74,7 @@ func newTestGarageServer(t *testing.T) *httptest.Server {
 		w.Write([]byte(`{"accessKeyId":"` + id + `"}`))
 	})
 
-	mux.HandleFunc("/v2/ListWorkers", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v2/ListWorkers/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return

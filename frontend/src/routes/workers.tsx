@@ -23,20 +23,20 @@ function WorkersPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Workers</h1>
+      <h1 className="text-2xl font-bold">ワーカー</h1>
 
       {isLoading ? (
-        <p className="text-muted-foreground">Loading...</p>
+        <p className="text-muted-foreground">読み込み中...</p>
       ) : isError ? (
-        <p className="text-destructive">Failed to load workers</p>
+        <p className="text-destructive">ワーカーの読み込みに失敗しました</p>
       ) : (
         <div className="rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead>Name</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Details</TableHead>
+                <TableHead>名前</TableHead>
+                <TableHead>状態</TableHead>
+                <TableHead>詳細</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -66,7 +66,7 @@ function WorkersPage() {
               {workers?.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
-                    No workers found
+                    ワーカーがありません
                   </TableCell>
                 </TableRow>
               )}

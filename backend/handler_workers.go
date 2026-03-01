@@ -10,7 +10,7 @@ import (
 // handleListWorkers proxies GET /api/workers to Garage POST /v2/ListWorkers.
 func handleListWorkers(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		const garagePath = "/v2/ListWorkers"
+		const garagePath = "/v2/ListWorkers/*"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, strings.NewReader("{}"))
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
