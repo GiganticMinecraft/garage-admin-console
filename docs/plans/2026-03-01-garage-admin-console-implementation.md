@@ -234,17 +234,17 @@ GitHub API 呼び出し (otelhttp.NewTransport でトレース):
 **Step 2: main.go にルート追加**
 
 ```go
-r.Route("/api/auth", func(r chi.Router) {
-	r.Get("/login", handleLogin)
-	r.Get("/callback", handleCallback)
-	r.Get("/me", handleMe)
-	r.Post("/logout", handleLogout)
-})
+// 認証不要 (OAuth フロー用)
+r.Get("/api/auth/login", handleLogin)
+r.Get("/api/auth/callback", handleCallback)
 
 // 認証が必要なルートグループ
 r.Group(func(r chi.Router) {
 	r.Use(authMiddleware)
 	r.Use(csrfMiddleware) // POST/PUT/DELETE に X-Requested-With を検証 (JSON エンドポイントは Content-Type も検証、upload は multipart 許可)
+
+	r.Get("/api/auth/me", handleMe)
+	r.Post("/api/auth/logout", handleLogout)
 	// ここに保護されたルートを追加
 })
 ```
@@ -286,7 +286,6 @@ Admin API ドキュメント: https://garagehq.deuxfleurs.fr/api/garage-admin-v2
 package main
 
 import (
-	"context"
 	"net/http"
 	"os"
 
@@ -938,7 +937,7 @@ git commit -m "ci: GitHub Actions ワークフロー追加"
 - Create: `seichi-onp-k8s/manifests/seichi-kubernetes/apps/cluster-wide-apps/garage-admin/kustomization.yaml`
 - Modify: `seichi-onp-k8s/manifests/seichi-kubernetes/apps/cluster-wide-apps/app-of-other-apps/` (ArgoCD Application 追加)
 - Modify: `seichi-onp-k8s/manifests/seichi-kubernetes/apps/cloudflared-tunnel-exits/http-exits.yaml` (Tunnel exit 追加)
-- Modify: `terraform/onp_cluster_secrets.tf` (GitHub OAuth secret, Garage Admin token)
+- Modify: `terraform/onp_cluster_secrets.tf` (GitHub OAuth secret, Garage Admin token, S3 credentials)
 - Modify: `terraform/main.tf` (新しい variable 追加)
 
 K8s リソース:
@@ -948,6 +947,7 @@ K8s リソース:
 - `Service/garage-admin-api` — ClusterIP (Nginx からのみ)
 - `Secret/garage-admin-github-oauth` — CLIENT_ID, CLIENT_SECRET, SESSION_SECRET
 - `Secret/garage-admin-token` — Garage Admin API bearer token
+- `Secret/garage-admin-s3` — GARAGE_S3_ACCESS_KEY, GARAGE_S3_SECRET_KEY (Object API 用)
 - Cloudflare Tunnel exit: `garage-admin.onp.admin.seichi.click`
 
 **Commit (in seichi_infra):**

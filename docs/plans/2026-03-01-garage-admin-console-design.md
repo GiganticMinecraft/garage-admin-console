@@ -166,7 +166,7 @@ GET /api/workers   List workers (read-only)
    - User is member of Garage Admin Team
 6. If OK → regenerate session ID (session fixation prevention), set session cookie, redirect to `/`
 7. If NG → return 403
-8. All `/api/*` endpoints validate session cookie via middleware
+8. `/api/auth/login` と `/api/auth/callback` を除く全 `/api/*` エンドポイントがセッション Cookie をミドルウェアで検証
 
 ### Session Cookie 設定
 
@@ -285,8 +285,9 @@ Same pattern as krew-index-visualizer:
 - `Deployment/garage-admin-api` — Go server (1 replica)
 - `Service/garage-admin-ui` — ClusterIP, Cloudflare Tunnel target
 - `Service/garage-admin-api` — ClusterIP (internal, Nginx → Go only)
-- `Secret/garage-admin-github-oauth` — GitHub OAuth Client ID/Secret
+- `Secret/garage-admin-github-oauth` — GitHub OAuth Client ID/Secret + SESSION_SECRET
 - `Secret/garage-admin-token` — Garage Admin API token
+- `Secret/garage-admin-s3` — S3 Access Key / Secret Key (Object API 用)
 - Cloudflare Tunnel exit for `garage-admin.onp.admin.seichi.click`
 
 ## Decisions
