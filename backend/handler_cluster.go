@@ -40,18 +40,19 @@ func handleClusterStatus(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return proxyGarageGET(garageAdmin, "/v2/GetClusterStatus")
 }
 
-// handleClusterLayout proxies GET /api/cluster/layout to Garage GET /v2/layout.
+// handleClusterLayout proxies GET /api/cluster/layout to Garage GET /v2/GetClusterLayout.
 func handleClusterLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
-	return proxyGarageGET(garageAdmin, "/v2/layout")
+	return proxyGarageGET(garageAdmin, "/v2/GetClusterLayout")
 }
 
-// handleApplyLayout proxies POST /api/cluster/layout to Garage POST /v2/layout.
+// handleApplyLayout proxies POST /api/cluster/layout to Garage POST /v2/ApplyClusterLayout.
 // The request body is forwarded as-is.
 func handleApplyLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, "/v2/layout", r.Body)
+		const garagePath = "/v2/ApplyClusterLayout"
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
-			slog.Error("garage request failed", "path", "/v2/layout", "error", err)
+			slog.Error("garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -64,7 +65,7 @@ func handleApplyLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", "/v2/layout", "error", err)
+			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }

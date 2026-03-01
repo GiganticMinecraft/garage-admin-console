@@ -10,17 +10,18 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// handleListBuckets proxies GET /api/buckets to Garage GET /v2/bucket?list.
+// handleListBuckets proxies GET /api/buckets to Garage GET /v2/ListBuckets.
 func handleListBuckets(garageAdmin *GarageAdminClient) http.HandlerFunc {
-	return proxyGarageGET(garageAdmin, "/v2/bucket?list")
+	return proxyGarageGET(garageAdmin, "/v2/ListBuckets")
 }
 
-// handleCreateBucket proxies POST /api/buckets to Garage POST /v2/bucket.
+// handleCreateBucket proxies POST /api/buckets to Garage POST /v2/CreateBucket.
 func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, "/v2/bucket", r.Body)
+		const garagePath = "/v2/CreateBucket"
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
-			slog.Error("garage request failed", "path", "/v2/bucket", "error", err)
+			slog.Error("garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -33,16 +34,16 @@ func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", "/v2/bucket", "error", err)
+			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
 
-// handleGetBucket proxies GET /api/buckets/{id} to Garage GET /v2/bucket?id={id}.
+// handleGetBucket proxies GET /api/buckets/{id} to Garage GET /v2/GetBucketInfo?id={id}.
 func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
+		garagePath := "/v2/GetBucketInfo?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodGet, garagePath, nil)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -63,11 +64,11 @@ func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	}
 }
 
-// handleUpdateBucket proxies PUT /api/buckets/{id} to Garage PUT /v2/bucket?id={id}.
+// handleUpdateBucket proxies PUT /api/buckets/{id} to Garage PUT /v2/UpdateBucket?id={id}.
 func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
+		garagePath := "/v2/UpdateBucket?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPut, garagePath, r.Body)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -88,11 +89,11 @@ func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	}
 }
 
-// handleDeleteBucket proxies DELETE /api/buckets/{id} to Garage DELETE /v2/bucket?id={id}.
+// handleDeleteBucket proxies DELETE /api/buckets/{id} to Garage DELETE /v2/DeleteBucket?id={id}.
 func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
+		garagePath := "/v2/DeleteBucket?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodDelete, garagePath, nil)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -113,7 +114,7 @@ func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	}
 }
 
-// handleGrantBucketKey proxies POST /api/buckets/{id}/keys to Garage POST /v2/bucket/allow.
+// handleGrantBucketKey proxies POST /api/buckets/{id}/keys to Garage POST /v2/AllowBucketKey.
 // It reads the request body, injects the bucket ID from the URL path, and forwards to Garage.
 func handleGrantBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +133,7 @@ func handleGrantBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			json.NewEncoder(pw).Encode(body)
 		}()
 
-		const garagePath = "/v2/bucket/allow"
+		const garagePath = "/v2/AllowBucketKey"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, pr)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
@@ -153,7 +154,7 @@ func handleGrantBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	}
 }
 
-// handleRevokeBucketKey proxies DELETE /api/buckets/{id}/keys/{kid} to Garage POST /v2/bucket/deny.
+// handleRevokeBucketKey proxies DELETE /api/buckets/{id}/keys/{kid} to Garage POST /v2/DenyBucketKey.
 // It constructs the deny request body from the URL path parameters.
 func handleRevokeBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +177,7 @@ func handleRevokeBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			json.NewEncoder(pw).Encode(body)
 		}()
 
-		const garagePath = "/v2/bucket/deny"
+		const garagePath = "/v2/DenyBucketKey"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, pr)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)

@@ -27,45 +27,54 @@ func newTestGarageServer(t *testing.T) *httptest.Server {
 		w.Write([]byte(`{"node":"abc123","garageVersion":"1.0"}`))
 	})
 
-	mux.HandleFunc("/v2/layout", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			var parsed json.RawMessage
-			_ = json.NewDecoder(r.Body).Decode(&parsed)
-			resp, _ := json.Marshal(map[string]interface{}{
-				"applied": true,
-				"body":    parsed,
-			})
-			w.Header().Set("Content-Type", "application/json")
-			w.Write(resp)
-			return
-		}
+	mux.HandleFunc("/v2/GetClusterLayout", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"version":1,"roles":[]}`))
 	})
 
-	mux.HandleFunc("/v2/bucket", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Has("list") {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"id":"bucket1"},{"id":"bucket2"}]`))
-			return
-		}
+	mux.HandleFunc("/v2/ApplyClusterLayout", func(w http.ResponseWriter, r *http.Request) {
+		var parsed json.RawMessage
+		_ = json.NewDecoder(r.Body).Decode(&parsed)
+		resp, _ := json.Marshal(map[string]interface{}{
+			"applied": true,
+			"body":    parsed,
+		})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(resp)
+	})
+
+	mux.HandleFunc("/v2/ListBuckets", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"id":"bucket1"},{"id":"bucket2"}]`))
+	})
+
+	mux.HandleFunc("/v2/GetBucketInfo", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"id":"` + id + `"}`))
 	})
 
-	mux.HandleFunc("/v2/key", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Has("list") {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"accessKeyId":"key1"}]`))
-			return
-		}
+	mux.HandleFunc("/v2/CreateBucket", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"new-bucket"}`))
+	})
+
+	mux.HandleFunc("/v2/DeleteBucket", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("/v2/ListKeys", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"accessKeyId":"key1"}]`))
+	})
+
+	mux.HandleFunc("/v2/GetKeyInfo", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"accessKeyId":"` + id + `"}`))
 	})
 
-	mux.HandleFunc("/v2/worker", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v2/ListWorkers", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`[{"name":"repair","state":"idle"}]`))
 	})
