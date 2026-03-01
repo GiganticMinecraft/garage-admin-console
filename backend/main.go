@@ -11,20 +11,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
-
-	shutdown, err := initTracer(context.Background())
-	if err != nil {
-		slog.Error("failed to init tracer", "error", err)
-		os.Exit(1)
-	}
-	defer shutdown()
-
-	initAuth()
-	garageAdmin := newGarageAdminClient()
-	s3Client := newS3Client()
-
+// newRouter builds the chi router with all routes wired up.
+func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recoverer)
@@ -80,6 +68,25 @@ func main() {
 
 		r.Get("/api/workers", handleListWorkers(garageAdmin))
 	})
+
+	return r
+}
+
+func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
+	shutdown, err := initTracer(context.Background())
+	if err != nil {
+		slog.Error("failed to init tracer", "error", err)
+		os.Exit(1)
+	}
+	defer shutdown()
+
+	initAuth()
+	garageAdmin := newGarageAdminClient()
+	s3Client := newS3Client()
+
+	r := newRouter(garageAdmin, s3Client)
 
 	addr := ":8080"
 	handler := otelhttp.NewHandler(r, "garage-admin-console")
