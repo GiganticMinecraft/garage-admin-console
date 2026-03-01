@@ -21,13 +21,22 @@ type objectEntry struct {
 	LastModified time.Time `json:"lastModified"`
 }
 
-// handleListObjects handles GET /api/objects/{bucket}/list?prefix=&delimiter=.
-// It calls S3 ListObjectsV2 and returns a JSON array of objects.
+// objectListResponse is the structured response for list objects.
+type objectListResponse struct {
+	Objects                 []objectEntry `json:"objects"`
+	Prefixes                []string      `json:"prefixes"`
+	IsTruncated             bool          `json:"isTruncated"`
+	NextContinuationToken   string        `json:"nextContinuationToken,omitempty"`
+}
+
+// handleListObjects handles GET /api/objects/{bucket}/list?prefix=&delimiter=&continuation-token=.
+// It calls S3 ListObjectsV2 and returns a single page of results.
 func handleListObjects(s3Client *S3Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bucket := chi.URLParam(r, "bucket")
 		prefix := r.URL.Query().Get("prefix")
 		delimiter := r.URL.Query().Get("delimiter")
+		continuationToken := r.URL.Query().Get("continuation-token")
 
 		input := &s3.ListObjectsV2Input{
 			Bucket: aws.String(bucket),
@@ -35,38 +44,49 @@ func handleListObjects(s3Client *S3Client) http.HandlerFunc {
 		if prefix != "" {
 			input.Prefix = aws.String(prefix)
 		}
-		if delimiter != "" {
-			input.Delimiter = aws.String(delimiter)
+		if delimiter == "" {
+			delimiter = "/"
+		}
+		input.Delimiter = aws.String(delimiter)
+		if continuationToken != "" {
+			input.ContinuationToken = aws.String(continuationToken)
 		}
 
-		var objects []objectEntry
-
-		paginator := s3.NewListObjectsV2Paginator(s3Client.client, input)
-		for paginator.HasMorePages() {
-			page, err := paginator.NextPage(r.Context())
-			if err != nil {
-				slog.Error("s3 ListObjectsV2 failed", "bucket", bucket, "error", err)
-				http.Error(w, fmt.Sprintf(`{"error":"failed to list objects: %s"}`, err.Error()), http.StatusBadGateway)
-				return
-			}
-			for _, obj := range page.Contents {
-				entry := objectEntry{
-					Key:  aws.ToString(obj.Key),
-					Size: aws.ToInt64(obj.Size),
-				}
-				if obj.LastModified != nil {
-					entry.LastModified = *obj.LastModified
-				}
-				objects = append(objects, entry)
-			}
+		page, err := s3Client.client.ListObjectsV2(r.Context(), input)
+		if err != nil {
+			slog.Error("s3 ListObjectsV2 failed", "bucket", bucket, "error", err)
+			http.Error(w, fmt.Sprintf(`{"error":"failed to list objects: %s"}`, err.Error()), http.StatusBadGateway)
+			return
 		}
 
-		if objects == nil {
-			objects = []objectEntry{}
+		objects := make([]objectEntry, 0, len(page.Contents))
+		for _, obj := range page.Contents {
+			entry := objectEntry{
+				Key:  aws.ToString(obj.Key),
+				Size: aws.ToInt64(obj.Size),
+			}
+			if obj.LastModified != nil {
+				entry.LastModified = *obj.LastModified
+			}
+			objects = append(objects, entry)
+		}
+
+		prefixes := make([]string, 0, len(page.CommonPrefixes))
+		for _, p := range page.CommonPrefixes {
+			prefixes = append(prefixes, aws.ToString(p.Prefix))
+		}
+
+		resp := objectListResponse{
+			Objects:     objects,
+			Prefixes:    prefixes,
+			IsTruncated: aws.ToBool(page.IsTruncated),
+		}
+		if page.NextContinuationToken != nil {
+			resp.NextContinuationToken = *page.NextContinuationToken
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(objects); err != nil {
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.Error("failed to encode object list", "error", err)
 		}
 	}

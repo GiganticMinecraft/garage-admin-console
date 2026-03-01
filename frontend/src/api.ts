@@ -13,6 +13,9 @@ export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T>
     throw new Error('Unauthorized')
   }
   if (!res.ok) throw new Error(`API error: ${res.status}`)
+  if (res.status === 204 || res.headers.get('Content-Length') === '0') {
+    return undefined as T
+  }
   return res.json()
 }
 
