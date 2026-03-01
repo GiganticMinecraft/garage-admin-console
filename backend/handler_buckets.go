@@ -1,0 +1,198 @@
+package main
+
+import (
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+
+	"github.com/go-chi/chi/v5"
+)
+
+// handleListBuckets proxies GET /api/buckets to Garage GET /v2/bucket?list.
+func handleListBuckets(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return proxyGarageGET(garageAdmin, "/v2/bucket?list")
+}
+
+// handleCreateBucket proxies POST /api/buckets to Garage POST /v2/bucket.
+func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, "/v2/bucket", r.Body)
+		if err != nil {
+			slog.Error("garage request failed", "path", "/v2/bucket", "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			slog.Error("failed to stream garage response", "path", "/v2/bucket", "error", err)
+		}
+	}
+}
+
+// handleGetBucket proxies GET /api/buckets/{id} to Garage GET /v2/bucket?id={id}.
+func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodGet, garagePath, nil)
+		if err != nil {
+			slog.Error("garage request failed", "path", garagePath, "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+		}
+	}
+}
+
+// handleUpdateBucket proxies PUT /api/buckets/{id} to Garage PUT /v2/bucket?id={id}.
+func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPut, garagePath, r.Body)
+		if err != nil {
+			slog.Error("garage request failed", "path", garagePath, "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+		}
+	}
+}
+
+// handleDeleteBucket proxies DELETE /api/buckets/{id} to Garage DELETE /v2/bucket?id={id}.
+func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		garagePath := "/v2/bucket?id=" + url.QueryEscape(id)
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodDelete, garagePath, nil)
+		if err != nil {
+			slog.Error("garage request failed", "path", garagePath, "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+		}
+	}
+}
+
+// handleGrantBucketKey proxies POST /api/buckets/{id}/keys to Garage POST /v2/bucket/allow.
+// It reads the request body, injects the bucket ID from the URL path, and forwards to Garage.
+func handleGrantBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		bucketID := chi.URLParam(r, "id")
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		body["bucketId"] = bucketID
+
+		pr, pw := io.Pipe()
+		go func() {
+			defer pw.Close()
+			json.NewEncoder(pw).Encode(body)
+		}()
+
+		const garagePath = "/v2/bucket/allow"
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, pr)
+		if err != nil {
+			slog.Error("garage request failed", "path", garagePath, "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+		}
+	}
+}
+
+// handleRevokeBucketKey proxies DELETE /api/buckets/{id}/keys/{kid} to Garage POST /v2/bucket/deny.
+// It constructs the deny request body from the URL path parameters.
+func handleRevokeBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		bucketID := chi.URLParam(r, "id")
+		keyID := chi.URLParam(r, "kid")
+
+		body := map[string]interface{}{
+			"bucketId":    bucketID,
+			"accessKeyId": keyID,
+			"permissions": map[string]bool{
+				"read":  true,
+				"write": true,
+				"owner": true,
+			},
+		}
+
+		pr, pw := io.Pipe()
+		go func() {
+			defer pw.Close()
+			json.NewEncoder(pw).Encode(body)
+		}()
+
+		const garagePath = "/v2/bucket/deny"
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, pr)
+		if err != nil {
+			slog.Error("garage request failed", "path", garagePath, "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+		}
+	}
+}
