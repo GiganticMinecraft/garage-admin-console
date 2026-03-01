@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -27,9 +28,14 @@ func newGarageAdminClient() *GarageAdminClient {
 	if baseURL == "" {
 		baseURL = "http://garage.garage.svc.cluster.local:3903"
 	}
+	token := os.Getenv("GARAGE_ADMIN_TOKEN")
+	if token == "" {
+		slog.Error("GARAGE_ADMIN_TOKEN is required")
+		os.Exit(1)
+	}
 	return &GarageAdminClient{
 		baseURL: baseURL,
-		token:   os.Getenv("GARAGE_ADMIN_TOKEN"),
+		token:   token,
 		httpClient: &http.Client{
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
 			Timeout:   10 * time.Second,

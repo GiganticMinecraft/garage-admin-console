@@ -18,7 +18,11 @@ func proxyGarageGET(garageAdmin *GarageAdminClient, garagePath string) http.Hand
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", "application/json")
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
@@ -53,7 +57,11 @@ func handleApplyLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", "application/json")
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			slog.Error("failed to stream garage response", "path", "/v2/layout", "error", err)
