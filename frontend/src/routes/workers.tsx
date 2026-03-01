@@ -54,11 +54,29 @@ function WorkersPage() {
                       <Badge variant="outline">{String(worker.state ?? 'unknown')}</Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    <div className="max-h-40 overflow-auto">
-                      <pre className="text-xs">
-                        {JSON.stringify(worker, null, 2)}
-                      </pre>
+                  <TableCell className="text-muted-foreground text-sm">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      {worker.errors != null && worker.errors > 0 && (
+                        <span>エラー: <span className="text-destructive font-medium">{worker.errors}</span></span>
+                      )}
+                      {worker.consecutiveErrors != null && worker.consecutiveErrors > 0 && (
+                        <span>連続エラー: <span className="text-destructive font-medium">{worker.consecutiveErrors}</span></span>
+                      )}
+                      {worker.queueLength != null && worker.queueLength > 0 && (
+                        <span>キュー: <span className="font-medium">{worker.queueLength.toLocaleString()}</span></span>
+                      )}
+                      {worker.tranquility != null && (
+                        <span>tranquility: <span className="font-medium">{worker.tranquility}</span></span>
+                      )}
+                      {worker.progress != null && (
+                        <span>進捗: <span className="font-medium">{worker.progress}</span></span>
+                      )}
+                      {worker.lastError && (
+                        <span className="basis-full text-destructive text-xs">{worker.lastError}</span>
+                      )}
+                      {worker.persistentErrors != null && (
+                        <span className="basis-full text-destructive text-xs">{JSON.stringify(worker.persistentErrors)}</span>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
