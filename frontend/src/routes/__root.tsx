@@ -7,7 +7,7 @@ import { Separator } from '@/components/ui/separator'
 
 function RootLayout() {
   const navigate = useNavigate()
-  const { data: user, isLoading, isError } = useQuery({
+  const { data: user, isLoading, error } = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: fetchMe,
     retry: false,
@@ -21,7 +21,29 @@ function RootLayout() {
     )
   }
 
-  if (isError || !user) {
+  // Distinguish 401 (needs login) from other errors (server/network failure).
+  const isUnauthorized = error?.message === 'Unauthorized'
+
+  if (error && !isUnauthorized) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <h1 className="mb-4 text-2xl font-bold">Garage Admin Console</h1>
+          <p className="mb-4 text-destructive">
+            Failed to connect to the server. Please try again later.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (isUnauthorized || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">

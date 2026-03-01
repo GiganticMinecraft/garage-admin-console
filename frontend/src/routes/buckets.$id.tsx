@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useCallback } from 'react'
 import {
   getBucket,
@@ -25,10 +25,17 @@ function BucketDetailPage() {
     queryFn: () => getBucket(id),
   })
 
-  const objects = useQuery({
+  const objects = useInfiniteQuery({
     queryKey: ['objects', id, prefix],
-    queryFn: () => listObjects(id, prefix || undefined),
+    queryFn: ({ pageParam }) =>
+      listObjects(id, prefix || undefined, pageParam || undefined),
+    initialPageParam: '' as string,
+    getNextPageParam: (lastPage) =>
+      lastPage.isTruncated ? lastPage.nextContinuationToken : undefined,
   })
+
+  const allObjects = objects.data?.pages.flatMap((p) => p.objects) ?? []
+  const allPrefixes = objects.data?.pages[0]?.prefixes ?? []
 
   const uploadMutation = useMutation({
     mutationFn: (file: File) => uploadFile(id, file),
@@ -177,7 +184,7 @@ function BucketDetailPage() {
         </div>
 
         {/* Prefix navigation */}
-        {objects.data?.prefixes?.map((p: string) => (
+        {allPrefixes.map((p: string) => (
           <button
             key={p}
             onClick={() => setPrefix(p)}
@@ -202,7 +209,7 @@ function BucketDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {objects.data?.objects?.map((obj) => (
+                {allObjects.map((obj) => (
                   <tr key={obj.key} className="border-b last:border-0">
                     <td className="px-4 py-2 font-mono text-xs">{obj.key}</td>
                     <td className="px-4 py-2 text-right text-muted-foreground">
@@ -227,7 +234,7 @@ function BucketDetailPage() {
                     </td>
                   </tr>
                 ))}
-                {objects.data?.objects?.length === 0 && (
+                {allObjects.length === 0 && (
                   <tr>
                     <td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
                       No objects found
@@ -236,6 +243,17 @@ function BucketDetailPage() {
                 )}
               </tbody>
             </table>
+            {objects.hasNextPage && (
+              <div className="border-t px-4 py-2 text-center">
+                <button
+                  onClick={() => objects.fetchNextPage()}
+                  disabled={objects.isFetchingNextPage}
+                  className="text-sm text-primary hover:underline disabled:opacity-50"
+                >
+                  {objects.isFetchingNextPage ? 'Loading...' : 'Load More'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
