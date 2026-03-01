@@ -97,25 +97,25 @@ function BucketsPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="px-4">ID</TableHead>
                 <TableHead className="px-4">エイリアス</TableHead>
+                <TableHead className="px-4">ID</TableHead>
                 <TableHead className="px-4 text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {buckets?.map((bucket: BucketListItem) => (
                 <TableRow key={bucket.id}>
-                  <TableCell className="px-4">
+                  <TableCell className="px-4 font-medium">
                     <Link
                       to="/buckets/$id"
                       params={{ id: bucket.id }}
                       className="text-primary underline-offset-4 hover:underline"
                     >
-                      {bucket.id.slice(0, 16)}...
+                      {bucket.globalAliases?.join(', ') || '-'}
                     </Link>
                   </TableCell>
-                  <TableCell className="px-4 text-muted-foreground">
-                    {bucket.globalAliases?.join(', ') || '-'}
+                  <TableCell className="px-4 text-muted-foreground font-mono text-sm">
+                    {bucket.id.slice(0, 16)}...
                   </TableCell>
                   <TableCell className="px-4 text-right">
                     <Button
