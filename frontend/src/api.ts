@@ -208,6 +208,20 @@ export async function deleteObject(bucket: string, key: string): Promise<void> {
 }
 
 // Workers
-export async function listWorkers(): Promise<Record<string, unknown>[]> {
+export interface Worker {
+  id: number
+  name: string
+  state: string
+  errors: number
+  consecutiveErrors: number
+  lastError: { message: string; secsAgo: number } | null
+  tranquility: number | null
+  progress: number | null
+  queueLength: number | null
+  persistentErrors: number | null
+  freeform: string[]
+}
+
+export async function listWorkers(): Promise<Worker[]> {
   return fetchJSON('/workers')
 }

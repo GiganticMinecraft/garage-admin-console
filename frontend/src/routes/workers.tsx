@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { listWorkers } from '@/api'
+import { listWorkers, type Worker } from '@/api'
 import {
   Table,
   TableHeader,
@@ -40,10 +40,10 @@ function WorkersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {workers?.map((worker, i) => (
-                <TableRow key={i}>
+              {workers?.map((worker: Worker) => (
+                <TableRow key={worker.id}>
                   <TableCell className="font-medium">
-                    {String(worker.name ?? '-')}
+                    {worker.name || '-'}
                   </TableCell>
                   <TableCell>
                     {worker.state === 'idle' ? (
@@ -51,7 +51,7 @@ function WorkersPage() {
                     ) : worker.state === 'busy' ? (
                       <Badge>busy</Badge>
                     ) : (
-                      <Badge variant="outline">{String(worker.state ?? 'unknown')}</Badge>
+                      <Badge variant="outline">{worker.state || 'unknown'}</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
@@ -72,10 +72,7 @@ function WorkersPage() {
                         <span>進捗: <span className="font-medium">{worker.progress}</span></span>
                       )}
                       {worker.lastError && (
-                        <span className="basis-full text-destructive text-xs">{worker.lastError}</span>
-                      )}
-                      {worker.persistentErrors != null && (
-                        <span className="basis-full text-destructive text-xs">{JSON.stringify(worker.persistentErrors)}</span>
+                        <span className="basis-full text-destructive text-xs">{worker.lastError.message}</span>
                       )}
                     </div>
                   </TableCell>
