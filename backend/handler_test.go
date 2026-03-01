@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/sessions"
+	"golang.org/x/oauth2"
 )
 
 // newTestGarageServer creates a mock Garage Admin API server.
@@ -27,9 +29,14 @@ func newTestGarageServer(t *testing.T) *httptest.Server {
 
 	mux.HandleFunc("/v2/layout", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			body, _ := io.ReadAll(r.Body)
+			var parsed json.RawMessage
+			_ = json.NewDecoder(r.Body).Decode(&parsed)
+			resp, _ := json.Marshal(map[string]interface{}{
+				"applied": true,
+				"body":    parsed,
+			})
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"applied":true,"body":"` + string(body) + `"}`))
+			w.Write(resp)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -83,6 +90,18 @@ func setupTestRouter(t *testing.T, garageURL string) (http.Handler, *sessions.Co
 		baseURL:    garageURL,
 		token:      "test-token",
 		httpClient: http.DefaultClient,
+	}
+
+	// Initialise oauthConfig so handleLogin works without panic.
+	oauthConfig = &oauth2.Config{
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://github.com/login/oauth/authorize",
+			TokenURL: "https://github.com/login/oauth/access_token",
+		},
+		RedirectURL: "http://localhost:8080/api/auth/callback",
+		Scopes:      []string{"read:org"},
 	}
 
 	// S3Client is nil — object endpoints won't work in these tests,
@@ -165,15 +184,17 @@ func TestAuthEndpointsAccessibleWithoutAuth(t *testing.T) {
 
 	handler, _ := setupTestRouter(t, gs.URL)
 
-	// /api/auth/login should NOT return 401 — it's a public endpoint.
-	// (oauthConfig is nil in tests so it won't actually redirect, but the
-	// important thing is that authMiddleware does not block the request.)
+	// /api/auth/login should redirect (302) to GitHub OAuth, not 401.
 	req := httptest.NewRequest("GET", "/api/auth/login", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code == http.StatusUnauthorized {
-		t.Error("/api/auth/login should not require auth")
+	if rr.Code != http.StatusFound {
+		t.Errorf("/api/auth/login expected 302 redirect, got %d", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "github.com") {
+		t.Errorf("expected redirect to GitHub, got Location: %s", loc)
 	}
 }
 
