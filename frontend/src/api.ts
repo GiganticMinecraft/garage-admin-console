@@ -32,11 +32,44 @@ export async function logout(): Promise<void> {
 }
 
 // Cluster
-export async function getClusterHealth(): Promise<Record<string, unknown>> {
+export interface ClusterHealth {
+  status: string
+  knownNodes: number
+  connectedNodes: number
+  storageNodes: number
+  storageNodesUp: number
+  partitions: number
+  partitionsQuorum: number
+  partitionsAllOk: number
+}
+
+export interface ClusterNode {
+  id: string
+  garageVersion: string
+  addr: string
+  hostname: string
+  isUp: boolean
+  lastSeenSecsAgo: number | null
+  role: {
+    zone: string
+    tags: string[]
+    capacity: number
+  }
+  draining: boolean
+  dataPartition: { available: number; total: number }
+  metadataPartition: { available: number; total: number }
+}
+
+export interface ClusterStatus {
+  layoutVersion: number
+  nodes: ClusterNode[]
+}
+
+export async function getClusterHealth(): Promise<ClusterHealth> {
   return fetchJSON('/cluster/health')
 }
 
-export async function getClusterStatus(): Promise<Record<string, unknown>> {
+export async function getClusterStatus(): Promise<ClusterStatus> {
   return fetchJSON('/cluster/status')
 }
 
