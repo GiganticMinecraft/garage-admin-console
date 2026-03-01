@@ -35,7 +35,9 @@ function BucketDetailPage() {
   })
 
   const allObjects = objects.data?.pages.flatMap((p) => p.objects) ?? []
-  const allPrefixes = objects.data?.pages[0]?.prefixes ?? []
+  const allPrefixes = [
+    ...new Set(objects.data?.pages.flatMap((p) => p.prefixes) ?? []),
+  ]
 
   const uploadMutation = useMutation({
     mutationFn: (file: File) => uploadFile(id, file),
