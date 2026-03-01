@@ -10,19 +10,48 @@ import {
   grantBucketKey,
   revokeBucketKey,
 } from '@/api'
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { Badge } from '@/components/ui/badge'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
 })
 
+interface BucketDetail {
+  id: string
+  globalAliases?: string[]
+  websiteAccess?: boolean
+  websiteConfig?: { indexDocument: string; errorDocument: string } | null
+  keys?: {
+    accessKeyId: string
+    name: string
+    permissions: { read: boolean; write: boolean; owner: boolean }
+  }[]
+  objects?: number
+  bytes?: number
+  unfinishedUploads?: number
+  unfinishedUploadBytes?: number
+  quotas?: { maxSize: number | null; maxObjects: number | null }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
 function BucketDetailPage() {
   const { id } = Route.useParams()
   const queryClient = useQueryClient()
   const [prefix, setPrefix] = useState('')
+  const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
+  const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
-    queryFn: () => getBucket(id),
+    queryFn: () => getBucket(id) as unknown as Promise<BucketDetail>,
   })
 
   const objects = useInfiniteQuery({
@@ -91,6 +120,8 @@ function BucketDetailPage() {
     },
   })
 
+  const data = bucket.data
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -99,19 +130,53 @@ function BucketDetailPage() {
         <span>{id.slice(0, 16)}...</span>
       </div>
 
-      <h1 className="text-2xl font-bold">Bucket Detail</h1>
+      <h1 className="text-2xl font-bold">
+        {data?.globalAliases?.[0] || 'Bucket Detail'}
+      </h1>
 
       {bucket.isLoading ? (
         <p className="text-muted-foreground">Loading...</p>
       ) : bucket.isError ? (
         <p className="text-destructive">Failed to load bucket</p>
-      ) : (
-        <div className="rounded-lg border p-4">
-          <pre className="overflow-auto text-sm">
-            {JSON.stringify(bucket.data, null, 2)}
-          </pre>
+      ) : data ? (
+        <div className="rounded-lg border p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+            <div>
+              <p className="text-muted-foreground">ID</p>
+              <p className="font-mono text-xs break-all">{data.id}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Aliases</p>
+              <div className="flex flex-wrap gap-1">
+                {data.globalAliases?.length
+                  ? data.globalAliases.map((a) => (
+                      <Badge key={a} variant="secondary">{a}</Badge>
+                    ))
+                  : <span className="text-muted-foreground">-</span>}
+              </div>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Objects</p>
+              <p className="font-medium">{data.objects ?? '-'}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Size</p>
+              <p className="font-medium">
+                {data.bytes != null ? formatBytes(data.bytes) : '-'}
+              </p>
+            </div>
+          </div>
+          {data.quotas && (data.quotas.maxSize || data.quotas.maxObjects) && (
+            <div className="text-sm">
+              <p className="text-muted-foreground">Quotas</p>
+              <p>
+                {data.quotas.maxObjects != null && `Max objects: ${data.quotas.maxObjects}`}
+                {data.quotas.maxSize != null && ` / Max size: ${formatBytes(data.quotas.maxSize)}`}
+              </p>
+            </div>
+          )}
         </div>
-      )}
+      ) : null}
 
       {/* Key Permissions */}
       <div className="space-y-2">
@@ -132,25 +197,25 @@ function BucketDetailPage() {
             Grant
           </button>
         </div>
-        {/* Existing keys shown from bucket detail */}
-        {bucket.data &&
-          Array.isArray((bucket.data as Record<string, unknown>).keys) &&
-          ((bucket.data as Record<string, unknown>).keys as { accessKeyId: string; permissions: Record<string, boolean> }[]).map(
-            (k) => (
-              <div key={k.accessKeyId} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-                <span className="font-mono">{k.accessKeyId}</span>
-                <button
-                  onClick={() => {
-                    if (confirm(`Revoke key ${k.accessKeyId}?`))
-                      revokeMutation.mutate(k.accessKeyId)
-                  }}
-                  className="text-destructive hover:underline"
-                >
-                  Revoke
-                </button>
+        {data?.keys?.map((k) => (
+          <div key={k.accessKeyId} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="font-mono">{k.accessKeyId}</span>
+              {k.name && <span className="text-muted-foreground">({k.name})</span>}
+              <div className="flex gap-1">
+                {k.permissions.read && <Badge variant="outline">read</Badge>}
+                {k.permissions.write && <Badge variant="outline">write</Badge>}
+                {k.permissions.owner && <Badge variant="outline">owner</Badge>}
               </div>
-            ),
-          )}
+            </div>
+            <button
+              onClick={() => setRevokeTarget(k.accessKeyId)}
+              className="text-destructive hover:underline"
+            >
+              Revoke
+            </button>
+          </div>
+        ))}
       </div>
 
       {/* Object Browser */}
@@ -225,10 +290,7 @@ function BucketDetailPage() {
                         Download
                       </a>
                       <button
-                        onClick={() => {
-                          if (confirm(`Delete ${obj.key}?`))
-                            deleteMutation.mutate(obj.key)
-                        }}
+                        onClick={() => setDeleteObjectTarget(obj.key)}
                         className="text-destructive hover:underline"
                       >
                         Delete
@@ -259,14 +321,28 @@ function BucketDetailPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteObjectTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteObjectTarget(null) }}
+        title="Delete Object"
+        description={`"${deleteObjectTarget}" を削除しますか？この操作は取り消せません。`}
+        onConfirm={() => {
+          if (deleteObjectTarget) deleteMutation.mutate(deleteObjectTarget)
+        }}
+        isPending={deleteMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        onOpenChange={(open) => { if (!open) setRevokeTarget(null) }}
+        title="Revoke Key"
+        description={`Key "${revokeTarget}" のアクセス権限を取り消しますか？`}
+        onConfirm={() => {
+          if (revokeTarget) revokeMutation.mutate(revokeTarget)
+        }}
+        isPending={revokeMutation.isPending}
+      />
     </div>
   )
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }

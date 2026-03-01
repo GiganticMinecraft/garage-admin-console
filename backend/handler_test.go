@@ -75,6 +75,10 @@ func newTestGarageServer(t *testing.T) *httptest.Server {
 	})
 
 	mux.HandleFunc("/v2/ListWorkers", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`[{"name":"repair","state":"idle"}]`))
 	})

@@ -64,12 +64,12 @@ func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	}
 }
 
-// handleUpdateBucket proxies PUT /api/buckets/{id} to Garage PUT /v2/UpdateBucket?id={id}.
+// handleUpdateBucket proxies PUT /api/buckets/{id} to Garage POST /v2/UpdateBucket?id={id}.
 func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		garagePath := "/v2/UpdateBucket?id=" + url.QueryEscape(id)
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPut, garagePath, r.Body)
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
@@ -89,12 +89,12 @@ func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	}
 }
 
-// handleDeleteBucket proxies DELETE /api/buckets/{id} to Garage DELETE /v2/DeleteBucket?id={id}.
+// handleDeleteBucket proxies DELETE /api/buckets/{id} to Garage POST /v2/DeleteBucket?id={id}.
 func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		garagePath := "/v2/DeleteBucket?id=" + url.QueryEscape(id)
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodDelete, garagePath, nil)
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, nil)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)

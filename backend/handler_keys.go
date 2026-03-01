@@ -89,12 +89,12 @@ func handleUpdateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	}
 }
 
-// handleDeleteKey proxies DELETE /api/keys/{id} to Garage DELETE /v2/DeleteKey?id={id}.
+// handleDeleteKey proxies DELETE /api/keys/{id} to Garage POST /v2/DeleteKey?id={id}.
 func handleDeleteKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 		garagePath := "/v2/DeleteKey?id=" + url.QueryEscape(id)
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodDelete, garagePath, nil)
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, nil)
 		if err != nil {
 			slog.Error("garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)

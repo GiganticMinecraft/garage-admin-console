@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { listBuckets, createBucket, deleteBucket } from '@/api'
 import type { BucketListItem } from '@/api'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 
 export const Route = createFileRoute('/buckets')({
   component: BucketsPage,
@@ -12,6 +13,7 @@ function BucketsPage() {
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [newBucketAlias, setNewBucketAlias] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<BucketListItem | null>(null)
 
   const { data: buckets, isLoading } = useQuery({
     queryKey: ['buckets'],
@@ -109,10 +111,7 @@ function BucketsPage() {
                   </td>
                   <td className="px-4 py-2 text-right">
                     <button
-                      onClick={() => {
-                        if (confirm(`Delete bucket ${bucket.id.slice(0, 16)}...?`))
-                          deleteMutation.mutate(bucket.id)
-                      }}
+                      onClick={() => setDeleteTarget(bucket)}
                       className="text-sm text-destructive hover:underline"
                     >
                       Delete
@@ -131,6 +130,17 @@ function BucketsPage() {
           </table>
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+        title="Delete Bucket"
+        description={`Bucket "${deleteTarget?.globalAliases?.[0] || deleteTarget?.id.slice(0, 16)}" を削除しますか？この操作は取り消せません。`}
+        onConfirm={() => {
+          if (deleteTarget) deleteMutation.mutate(deleteTarget.id)
+        }}
+        isPending={deleteMutation.isPending}
+      />
     </div>
   )
 }
