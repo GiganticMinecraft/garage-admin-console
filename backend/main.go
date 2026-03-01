@@ -23,6 +23,7 @@ func main() {
 
 	initAuth()
 	garageAdmin := newGarageAdminClient()
+	s3Client := newS3Client()
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -61,6 +62,23 @@ func main() {
 			r.Post("/{id}/keys", handleGrantBucketKey(garageAdmin))
 			r.Delete("/{id}/keys/{kid}", handleRevokeBucketKey(garageAdmin))
 		})
+
+		r.Route("/api/keys", func(r chi.Router) {
+			r.Get("/", handleListKeys(garageAdmin))
+			r.Post("/", handleCreateKey(garageAdmin))
+			r.Get("/{id}", handleGetKey(garageAdmin))
+			r.Put("/{id}", handleUpdateKey(garageAdmin))
+			r.Delete("/{id}", handleDeleteKey(garageAdmin))
+		})
+
+		r.Route("/api/objects", func(r chi.Router) {
+			r.Get("/{bucket}/list", handleListObjects(s3Client))
+			r.Get("/{bucket}/download", handleDownloadObject(s3Client))
+			r.Post("/{bucket}/upload", handleUploadObject(s3Client))
+			r.Delete("/{bucket}", handleDeleteObject(s3Client))
+		})
+
+		r.Get("/api/workers", handleListWorkers(garageAdmin))
 	})
 
 	addr := ":8080"
