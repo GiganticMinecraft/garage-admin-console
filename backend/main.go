@@ -22,6 +22,7 @@ func main() {
 	defer shutdown()
 
 	initAuth()
+	garageAdmin := newGarageAdminClient()
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -43,7 +44,13 @@ func main() {
 
 		r.Get("/api/auth/me", handleMe)
 		r.Post("/api/auth/logout", handleLogout)
-		// Additional protected routes will be added here in later tasks.
+
+		r.Route("/api/cluster", func(r chi.Router) {
+			r.Get("/health", handleClusterHealth(garageAdmin))
+			r.Get("/status", handleClusterStatus(garageAdmin))
+			r.Get("/layout", handleClusterLayout(garageAdmin))
+			r.Post("/layout", handleApplyLayout(garageAdmin))
+		})
 	})
 
 	addr := ":8080"
