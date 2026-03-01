@@ -133,8 +133,11 @@ export async function revokeBucketKey(bucketId: string, keyId: string): Promise<
 
 // Keys
 export interface KeyListItem {
-  accessKeyId: string
-  name?: string
+  id: string
+  name: string
+  created: string
+  expiration: string | null
+  expired: boolean
 }
 
 export async function listKeys(): Promise<KeyListItem[]> {

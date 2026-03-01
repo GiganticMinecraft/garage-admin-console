@@ -103,14 +103,14 @@ function KeysPage() {
             </TableHeader>
             <TableBody>
               {keys?.map((key: KeyListItem) => (
-                <TableRow key={key.accessKeyId}>
+                <TableRow key={key.id}>
                   <TableCell>
                     <Link
                       to="/keys/$id"
-                      params={{ id: key.accessKeyId }}
+                      params={{ id: key.id }}
                       className="font-mono text-primary underline-offset-4 hover:underline"
                     >
-                      {key.accessKeyId}
+                      {key.id}
                     </Link>
                   </TableCell>
                   <TableCell className="text-muted-foreground">
@@ -144,9 +144,9 @@ function KeysPage() {
         open={deleteTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         title="Delete Key"
-        description={`Key "${deleteTarget?.name || deleteTarget?.accessKeyId}" を削除しますか？この操作は取り消せません。`}
+        description={`Key "${deleteTarget?.name || deleteTarget?.id}" を削除しますか？この操作は取り消せません。`}
         onConfirm={() => {
-          if (deleteTarget) deleteMutation.mutate(deleteTarget.accessKeyId)
+          if (deleteTarget) deleteMutation.mutate(deleteTarget.id)
         }}
         isPending={deleteMutation.isPending}
       />
