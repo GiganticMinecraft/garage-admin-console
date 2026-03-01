@@ -80,7 +80,7 @@ func newTestGarageServer(t *testing.T) *httptest.Server {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"name":"repair","state":"idle"}]`))
+		w.Write([]byte(`{"success":{"node1":[{"name":"repair","state":"idle"}]},"error":{}}`))
 	})
 
 	return httptest.NewServer(mux)
