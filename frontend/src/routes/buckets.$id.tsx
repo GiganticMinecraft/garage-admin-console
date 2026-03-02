@@ -25,6 +25,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
+import { Folder } from 'lucide-react'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
@@ -53,6 +54,41 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+function PrefixBreadcrumb({
+  prefix,
+  onNavigate,
+}: {
+  prefix: string
+  onNavigate: (prefix: string) => void
+}) {
+  if (!prefix) return null
+  const segments = prefix.split('/').filter(Boolean)
+  return (
+    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+      <button
+        className="hover:underline"
+        onClick={() => onNavigate('')}
+      >
+        /
+      </button>
+      {segments.map((seg, i) => {
+        const path = segments.slice(0, i + 1).join('/') + '/'
+        return (
+          <span key={path} className="flex items-center gap-1">
+            <span>/</span>
+            <button
+              className="hover:underline"
+              onClick={() => onNavigate(path)}
+            >
+              {seg}
+            </button>
+          </span>
+        )
+      })}
+    </div>
+  )
 }
 
 function BucketDetailPage() {
@@ -283,6 +319,7 @@ function BucketDetailPage() {
       {/* Object Browser */}
       <div className="space-y-2">
         <h2 className="text-lg font-semibold">オブジェクト</h2>
+        <PrefixBreadcrumb prefix={prefix} onNavigate={setPrefix} />
         <div className="flex gap-2">
           <Input
             value={prefix}
@@ -319,9 +356,10 @@ function BucketDetailPage() {
             key={p}
             variant="link"
             size="sm"
-            className="block h-auto p-0"
+            className="flex h-auto items-center gap-1.5 p-0"
             onClick={() => setPrefix(p)}
           >
+            <Folder className="h-4 w-4" />
             {p}
           </Button>
         ))}
