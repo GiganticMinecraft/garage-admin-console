@@ -98,6 +98,7 @@ function BucketDetailPage() {
   const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
@@ -144,16 +145,17 @@ function BucketDetailPage() {
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
-      const file = e.dataTransfer.files[0]
-      if (file) uploadMutation.mutate(file)
+      setIsDragging(false)
+      const files = Array.from(e.dataTransfer.files)
+      files.forEach((file) => uploadMutation.mutate(file))
     },
     [uploadMutation],
   )
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
-      if (file) uploadMutation.mutate(file)
+      const files = Array.from(e.target.files ?? [])
+      files.forEach((file) => uploadMutation.mutate(file))
     },
     [uploadMutation],
   )
@@ -346,7 +348,7 @@ function BucketDetailPage() {
           <Button asChild size="sm">
             <label className="cursor-pointer">
               アップロード
-              <input type="file" className="hidden" onChange={handleFileSelect} />
+              <input type="file" className="hidden" multiple onChange={handleFileSelect} />
             </label>
           </Button>
         </div>
@@ -360,8 +362,18 @@ function BucketDetailPage() {
 
         <div
           onDragOver={(e) => e.preventDefault()}
+          onDragEnter={(e) => {
+            e.preventDefault()
+            setIsDragging(true)
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault()
+            setIsDragging(false)
+          }}
           onDrop={handleDrop}
-          className="rounded-lg border-2 border-dashed p-4 text-center text-sm text-muted-foreground"
+          className={`rounded-lg border-2 border-dashed p-4 text-center text-sm text-muted-foreground transition-colors ${
+            isDragging ? 'border-primary bg-primary/5' : ''
+          }`}
         >
           ここにファイルをドラッグ＆ドロップしてアップロード
         </div>
