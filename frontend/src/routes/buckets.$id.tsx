@@ -75,15 +75,20 @@ function PrefixBreadcrumb({
       </button>
       {segments.map((seg, i) => {
         const path = segments.slice(0, i + 1).join('/') + '/'
+        const isLast = i === segments.length - 1
         return (
           <span key={path} className="flex items-center gap-1">
-            <span>/</span>
-            <button
-              className="hover:underline"
-              onClick={() => onNavigate(path)}
-            >
-              {seg}
-            </button>
+            <span>&gt;</span>
+            {isLast ? (
+              <span>{seg}</span>
+            ) : (
+              <button
+                className="hover:underline"
+                onClick={() => onNavigate(path)}
+              >
+                {seg}
+              </button>
+            )}
           </span>
         )
       })}
