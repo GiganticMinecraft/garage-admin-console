@@ -21,7 +21,7 @@ func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		const garagePath = "/v2/CreateBucket"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -34,7 +34,7 @@ func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -46,7 +46,7 @@ func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		garagePath := "/v2/GetBucketInfo?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodGet, garagePath, nil)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -59,7 +59,7 @@ func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -71,7 +71,7 @@ func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		garagePath := "/v2/UpdateBucket?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -84,7 +84,7 @@ func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -96,7 +96,7 @@ func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		garagePath := "/v2/DeleteBucket?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, nil)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -109,7 +109,7 @@ func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -136,7 +136,7 @@ func handleGrantBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		const garagePath = "/v2/AllowBucketKey"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, pr)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -149,7 +149,7 @@ func handleGrantBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -180,7 +180,7 @@ func handleRevokeBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		const garagePath = "/v2/DenyBucketKey"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, pr)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -193,7 +193,7 @@ func handleRevokeBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }

@@ -4,21 +4,19 @@ import (
 	"context"
 	"log"
 
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/contrib/processors/baggagecopy"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
-func initTracer(ctx context.Context) (func(), error) {
-	exporter, err := otlptracehttp.New(ctx)
-	if err != nil {
-		return nil, err
-	}
-
+func initTelemetry(ctx context.Context) (func(), error) {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String("garage-admin-console"),
@@ -28,8 +26,14 @@ func initTracer(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 
+	// Traces
+	traceExporter, err := otlptracehttp.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+		sdktrace.WithBatcher(traceExporter),
 		sdktrace.WithResource(res),
 		sdktrace.WithSpanProcessor(baggagecopy.NewSpanProcessor(baggagecopy.AllowAllMembers)),
 	)
@@ -39,9 +43,28 @@ func initTracer(ctx context.Context) (func(), error) {
 		propagation.Baggage{},
 	))
 
+	// Metrics
+	metricExporter, err := otlpmetrichttp.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	mp := metric.NewMeterProvider(
+		metric.WithResource(res),
+		metric.WithReader(metric.NewPeriodicReader(metricExporter)),
+	)
+	otel.SetMeterProvider(mp)
+
+	if err := runtime.Start(); err != nil {
+		return nil, err
+	}
+
 	return func() {
 		if err := tp.Shutdown(ctx); err != nil {
 			log.Printf("error shutting down tracer: %v", err)
+		}
+		if err := mp.Shutdown(ctx); err != nil {
+			log.Printf("error shutting down meter: %v", err)
 		}
 	}, nil
 }

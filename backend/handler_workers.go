@@ -15,7 +15,7 @@ func handleListWorkers(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		const garagePath = "/v2/ListWorkers?node=*"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, strings.NewReader("{}"))
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -32,7 +32,7 @@ func handleListWorkers(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			Success map[string]json.RawMessage `json:"success"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&multiResp); err != nil {
-			slog.Error("failed to decode ListWorkers response", "error", err)
+			slog.ErrorContext(r.Context(), "failed to decode ListWorkers response", "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}

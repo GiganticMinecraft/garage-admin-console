@@ -12,7 +12,7 @@ func proxyGarageGET(garageAdmin *GarageAdminClient, garagePath string) http.Hand
 	return func(w http.ResponseWriter, r *http.Request) {
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodGet, garagePath, nil)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -25,7 +25,7 @@ func proxyGarageGET(garageAdmin *GarageAdminClient, garagePath string) http.Hand
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -52,7 +52,7 @@ func handleApplyLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		const garagePath = "/v2/ApplyClusterLayout"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -65,7 +65,7 @@ func handleApplyLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }

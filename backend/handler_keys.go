@@ -20,7 +20,7 @@ func handleCreateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		const garagePath = "/v2/CreateKey"
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -33,7 +33,7 @@ func handleCreateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -45,7 +45,7 @@ func handleGetKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		garagePath := "/v2/GetKeyInfo?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodGet, garagePath, nil)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -58,7 +58,7 @@ func handleGetKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -71,7 +71,7 @@ func handleUpdateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		garagePath := "/v2/UpdateKey?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -84,7 +84,7 @@ func handleUpdateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }
@@ -96,7 +96,7 @@ func handleDeleteKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		garagePath := "/v2/DeleteKey?id=" + url.QueryEscape(id)
 		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, nil)
 		if err != nil {
-			slog.Error("garage request failed", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
@@ -109,7 +109,7 @@ func handleDeleteKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.Error("failed to stream garage response", "path", garagePath, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 		}
 	}
 }

@@ -73,11 +73,11 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	slog.SetDefault(slog.New(newTraceHandler(slog.NewJSONHandler(os.Stderr, nil))))
 
-	shutdown, err := initTracer(context.Background())
+	shutdown, err := initTelemetry(context.Background())
 	if err != nil {
-		slog.Error("failed to init tracer", "error", err)
+		slog.Error("failed to init telemetry", "error", err)
 		os.Exit(1)
 	}
 	defer shutdown()
