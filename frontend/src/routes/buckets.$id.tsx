@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useCallback, useRef } from 'react'
 import {
@@ -29,6 +29,9 @@ import { Folder, FolderUp, Copy, Check } from 'lucide-react'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
+  validateSearch: (search: Record<string, unknown>): { prefix?: string } => ({
+    prefix: (search.prefix as string) || undefined,
+  }),
 })
 
 interface BucketDetail {
@@ -98,8 +101,21 @@ function PrefixBreadcrumb({
 
 function BucketDetailPage() {
   const { id } = Route.useParams()
+  const { prefix: rawPrefix } = Route.useSearch()
+  const prefix = rawPrefix ?? ''
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [prefix, setPrefix] = useState('')
+  const setPrefix = useCallback(
+    (newPrefix: string) => {
+      navigate({
+        to: '/buckets/$id',
+        params: { id },
+        search: { prefix: newPrefix || undefined },
+        replace: true,
+      })
+    },
+    [navigate, id],
+  )
   const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
