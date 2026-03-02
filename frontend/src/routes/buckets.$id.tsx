@@ -23,6 +23,7 @@ import {
   TableCell,
 } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/buckets/$id')({
@@ -122,19 +123,25 @@ function BucketDetailPage() {
 
   // Key grant state
   const [grantKeyId, setGrantKeyId] = useState('')
+  const [grantPermissions, setGrantPermissions] = useState({
+    read: true,
+    write: false,
+    owner: false,
+  })
   const grantMutation = useMutation({
     mutationFn: (accessKeyId: string) =>
       grantBucketKey(id, {
         accessKeyId,
-        permissions: { read: true, write: true, owner: false },
+        permissions: grantPermissions,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bucket', id] })
       setGrantKeyId('')
+      setGrantPermissions({ read: true, write: false, owner: false })
       toast.success('キーを付与しました')
     },
-    onError: (error) => {
-      toast.error(`キーの付与に失敗しました: ${error.message}`)
+    onError: (error: Error) => {
+      toast.error(`キーの付与に失敗: ${error.message}`)
     },
   })
 
@@ -220,20 +227,35 @@ function BucketDetailPage() {
       {/* Key Permissions */}
       <div className="space-y-2">
         <h2 className="text-lg font-semibold">キーの権限</h2>
-        <div className="flex gap-2">
-          <Input
-            value={grantKeyId}
-            onChange={(e) => setGrantKeyId(e.target.value)}
-            placeholder="アクセスキー ID"
-            className="flex-1"
-          />
-          <Button
-            size="sm"
-            onClick={() => grantMutation.mutate(grantKeyId)}
-            disabled={!grantKeyId || grantMutation.isPending}
-          >
-            付与
-          </Button>
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <Input
+              value={grantKeyId}
+              onChange={(e) => setGrantKeyId(e.target.value)}
+              placeholder="アクセスキー ID"
+              className="flex-1"
+            />
+            <Button
+              size="sm"
+              onClick={() => grantMutation.mutate(grantKeyId)}
+              disabled={!grantKeyId || grantMutation.isPending}
+            >
+              付与
+            </Button>
+          </div>
+          <div className="flex items-center gap-4">
+            {(['read', 'write', 'owner'] as const).map((perm) => (
+              <label key={perm} className="flex items-center gap-1.5 text-sm">
+                <Checkbox
+                  checked={grantPermissions[perm]}
+                  onCheckedChange={(checked) =>
+                    setGrantPermissions((prev) => ({ ...prev, [perm]: !!checked }))
+                  }
+                />
+                {perm}
+              </label>
+            ))}
+          </div>
         </div>
         {data?.keys?.map((k) => (
           <div key={k.accessKeyId} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
