@@ -95,20 +95,20 @@ func initAuth() {
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	state, err := randomState()
 	if err != nil {
-		slog.Error("failed to generate state", "error", err)
+		slog.ErrorContext(r.Context(), "failed to generate state", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	sess, err := sessionStore.Get(r, sessionName)
 	if err != nil {
-		slog.Error("failed to get session", "error", err)
+		slog.ErrorContext(r.Context(), "failed to get session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	sess.Values[sessionKeyState] = state
 	if err := sess.Save(r, w); err != nil {
-		slog.Error("failed to save session", "error", err)
+		slog.ErrorContext(r.Context(), "failed to save session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -123,7 +123,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 func handleCallback(w http.ResponseWriter, r *http.Request) {
 	sess, err := sessionStore.Get(r, sessionName)
 	if err != nil {
-		slog.Error("failed to get session", "error", err)
+		slog.ErrorContext(r.Context(), "failed to get session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -132,7 +132,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	expectedState, _ := sess.Values[sessionKeyState].(string)
 	actualState := r.URL.Query().Get("state")
 	if expectedState == "" || actualState == "" || expectedState != actualState {
-		slog.Warn("OAuth state mismatch")
+		slog.WarnContext(r.Context(), "OAuth state mismatch")
 		http.Error(w, "Forbidden: state mismatch", http.StatusForbidden)
 		return
 	}
@@ -141,7 +141,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	token, err := oauthConfig.Exchange(r.Context(), code)
 	if err != nil {
-		slog.Error("token exchange failed", "error", err)
+		slog.ErrorContext(r.Context(), "token exchange failed", "error", err)
 		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
@@ -149,14 +149,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	// Fetch user info from GitHub.
 	userInfo, err := fetchGitHubUser(r.Context(), token.AccessToken)
 	if err != nil {
-		slog.Error("failed to fetch GitHub user", "error", err)
+		slog.ErrorContext(r.Context(), "failed to fetch GitHub user", "error", err)
 		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
 
 	// Check org/team membership.
 	if err := checkTeamMembership(r.Context(), token.AccessToken, userInfo.Login); err != nil {
-		slog.Warn("team membership check failed", "user", userInfo.Login, "error", err)
+		slog.WarnContext(r.Context(), "team membership check failed", "user", userInfo.Login, "error", err)
 		http.Error(w, "Forbidden: not a member of the required team", http.StatusForbidden)
 		return
 	}
@@ -165,14 +165,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	// and issuing a new session ID.
 	sess.Options.MaxAge = -1 // expire old session cookie
 	if err := sess.Save(r, w); err != nil {
-		slog.Error("failed to expire old session", "error", err)
+		slog.ErrorContext(r.Context(), "failed to expire old session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	newSess, err := sessionStore.New(r, sessionName)
 	if err != nil {
-		slog.Error("failed to create new session", "error", err)
+		slog.ErrorContext(r.Context(), "failed to create new session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -180,7 +180,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	newSess.Values[sessionKeyAvatar] = userInfo.AvatarURL
 	newSess.Options = sessionStore.Options
 	if err := newSess.Save(r, w); err != nil {
-		slog.Error("failed to save new session", "error", err)
+		slog.ErrorContext(r.Context(), "failed to save new session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -216,7 +216,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	sess.Options.MaxAge = -1
 	if err := sess.Save(r, w); err != nil {
-		slog.Error("failed to destroy session", "error", err)
+		slog.ErrorContext(r.Context(), "failed to destroy session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}

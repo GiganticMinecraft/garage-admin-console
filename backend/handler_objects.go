@@ -54,7 +54,7 @@ func handleListObjects(s3Client *S3Client) http.HandlerFunc {
 
 		page, err := s3Client.client.ListObjectsV2(r.Context(), input)
 		if err != nil {
-			slog.Error("s3 ListObjectsV2 failed", "bucket", bucket, "error", err)
+			slog.ErrorContext(r.Context(), "s3 ListObjectsV2 failed", "bucket", bucket, "error", err)
 			http.Error(w, fmt.Sprintf(`{"error":"failed to list objects: %s"}`, err.Error()), http.StatusBadGateway)
 			return
 		}
@@ -87,7 +87,7 @@ func handleListObjects(s3Client *S3Client) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			slog.Error("failed to encode object list", "error", err)
+			slog.ErrorContext(r.Context(), "failed to encode object list", "error", err)
 		}
 	}
 }
@@ -108,7 +108,7 @@ func handleDownloadObject(s3Client *S3Client) http.HandlerFunc {
 			Key:    aws.String(key),
 		})
 		if err != nil {
-			slog.Error("s3 GetObject failed", "bucket", bucket, "key", key, "error", err)
+			slog.ErrorContext(r.Context(), "s3 GetObject failed", "bucket", bucket, "key", key, "error", err)
 			http.Error(w, fmt.Sprintf(`{"error":"failed to get object: %s"}`, err.Error()), http.StatusBadGateway)
 			return
 		}
@@ -126,7 +126,7 @@ func handleDownloadObject(s3Client *S3Client) http.HandlerFunc {
 		}
 
 		if _, err := io.Copy(w, output.Body); err != nil {
-			slog.Error("failed to stream object", "bucket", bucket, "key", key, "error", err)
+			slog.ErrorContext(r.Context(), "failed to stream object", "bucket", bucket, "key", key, "error", err)
 		}
 	}
 }
@@ -139,14 +139,14 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 
 		// 32 MB max memory for multipart form.
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			slog.Error("failed to parse multipart form", "error", err)
+			slog.ErrorContext(r.Context(), "failed to parse multipart form", "error", err)
 			http.Error(w, `{"error":"failed to parse multipart form"}`, http.StatusBadRequest)
 			return
 		}
 
 		file, header, err := r.FormFile("file")
 		if err != nil {
-			slog.Error("failed to get file from form", "error", err)
+			slog.ErrorContext(r.Context(), "failed to get file from form", "error", err)
 			http.Error(w, `{"error":"file field is required"}`, http.StatusBadRequest)
 			return
 		}
@@ -165,7 +165,7 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 			ContentLength: aws.Int64(header.Size),
 		})
 		if err != nil {
-			slog.Error("s3 PutObject failed", "bucket", bucket, "key", key, "error", err)
+			slog.ErrorContext(r.Context(), "s3 PutObject failed", "bucket", bucket, "key", key, "error", err)
 			http.Error(w, fmt.Sprintf(`{"error":"failed to upload object: %s"}`, err.Error()), http.StatusBadGateway)
 			return
 		}
@@ -195,7 +195,7 @@ func handleDeleteObject(s3Client *S3Client) http.HandlerFunc {
 			Key:    aws.String(key),
 		})
 		if err != nil {
-			slog.Error("s3 DeleteObject failed", "bucket", bucket, "key", key, "error", err)
+			slog.ErrorContext(r.Context(), "s3 DeleteObject failed", "bucket", bucket, "key", key, "error", err)
 			http.Error(w, fmt.Sprintf(`{"error":"failed to delete object: %s"}`, err.Error()), http.StatusBadGateway)
 			return
 		}
