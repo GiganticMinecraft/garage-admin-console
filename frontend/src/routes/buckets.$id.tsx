@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import {
   getBucket,
   listObjects,
@@ -99,6 +99,7 @@ function BucketDetailPage() {
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  const dragCounter = useRef(0)
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
@@ -145,6 +146,7 @@ function BucketDetailPage() {
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
+      dragCounter.current = 0
       setIsDragging(false)
       const files = Array.from(e.dataTransfer.files)
       files.forEach((file) => uploadMutation.mutate(file))
@@ -198,10 +200,14 @@ function BucketDetailPage() {
 
   const data = bucket.data
 
-  const handleCopyId = useCallback(() => {
-    navigator.clipboard.writeText(data?.id ?? id)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const handleCopyId = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(data?.id ?? id)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error('クリップボードへのコピーに失敗しました')
+    }
   }, [data?.id, id])
 
   return (
@@ -364,11 +370,13 @@ function BucketDetailPage() {
           onDragOver={(e) => e.preventDefault()}
           onDragEnter={(e) => {
             e.preventDefault()
+            dragCounter.current++
             setIsDragging(true)
           }}
           onDragLeave={(e) => {
             e.preventDefault()
-            setIsDragging(false)
+            dragCounter.current--
+            if (dragCounter.current === 0) setIsDragging(false)
           }}
           onDrop={handleDrop}
           className={`rounded-lg border-2 border-dashed p-4 text-center text-sm text-muted-foreground transition-colors ${
