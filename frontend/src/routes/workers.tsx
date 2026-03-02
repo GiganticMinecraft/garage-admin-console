@@ -15,6 +15,13 @@ export const Route = createFileRoute('/workers')({
   component: WorkersPage,
 })
 
+function formatSecsAgo(secs: number): string {
+  if (secs < 60) return `${Math.floor(secs)}秒前`
+  if (secs < 3600) return `${Math.floor(secs / 60)}分前`
+  if (secs < 86400) return `${Math.floor(secs / 3600)}時間前`
+  return `${Math.floor(secs / 86400)}日前`
+}
+
 function WorkersPage() {
   const { data: workers, isLoading, isError } = useQuery({
     queryKey: ['workers'],
@@ -47,20 +54,35 @@ function WorkersPage() {
                   </TableCell>
                   <TableCell>
                     {worker.state === 'idle' ? (
-                      <Badge variant="secondary">idle</Badge>
+                      <Badge variant={worker.consecutiveErrors > 0 ? 'destructive' : 'secondary'}>idle</Badge>
                     ) : worker.state === 'busy' ? (
-                      <Badge>busy</Badge>
+                      <Badge variant={worker.consecutiveErrors > 0 ? 'destructive' : 'default'}>busy</Badge>
                     ) : (
-                      <Badge variant="outline">{worker.state || 'unknown'}</Badge>
+                      <Badge variant={worker.consecutiveErrors > 0 ? 'destructive' : 'outline'}>{worker.state || 'unknown'}</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
-                      {worker.errors != null && worker.errors > 0 && (
-                        <span>エラー: <span className="text-destructive font-medium">{worker.errors}</span></span>
+                      {worker.consecutiveErrors > 0 && worker.errors > 0 && (
+                        <>
+                          <span className="text-destructive font-medium">
+                            エラー: {worker.errors}（連続 {worker.consecutiveErrors} 回）
+                          </span>
+                          {worker.lastError && (
+                            <span className="basis-full text-destructive text-xs">{worker.lastError.message}</span>
+                          )}
+                        </>
                       )}
-                      {worker.consecutiveErrors != null && worker.consecutiveErrors > 0 && (
-                        <span>連続エラー: <span className="text-destructive font-medium">{worker.consecutiveErrors}</span></span>
+                      {worker.consecutiveErrors === 0 && worker.errors > 0 && (
+                        <>
+                          <span className="text-muted-foreground">
+                            過去のエラー: {worker.errors}回
+                            {worker.lastError && `（${formatSecsAgo(worker.lastError.secsAgo)}に回復済み）`}
+                          </span>
+                          {worker.lastError && (
+                            <span className="basis-full text-muted-foreground text-xs">{worker.lastError.message}</span>
+                          )}
+                        </>
                       )}
                       {worker.queueLength != null && worker.queueLength > 0 && (
                         <span>キュー: <span className="font-medium">{worker.queueLength.toLocaleString()}</span></span>
@@ -70,9 +92,6 @@ function WorkersPage() {
                       )}
                       {worker.progress != null && (
                         <span>進捗: <span className="font-medium">{worker.progress}</span></span>
-                      )}
-                      {worker.lastError && (
-                        <span className="basis-full text-destructive text-xs">{worker.lastError.message}</span>
                       )}
                     </div>
                   </TableCell>
