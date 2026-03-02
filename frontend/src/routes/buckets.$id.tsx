@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import {
   getBucket,
   listObjects,
@@ -23,6 +23,9 @@ import {
   TableCell,
 } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Checkbox } from '@/components/ui/checkbox'
+import { toast } from 'sonner'
+import { Folder, Copy, Check } from 'lucide-react'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
@@ -53,12 +56,50 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
+function PrefixBreadcrumb({
+  prefix,
+  onNavigate,
+}: {
+  prefix: string
+  onNavigate: (prefix: string) => void
+}) {
+  if (!prefix) return null
+  const segments = prefix.split('/').filter(Boolean)
+  return (
+    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+      <button
+        className="hover:underline"
+        onClick={() => onNavigate('')}
+      >
+        /
+      </button>
+      {segments.map((seg, i) => {
+        const path = segments.slice(0, i + 1).join('/') + '/'
+        return (
+          <span key={path} className="flex items-center gap-1">
+            <span>/</span>
+            <button
+              className="hover:underline"
+              onClick={() => onNavigate(path)}
+            >
+              {seg}
+            </button>
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 function BucketDetailPage() {
   const { id } = Route.useParams()
   const queryClient = useQueryClient()
   const [prefix, setPrefix] = useState('')
   const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
+  const dragCounter = useRef(0)
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
@@ -83,6 +124,10 @@ function BucketDetailPage() {
     mutationFn: (file: File) => uploadFile(id, file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['objects', id] })
+      toast.success('アップロードしました')
+    },
+    onError: (error) => {
+      toast.error(`アップロードに失敗しました: ${error.message}`)
     },
   })
 
@@ -90,37 +135,54 @@ function BucketDetailPage() {
     mutationFn: (key: string) => deleteObject(id, key),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['objects', id] })
+      setDeleteObjectTarget(null)
+      toast.success('オブジェクトを削除しました')
+    },
+    onError: (error) => {
+      toast.error(`オブジェクトの削除に失敗しました: ${error.message}`)
     },
   })
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
-      const file = e.dataTransfer.files[0]
-      if (file) uploadMutation.mutate(file)
+      dragCounter.current = 0
+      setIsDragging(false)
+      const files = Array.from(e.dataTransfer.files)
+      files.forEach((file) => uploadMutation.mutate(file))
     },
     [uploadMutation],
   )
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
-      if (file) uploadMutation.mutate(file)
+      const files = Array.from(e.target.files ?? [])
+      files.forEach((file) => uploadMutation.mutate(file))
     },
     [uploadMutation],
   )
 
   // Key grant state
   const [grantKeyId, setGrantKeyId] = useState('')
+  const [grantPermissions, setGrantPermissions] = useState({
+    read: true,
+    write: false,
+    owner: false,
+  })
   const grantMutation = useMutation({
     mutationFn: (accessKeyId: string) =>
       grantBucketKey(id, {
         accessKeyId,
-        permissions: { read: true, write: true, owner: false },
+        permissions: grantPermissions,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bucket', id] })
       setGrantKeyId('')
+      setGrantPermissions({ read: true, write: false, owner: false })
+      toast.success('キーを付与しました')
+    },
+    onError: (error: Error) => {
+      toast.error(`キーの付与に失敗: ${error.message}`)
     },
   })
 
@@ -128,17 +190,32 @@ function BucketDetailPage() {
     mutationFn: (keyId: string) => revokeBucketKey(id, keyId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bucket', id] })
+      setRevokeTarget(null)
+      toast.success('キーを取り消しました')
+    },
+    onError: (error) => {
+      toast.error(`キーの取り消しに失敗しました: ${error.message}`)
     },
   })
 
   const data = bucket.data
+
+  const handleCopyId = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(data?.id ?? id)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error('クリップボードへのコピーに失敗しました')
+    }
+  }, [data?.id, id])
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Link to="/buckets" className="hover:underline">バケット</Link>
         <span>/</span>
-        <span>{id.slice(0, 16)}...</span>
+        <span>{data?.globalAliases?.[0] || `${id.slice(0, 16)}...`}</span>
       </div>
 
       <h1 className="text-2xl font-bold">
@@ -184,7 +261,16 @@ function BucketDetailPage() {
           </div>
           <div className="text-sm">
             <p className="text-muted-foreground">ID</p>
-            <p className="font-mono text-xs text-muted-foreground break-all">{data.id}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="font-mono text-xs text-muted-foreground break-all">{data.id}</p>
+              <button
+                onClick={handleCopyId}
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                title="IDをコピー"
+              >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
           </div>
           {data.quotas && (data.quotas.maxSize || data.quotas.maxObjects) && (
             <div className="text-sm">
@@ -201,20 +287,35 @@ function BucketDetailPage() {
       {/* Key Permissions */}
       <div className="space-y-2">
         <h2 className="text-lg font-semibold">キーの権限</h2>
-        <div className="flex gap-2">
-          <Input
-            value={grantKeyId}
-            onChange={(e) => setGrantKeyId(e.target.value)}
-            placeholder="アクセスキー ID"
-            className="flex-1"
-          />
-          <Button
-            size="sm"
-            onClick={() => grantMutation.mutate(grantKeyId)}
-            disabled={!grantKeyId || grantMutation.isPending}
-          >
-            付与
-          </Button>
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <Input
+              value={grantKeyId}
+              onChange={(e) => setGrantKeyId(e.target.value)}
+              placeholder="アクセスキー ID"
+              className="flex-1"
+            />
+            <Button
+              size="sm"
+              onClick={() => grantMutation.mutate(grantKeyId)}
+              disabled={!grantKeyId || grantMutation.isPending}
+            >
+              付与
+            </Button>
+          </div>
+          <div className="flex items-center gap-4">
+            {(['read', 'write', 'owner'] as const).map((perm) => (
+              <label key={perm} className="flex items-center gap-1.5 text-sm">
+                <Checkbox
+                  checked={grantPermissions[perm]}
+                  onCheckedChange={(checked) =>
+                    setGrantPermissions((prev) => ({ ...prev, [perm]: !!checked }))
+                  }
+                />
+                {perm}
+              </label>
+            ))}
+          </div>
         </div>
         {data?.keys?.map((k) => (
           <div key={k.accessKeyId} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
@@ -242,6 +343,7 @@ function BucketDetailPage() {
       {/* Object Browser */}
       <div className="space-y-2">
         <h2 className="text-lg font-semibold">オブジェクト</h2>
+        <PrefixBreadcrumb prefix={prefix} onNavigate={setPrefix} />
         <div className="flex gap-2">
           <Input
             value={prefix}
@@ -252,7 +354,7 @@ function BucketDetailPage() {
           <Button asChild size="sm">
             <label className="cursor-pointer">
               アップロード
-              <input type="file" className="hidden" onChange={handleFileSelect} />
+              <input type="file" className="hidden" multiple onChange={handleFileSelect} />
             </label>
           </Button>
         </div>
@@ -266,8 +368,20 @@ function BucketDetailPage() {
 
         <div
           onDragOver={(e) => e.preventDefault()}
+          onDragEnter={(e) => {
+            e.preventDefault()
+            dragCounter.current++
+            setIsDragging(true)
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault()
+            dragCounter.current--
+            if (dragCounter.current === 0) setIsDragging(false)
+          }}
           onDrop={handleDrop}
-          className="rounded-lg border-2 border-dashed p-4 text-center text-sm text-muted-foreground"
+          className={`rounded-lg border-2 border-dashed p-4 text-center text-sm text-muted-foreground transition-colors ${
+            isDragging ? 'border-primary bg-primary/5' : ''
+          }`}
         >
           ここにファイルをドラッグ＆ドロップしてアップロード
         </div>
@@ -278,9 +392,10 @@ function BucketDetailPage() {
             key={p}
             variant="link"
             size="sm"
-            className="block h-auto p-0"
+            className="flex h-auto items-center gap-1.5 p-0"
             onClick={() => setPrefix(p)}
           >
+            <Folder className="h-4 w-4" />
             {p}
           </Button>
         ))}
