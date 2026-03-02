@@ -23,6 +23,7 @@ import {
   TableCell,
 } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
@@ -83,6 +84,10 @@ function BucketDetailPage() {
     mutationFn: (file: File) => uploadFile(id, file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['objects', id] })
+      toast.success('アップロードしました')
+    },
+    onError: (error) => {
+      toast.error(`アップロードに失敗しました: ${error.message}`)
     },
   })
 
@@ -90,6 +95,11 @@ function BucketDetailPage() {
     mutationFn: (key: string) => deleteObject(id, key),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['objects', id] })
+      setDeleteObjectTarget(null)
+      toast.success('オブジェクトを削除しました')
+    },
+    onError: (error) => {
+      toast.error(`オブジェクトの削除に失敗しました: ${error.message}`)
     },
   })
 
@@ -121,6 +131,10 @@ function BucketDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bucket', id] })
       setGrantKeyId('')
+      toast.success('キーを付与しました')
+    },
+    onError: (error) => {
+      toast.error(`キーの付与に失敗しました: ${error.message}`)
     },
   })
 
@@ -128,6 +142,11 @@ function BucketDetailPage() {
     mutationFn: (keyId: string) => revokeBucketKey(id, keyId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bucket', id] })
+      setRevokeTarget(null)
+      toast.success('キーを取り消しました')
+    },
+    onError: (error) => {
+      toast.error(`キーの取り消しに失敗しました: ${error.message}`)
     },
   })
 
