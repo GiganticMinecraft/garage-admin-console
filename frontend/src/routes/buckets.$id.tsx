@@ -25,7 +25,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
-import { Folder } from 'lucide-react'
+import { Folder, Copy, Check } from 'lucide-react'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
@@ -97,6 +97,7 @@ function BucketDetailPage() {
   const [prefix, setPrefix] = useState('')
   const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
@@ -195,12 +196,18 @@ function BucketDetailPage() {
 
   const data = bucket.data
 
+  const handleCopyId = useCallback(() => {
+    navigator.clipboard.writeText(data?.id ?? id)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }, [data?.id, id])
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Link to="/buckets" className="hover:underline">バケット</Link>
         <span>/</span>
-        <span>{id.slice(0, 16)}...</span>
+        <span>{data?.globalAliases?.[0] || `${id.slice(0, 16)}...`}</span>
       </div>
 
       <h1 className="text-2xl font-bold">
@@ -246,7 +253,16 @@ function BucketDetailPage() {
           </div>
           <div className="text-sm">
             <p className="text-muted-foreground">ID</p>
-            <p className="font-mono text-xs text-muted-foreground break-all">{data.id}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="font-mono text-xs text-muted-foreground break-all">{data.id}</p>
+              <button
+                onClick={handleCopyId}
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                title="IDをコピー"
+              >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
           </div>
           {data.quotas && (data.quotas.maxSize || data.quotas.maxObjects) && (
             <div className="text-sm">
