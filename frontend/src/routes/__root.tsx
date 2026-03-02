@@ -6,6 +6,7 @@ import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/s
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Toaster } from '@/components/ui/sonner'
 
 function RootLayout() {
   const navigate = useNavigate()
@@ -65,18 +66,21 @@ function RootLayout() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar user={user} onLogout={handleLogout} />
-      <SidebarInset>
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 h-4" />
-        </header>
-        <main className="flex-1 p-4">
-          <Outlet />
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+    <>
+      <SidebarProvider>
+        <AppSidebar user={user} onLogout={handleLogout} />
+        <SidebarInset>
+          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+          </header>
+          <main className="flex-1 p-4">
+            <Outlet />
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+      <Toaster />
+    </>
   )
 }
 
