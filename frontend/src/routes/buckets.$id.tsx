@@ -208,7 +208,7 @@ function BucketDetailPage() {
     } catch {
       toast.error('クリップボードへのコピーに失敗しました')
     }
-  }, [data?.id, id])
+  }, [data, id])
 
   return (
     <div className="space-y-6">
