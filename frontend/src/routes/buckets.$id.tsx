@@ -25,7 +25,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
-import { Folder, Copy, Check } from 'lucide-react'
+import { Folder, FolderUp, Copy, Check } from 'lucide-react'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
@@ -387,6 +387,21 @@ function BucketDetailPage() {
         </div>
 
         {/* Prefix navigation */}
+        {prefix && (
+          <Button
+            variant="link"
+            size="sm"
+            className="flex h-auto items-center gap-1.5 p-0"
+            onClick={() => {
+              const segments = prefix.replace(/\/$/, '').split('/')
+              segments.pop()
+              setPrefix(segments.length > 0 ? segments.join('/') + '/' : '')
+            }}
+          >
+            <FolderUp className="h-4 w-4" />
+            ../
+          </Button>
+        )}
         {allPrefixes.map((p: string) => (
           <Button
             key={p}
