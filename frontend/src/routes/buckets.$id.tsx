@@ -145,6 +145,7 @@ function BucketDetailPage() {
     mutationFn: (file: File) => uploadFile(id, file, prefix || undefined),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['objects', id] })
+      queryClient.invalidateQueries({ queryKey: ['bucket', id] })
       toast.success(`アップロードしました: ${data.key}`)
     },
     onError: (error) => {
