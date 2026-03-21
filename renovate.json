@@ -3,7 +3,7 @@
   "extends": ["github>GiganticMinecraft/renovate-config"],
   "packageRules": [
     {
-      "groupName": "vite",
+      "groupName": "Vite packages",
       "matchPackageNames": ["vite", "@vitejs/**", "@tailwindcss/vite"]
     }
   ]
