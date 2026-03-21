@@ -190,9 +190,12 @@ export function downloadObjectUrl(bucket: string, key: string): string {
   return `${BASE}/objects/${bucket}/download?key=${encodeURIComponent(key)}`
 }
 
-export async function uploadFile(bucket: string, file: File): Promise<void> {
+export async function uploadFile(bucket: string, file: File, prefix?: string): Promise<void> {
   const form = new FormData()
   form.append('file', file)
+  if (prefix) {
+    form.append('key', prefix + file.name)
+  }
   const res = await fetch(`${BASE}/objects/${bucket}/upload`, {
     method: 'POST',
     headers: { 'X-Requested-With': 'XMLHttpRequest' },
