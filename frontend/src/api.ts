@@ -190,7 +190,7 @@ export function downloadObjectUrl(bucket: string, key: string): string {
   return `${BASE}/objects/${bucket}/download?key=${encodeURIComponent(key)}`
 }
 
-export async function uploadFile(bucket: string, file: File, prefix?: string): Promise<void> {
+export async function uploadFile(bucket: string, file: File, prefix?: string): Promise<{ key: string }> {
   const form = new FormData()
   form.append('file', file)
   if (prefix) {
@@ -202,6 +202,7 @@ export async function uploadFile(bucket: string, file: File, prefix?: string): P
     body: form,
   })
   if (!res.ok) throw new Error(`Upload error: ${res.status}`)
+  return res.json()
 }
 
 export async function deleteObject(bucket: string, key: string): Promise<void> {
