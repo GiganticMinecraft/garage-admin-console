@@ -5,6 +5,10 @@
     {
       "groupName": "Vite packages",
       "matchPackageNames": ["vite", "@vitejs/**", "@tailwindcss/vite"]
+    },
+    {
+      "groupName": "ESLint packages",
+      "matchPackageNames": ["eslint", "@eslint/**", "typescript-eslint", "@typescript-eslint/**"]
     }
   ]
 }
