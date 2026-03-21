@@ -1,4 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>GiganticMinecraft/renovate-config"]
+  "extends": ["github>GiganticMinecraft/renovate-config"],
+  "packageRules": [
+    {
+      "groupName": "vite",
+      "matchPackageNames": ["vite", "@vitejs/**"]
+    }
+  ]
 }
