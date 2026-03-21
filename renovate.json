@@ -4,7 +4,7 @@
   "packageRules": [
     {
       "groupName": "vite",
-      "matchPackageNames": ["vite", "@vitejs/**"]
+      "matchPackageNames": ["vite", "@vitejs/**", "@tailwindcss/vite"]
     }
   ]
 }
