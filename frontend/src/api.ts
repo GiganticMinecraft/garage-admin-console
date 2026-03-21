@@ -194,7 +194,8 @@ export async function uploadFile(bucket: string, file: File, prefix?: string): P
   const form = new FormData()
   form.append('file', file)
   if (prefix) {
-    form.append('key', prefix + file.name)
+    const keyPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`
+    form.append('key', keyPrefix + file.name)
   }
   const res = await fetch(`${BASE}/objects/${bucket}/upload`, {
     method: 'POST',
