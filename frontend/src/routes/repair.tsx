@@ -1,14 +1,17 @@
 import { useState } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
-import { useMutation } from '@tanstack/react-query'
+import { Link, createFileRoute } from '@tanstack/react-router'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import {
+  getClusterHealth,
   launchRepair,
+  listBlockErrors,
   type RepairType,
   type ScrubCommand,
 } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/repair')({
@@ -16,72 +19,135 @@ export const Route = createFileRoute('/repair')({
 })
 
 const REPAIR_OPERATIONS: {
-  value: string
+  value: Exclude<RepairType, { scrub: ScrubCommand }>
   label: string
-  description: string
+  why: string
+  trigger: string
+  caution: string
   severity: 'low' | 'medium' | 'high'
 }[] = [
   {
-    value: 'tables',
-    label: 'テーブル修復',
-    description: '全メタデータテーブルを走査し、不整合を修復します。データの読み書きに問題がある場合に実行してください。',
-    severity: 'medium',
-  },
-  {
     value: 'blocks',
     label: 'ブロック整合性検証',
-    description: 'ブロックの所在を確認し、レプリカが不足しているノードにデータを再配置します。ノード障害後の復旧時に有用です。',
-    severity: 'medium',
-  },
-  {
-    value: 'versions',
-    label: 'バージョン修復',
-    description: 'オブジェクトのバージョンメタデータを検証・修復します。オブジェクトの一覧や取得で不整合がある場合に実行してください。',
-    severity: 'medium',
-  },
-  {
-    value: 'multipartUploads',
-    label: 'マルチパートアップロード修復',
-    description: '中断されたマルチパートアップロードのメタデータを修復します。アップロードが途中で止まった場合に有用です。',
-    severity: 'low',
-  },
-  {
-    value: 'blockRefs',
-    label: 'ブロック参照修復',
-    description: 'ブロックとオブジェクト間の参照関係を検証・修復します。',
+    why: '不足レプリカの再配置とブロック整合性の回復に使います。',
+    trigger: 'layout apply 後、ノード障害・交換後、復旧後の定番操作です。',
+    caution: '数時間待って resync が自然収束しない場合に実行します。',
     severity: 'medium',
   },
   {
     value: 'blockRc',
     label: 'ブロック参照カウント修復',
-    description: 'ブロックの参照カウントを再計算します。不要なブロックが削除されない場合に実行してください。',
+    why: '参照カウントを再計算し、RC 不整合を修正します。',
+    trigger: 'ログに RC 不整合が出るとき、ブロックエラーが高止まりしているとき。',
+    caution: '根本原因が block ref 側にある場合は blockRefs と併用を検討します。',
+    severity: 'medium',
+  },
+  {
+    value: 'tables',
+    label: 'テーブル修復',
+    why: 'メタデータテーブルの全体同期を促します。',
+    trigger: '通常不要。メタデータ同期の異常や大規模障害後に限定します。',
+    caution: '毎時の自動同期があるため、安易な定期実行は不要です。',
+    severity: 'medium',
+  },
+  {
+    value: 'versions',
+    label: 'バージョン修復',
+    why: 'オブジェクト version メタデータの不整合を是正します。',
+    trigger: '長時間停止や障害後に object/version の整合が崩れた疑いがあるとき。',
+    caution: '通常運用で使う操作ではありません。',
+    severity: 'medium',
+  },
+  {
+    value: 'blockRefs',
+    label: 'ブロック参照修復',
+    why: 'block ref と object/version の参照関係を修復します。',
+    trigger: '孤立参照が GC を妨げている、version 系の不整合が疑われるとき。',
+    caution: 'versions や blockRc とセットで判断する操作です。',
     severity: 'medium',
   },
   {
     value: 'rebalance',
     label: 'リバランス',
-    description: 'クラスタのレイアウト変更後にデータを再配置します。ノードの追加・削除後に実行してください。',
+    why: 'ストレージ構成変更後にデータ配置を均します。',
+    trigger: 'ディスク追加、ノード追加、容量配分変更後。',
+    caution: '障害対応ではなく構成変更後の整流化です。',
+    severity: 'low',
+  },
+  {
+    value: 'multipartUploads',
+    label: 'マルチパート修復',
+    why: '中断された multipart upload 関連のメタデータを整えます。',
+    trigger: 'multipart upload 周りだけおかしいとき。',
+    caution: '一般的な障害対応の主軸ではありません。',
     severity: 'low',
   },
   {
     value: 'aliases',
     label: 'エイリアス修復',
-    description: 'バケットのグローバル/ローカルエイリアスの不整合を修復します。',
+    why: 'バケット alias の不整合を修正します。',
+    trigger: 'alias 解決だけが壊れているとき。',
+    caution: '極めてまれな用途です。',
     severity: 'low',
   },
   {
     value: 'clearResyncQueue',
     label: 'リシンクキューのクリア',
-    description: 'ブロックのリシンクキューを全てクリアします。キューが詰まってリシンクが進まない場合に使用してください。',
+    why: '詰まった resync キューを強制的に空にします。',
+    trigger: '永久失敗ブロックを purge した後の最終手段です。',
+    caution: '先に /blocks で原因を確認し、必要な purge を済ませてから使います。',
     severity: 'high',
   },
 ]
 
-const SCRUB_COMMANDS: { value: ScrubCommand; label: string; description: string }[] = [
-  { value: 'start', label: '開始', description: '全ブロックのチェックサムを検証するフルスキャンを開始します。ディスク I/O が増加します。' },
-  { value: 'pause', label: '一時停止', description: '実行中の Scrub を一時停止します。' },
-  { value: 'resume', label: '再開', description: '一時停止中の Scrub を再開します。' },
-  { value: 'cancel', label: 'キャンセル', description: '実行中の Scrub を中止します。' },
+const SCRUB_COMMANDS: { value: ScrubCommand; label: string; summary: string }[] = [
+  { value: 'start', label: '開始', summary: '全ブロックの整合性検証を開始します。' },
+  { value: 'pause', label: '一時停止', summary: '実行中の scrub を止めます。' },
+  { value: 'resume', label: '再開', summary: '一時停止した scrub を再開します。' },
+  { value: 'cancel', label: 'キャンセル', summary: '実行中の scrub を中止します。' },
+]
+
+const PLAYBOOKS: {
+  title: string
+  summary: string
+  steps: { text: string; link?: { to: string; label: string } }[]
+}[] = [
+  {
+    title: 'レイアウト変更後',
+    summary: '最も一般的なメンテナンス導線です。',
+    steps: [
+      { text: 'layout apply 後しばらく待ち、自然収束しないなら blocks を実行' },
+      { text: 'ブロックエラーが残る場合は対象 hash を確認', link: { to: '/blocks', label: 'ブロックエラー' } },
+      { text: '必要なら purge 後に blockRefs / blockRc を続ける' },
+    ],
+  },
+  {
+    title: 'リシンクエラー発生時',
+    summary: 'まずブロック単位で原因を見ます。',
+    steps: [
+      { text: 'errored block を確認し、詳細を開く', link: { to: '/blocks', label: 'ブロックエラー' } },
+      { text: '喪失確定なら purge、その後 blockRefs / blockRc を実行' },
+      { text: 'キューだけが詰まるなら clearResyncQueue は最後に検討' },
+    ],
+  },
+  {
+    title: '定期メンテナンス',
+    summary: 'scrub は定期運用で使う操作です。',
+    steps: [
+      { text: 'scrub は四半期ごとの実施を目安にする' },
+      { text: 'ディスク I/O エラーが疑われるときは定期外でも開始を検討' },
+      { text: 'corruption 系メトリクスは本来 Prometheus で監視する' },
+    ],
+  },
+  {
+    title: '大規模障害後',
+    summary: '広範囲の整合性確認が必要です。',
+    steps: [
+      { text: 'metadata の異常が疑われるなら tables' },
+      { text: 'データ配置と不足レプリカの回復に blocks' },
+      { text: '症状が version / block ref に及ぶ場合のみ個別修復を追加' },
+    ],
+  },
 ]
 
 const SEVERITY_VARIANT = {
@@ -91,15 +157,67 @@ const SEVERITY_VARIANT = {
 } as const
 
 const SEVERITY_LABEL = {
-  low: '低リスク',
-  medium: '中リスク',
-  high: '高リスク',
+  low: '限定用途',
+  medium: '要判断',
+  high: '最終手段',
+}
+
+function SignalCard({
+  title,
+  value,
+  hint,
+  tone = 'neutral',
+}: {
+  title: string
+  value: string
+  hint: string
+  tone?: 'neutral' | 'warning' | 'danger'
+}) {
+  const valueClass =
+    tone === 'danger'
+      ? 'text-destructive'
+      : tone === 'warning'
+        ? 'text-amber-600'
+        : 'text-foreground'
+
+  return (
+    <div className="rounded-lg border p-4 space-y-2">
+      <p className="text-sm text-muted-foreground">{title}</p>
+      <p className={`text-2xl font-semibold ${valueClass}`}>{value}</p>
+      <p className="text-sm text-muted-foreground">{hint}</p>
+    </div>
+  )
+}
+
+function SectionSkeleton() {
+  return (
+    <div className="grid gap-3 md:grid-cols-3">
+      {Array.from({ length: 3 }).map((_, i) => (
+        <div key={i} className="rounded-lg border p-4 space-y-2">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-4 w-full" />
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function RepairPage() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [pendingRepairType, setPendingRepairType] = useState<RepairType | null>(null)
   const [pendingLabel, setPendingLabel] = useState('')
+  const [pendingSeverity, setPendingSeverity] = useState<'low' | 'medium' | 'high'>('medium')
+
+  const health = useQuery({
+    queryKey: ['cluster', 'health'],
+    queryFn: getClusterHealth,
+  })
+
+  const blockErrors = useQuery({
+    queryKey: ['blockErrors'],
+    queryFn: listBlockErrors,
+  })
 
   const mutation = useMutation({
     mutationFn: (repairType: RepairType) => launchRepair(repairType),
@@ -117,66 +235,235 @@ function RepairPage() {
     onError: () => toast.error('修復操作に失敗しました'),
   })
 
-  const requestRepair = (repairType: RepairType, label: string) => {
+  const requestRepair = (
+    repairType: RepairType,
+    label: string,
+    severity: 'low' | 'medium' | 'high',
+  ) => {
     setPendingRepairType(repairType)
     setPendingLabel(label)
+    setPendingSeverity(severity)
     setConfirmOpen(true)
   }
 
+  const errorCount = blockErrors.data?.length ?? 0
+  const shouldInvestigateBlocks = errorCount > 0
+  const isClusterHealthy = health.data?.status === 'healthy'
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">メンテナンス操作</h1>
-        <p className="text-muted-foreground mt-1">
-          全ノードに対して修復・検証操作を実行します。操作中はクラスタの負荷が上がる場合があります。
-        </p>
+    <div className="space-y-8">
+      <div className="rounded-2xl border bg-gradient-to-br from-slate-50 via-white to-amber-50 p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-muted-foreground">Maintenance Console</p>
+            <h1 className="text-3xl font-semibold tracking-tight">メンテナンス判断と修復操作</h1>
+            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+              今見えている兆候から次に打つべき操作を判断し、そのまま実行できます。
+              本来重要な Prometheus メトリクスはまだ未接続のため、この画面では
+              「見えているもの」と「見えていないもの」を明示します。
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link to="/blocks">ブロックエラーを見る</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/layout">レイアウトを確認</Link>
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold">修復操作</h2>
-        <div className="grid gap-3">
-          {REPAIR_OPERATIONS.map((op) => (
-            <div key={op.value} className="rounded-lg border p-4 flex items-start justify-between gap-4">
-              <div className="space-y-1 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{op.label}</span>
-                  <Badge variant={SEVERITY_VARIANT[op.severity]}>{SEVERITY_LABEL[op.severity]}</Badge>
-                </div>
-                <p className="text-sm text-muted-foreground">{op.description}</p>
+        <div>
+          <h2 className="text-lg font-semibold">現在見えているシグナル</h2>
+          <p className="text-sm text-muted-foreground">
+            即時判断に使えるのは、クラスタ状態とブロックエラー一覧です。
+          </p>
+        </div>
+        {health.isLoading || blockErrors.isLoading ? (
+          <SectionSkeleton />
+        ) : (
+          <div className="grid gap-3 md:grid-cols-3">
+            <SignalCard
+              title="クラスタ状態"
+              value={health.isError ? '取得失敗' : isClusterHealthy ? 'healthy' : health.data?.status ?? 'unknown'}
+              hint={
+                health.isError
+                  ? 'クラスタ health API の取得に失敗しました。'
+                  : isClusterHealthy
+                    ? '大域的な health は正常です。'
+                    : 'クラスタ全体の健康状態に異常があります。'
+              }
+              tone={health.isError ? 'warning' : isClusterHealthy ? 'neutral' : 'warning'}
+            />
+            <SignalCard
+              title="ブロックエラー数"
+              value={blockErrors.isError ? '取得失敗' : errorCount.toString()}
+              hint={
+                blockErrors.isError
+                  ? '/blocks 一覧を取得できませんでした。'
+                  : errorCount > 0
+                    ? '0 でないため、まず /blocks で対象 hash を確認すべき状態です。'
+                    : '現時点で見えている resync error はありません。'
+              }
+              tone={blockErrors.isError ? 'warning' : errorCount > 0 ? 'danger' : 'neutral'}
+            />
+            <SignalCard
+              title="次の推奨アクション"
+              value={shouldInvestigateBlocks ? 'まず /blocks' : '定期保守のみ'}
+              hint={
+                shouldInvestigateBlocks
+                  ? 'blocks 実行や purge の前に、どの block が失敗しているかを確認します。'
+                  : '緊急兆候がなければ scrub や layout 後の blocks を計画的に行います。'
+              }
+              tone={shouldInvestigateBlocks ? 'danger' : 'neutral'}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">まだ見えていない重要メトリクス</h2>
+          <p className="text-sm text-muted-foreground">
+            ここが未接続なため、今のコンソールは「兆候の観測」より「操作実行」に寄っています。
+          </p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-dashed p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="font-medium">`block.resync_errored_blocks`</p>
+              <Badge variant="outline">未接続</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              理想値は 0。ブロック喪失や継続失敗の早期検知に使います。
+            </p>
+          </div>
+          <div className="rounded-lg border border-dashed p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="font-medium">`block.resync_queue_length`</p>
+              <Badge variant="outline">未接続</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              layout 変更後に一時的に増えてもよいが、減らないなら詰まりを疑います。
+            </p>
+          </div>
+          <div className="rounded-lg border border-dashed p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="font-medium">`block.corruption_counter`</p>
+              <Badge variant="outline">未接続</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              scrub が検出した破損回数。増加はディスク障害の重要なサインです。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">状況別プレイブック</h2>
+          <p className="text-sm text-muted-foreground">
+            操作名から考えるのではなく、障害や変更イベントから逆引きします。
+          </p>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {PLAYBOOKS.map((playbook) => (
+            <div key={playbook.title} className="rounded-lg border p-4 space-y-3">
+              <div>
+                <h3 className="font-medium">{playbook.title}</h3>
+                <p className="text-sm text-muted-foreground">{playbook.summary}</p>
               </div>
-              <Button
-                size="sm"
-                variant={op.severity === 'high' ? 'destructive' : 'default'}
-                disabled={mutation.isPending}
-                onClick={() => requestRepair(op.value as RepairType, op.label)}
-              >
-                実行
-              </Button>
+              <ol className="space-y-2 text-sm text-muted-foreground">
+                {playbook.steps.map((step, index) => (
+                  <li key={step.text} className="flex gap-3">
+                    <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-secondary text-xs text-secondary-foreground">
+                      {index + 1}
+                    </span>
+                    <span>
+                      {step.text}
+                      {step.link && (
+                        <>
+                          {' → '}
+                          <Link to={step.link.to} className="text-primary underline underline-offset-4 hover:text-primary/80">
+                            {step.link.label}
+                          </Link>
+                        </>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
             </div>
           ))}
         </div>
       </div>
 
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold">Scrub (データ整合性チェック)</h2>
-        <p className="text-sm text-muted-foreground">
-          全ブロックのチェックサムを検証し、破損データを検出します。長時間かかる場合があります。
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {SCRUB_COMMANDS.map((cmd) => (
-            <div key={cmd.value} className="rounded-lg border p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">Scrub {cmd.label}</span>
+        <div>
+          <h2 className="text-lg font-semibold">操作カタログ</h2>
+          <p className="text-sm text-muted-foreground">
+            各操作の用途、典型トリガー、注意点を並べています。高リスク操作は最後段に寄せています。
+          </p>
+        </div>
+        <div className="grid gap-3">
+          {REPAIR_OPERATIONS.map((op) => (
+            <div key={op.value} className="rounded-lg border p-4 space-y-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium">{op.label}</h3>
+                    <Badge variant={SEVERITY_VARIANT[op.severity]}>{SEVERITY_LABEL[op.severity]}</Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{op.why}</p>
+                </div>
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant={op.severity === 'high' ? 'destructive' : 'default'}
                   disabled={mutation.isPending}
-                  onClick={() => requestRepair({ scrub: cmd.value }, `Scrub ${cmd.label}`)}
+                  onClick={() => requestRepair(op.value, op.label, op.severity)}
                 >
                   実行
                 </Button>
               </div>
-              <p className="text-sm text-muted-foreground">{cmd.description}</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-md bg-muted/40 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">使う場面</p>
+                  <p className="mt-1 text-sm">{op.trigger}</p>
+                </div>
+                <div className="rounded-md bg-muted/40 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">注意点</p>
+                  <p className="mt-1 text-sm">{op.caution}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Scrub 操作</h2>
+          <p className="text-sm text-muted-foreground">
+            定期メンテナンスやディスク障害疑いの場面で使います。I/O 負荷が高く、実行時間も長くなりがちです。
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {SCRUB_COMMANDS.map((cmd) => (
+            <div key={cmd.value} className="rounded-lg border p-4 space-y-3">
+              <div className="space-y-1">
+                <h3 className="font-medium">Scrub {cmd.label}</h3>
+                <p className="text-sm text-muted-foreground">{cmd.summary}</p>
+              </div>
+              <Button
+                size="sm"
+                variant={cmd.value === 'cancel' ? 'destructive' : 'outline'}
+                disabled={mutation.isPending}
+                onClick={() => requestRepair({ scrub: cmd.value }, `Scrub ${cmd.label}`, 'medium')}
+              >
+                実行
+              </Button>
             </div>
           ))}
         </div>
@@ -186,14 +473,18 @@ function RepairPage() {
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={`${pendingLabel}の実行`}
-        description="この操作を全ノードに対して実行します。クラスタの負荷が一時的に上がる可能性があります。よろしいですか？"
+        description={
+          pendingSeverity === 'high'
+            ? 'この操作は最終手段です。先に /blocks で原因確認と purge の要否を確認したうえで実行してください。'
+            : 'この操作を全ノードに対して実行します。クラスタ負荷が一時的に上がる可能性があります。'
+        }
         onConfirm={() => {
           if (pendingRepairType) mutation.mutate(pendingRepairType)
         }}
         isPending={mutation.isPending}
         confirmLabel="実行"
         pendingLabel="実行中..."
-        confirmVariant="default"
+        confirmVariant={pendingSeverity === 'high' ? 'destructive' : 'default'}
       />
     </div>
   )
