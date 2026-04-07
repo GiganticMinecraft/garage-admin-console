@@ -34,13 +34,14 @@ Admin API (バケット・キー・クラスタ管理) と S3 API (オブジェ�
 
 | Page | Path | Description |
 |------|------|-------------|
-| Dashboard | `/` | Cluster health, node list, storage charts, repair/scrub operations |
+| Dashboard | `/` | Cluster health, node list, storage charts |
 | Buckets | `/buckets` | Bucket CRUD |
 | Bucket Detail | `/buckets/:id` | Object browser, upload/download/delete, key permissions |
 | Keys | `/keys` | Access key list, create/delete |
 | Key Detail | `/keys/:id` | Key info, bucket permissions |
 | Layout | `/layout` | Cluster layout view/modify/apply |
 | Blocks | `/blocks` | Block error list, info, purge, resync |
+| Repair | `/repair` | Repair operations, scrub commands |
 | Workers | `/workers` | Background worker list (read-only) |
 
 ## Development
