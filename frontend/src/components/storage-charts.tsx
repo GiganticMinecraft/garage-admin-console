@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import ReactEChartsCore from 'echarts-for-react/lib/core'
+import EChartsReactCore from 'echarts-for-react/lib/core'
 import * as echarts from 'echarts/core'
 import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
@@ -7,6 +7,12 @@ import { CanvasRenderer } from 'echarts/renderers'
 import type { ClusterNode } from '@/api'
 
 echarts.use([PieChart, BarChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
+
+// echarts-for-react/lib/core is CJS with { default: Component }.
+// ESM default import resolves to the wrapper object, not the component itself.
+const ReactEChartsCore = ('default' in EChartsReactCore
+  ? (EChartsReactCore as unknown as { default: typeof EChartsReactCore }).default
+  : EChartsReactCore) as typeof EChartsReactCore
 
 function formatBytes(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
