@@ -22,7 +22,7 @@ export function setupFaro() {
         sendTimeout: 1000,
       },
       ignoreErrors: [/ResizeObserver/],
-      ignoreUrls: [/\/collect$/],
+      ignoreUrls: [/\/collect$/, /\/cdn-cgi\//],
     })
   }
 }
