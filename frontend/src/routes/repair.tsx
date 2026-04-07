@@ -3,6 +3,7 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   getClusterHealth,
+  getMaintenanceMetrics,
   launchRepair,
   listBlockErrors,
   type RepairType,
@@ -219,6 +220,11 @@ function RepairPage() {
     queryFn: listBlockErrors,
   })
 
+  const metrics = useQuery({
+    queryKey: ['maintenance', 'metrics'],
+    queryFn: getMaintenanceMetrics,
+  })
+
   const mutation = useMutation({
     mutationFn: (repairType: RepairType) => launchRepair(repairType),
     onSuccess: (resp) => {
@@ -325,40 +331,55 @@ function RepairPage() {
 
       <div className="space-y-3">
         <div>
-          <h2 className="text-lg font-semibold">まだ見えていない重要メトリクス</h2>
+          <h2 className="text-lg font-semibold">ブロック管理メトリクス</h2>
           <p className="text-sm text-muted-foreground">
-            ここが未接続なため、今のコンソールは「兆候の観測」より「操作実行」に寄っています。
+            Garage の /metrics から取得した、修復判断に直結する 3 指標です。
           </p>
         </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-lg border border-dashed p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="font-medium">`block.resync_errored_blocks`</p>
-              <Badge variant="outline">未接続</Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              理想値は 0。ブロック喪失や継続失敗の早期検知に使います。
-            </p>
+        {metrics.isLoading ? (
+          <SectionSkeleton />
+        ) : metrics.isError ? (
+          <div className="grid gap-3 md:grid-cols-3">
+            <SignalCard title="resync_errored_blocks" value="取得失敗" hint="Garage /metrics エンドポイントに接続できませんでした。" tone="warning" />
+            <SignalCard title="resync_queue_length" value="取得失敗" hint="Garage /metrics エンドポイントに接続できませんでした。" tone="warning" />
+            <SignalCard title="corruption_counter" value="取得失敗" hint="Garage /metrics エンドポイントに接続できませんでした。" tone="warning" />
           </div>
-          <div className="rounded-lg border border-dashed p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="font-medium">`block.resync_queue_length`</p>
-              <Badge variant="outline">未接続</Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              layout 変更後に一時的に増えてもよいが、減らないなら詰まりを疑います。
-            </p>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-3">
+            <SignalCard
+              title="resync_errored_blocks"
+              value={metrics.data!.resyncErroredBlocks.toString()}
+              hint={
+                metrics.data!.resyncErroredBlocks > 0
+                  ? '0 でないためブロック喪失の可能性があります。/blocks で確認してください。'
+                  : '正常。リシンクに失敗しているブロックはありません。'
+              }
+              tone={metrics.data!.resyncErroredBlocks > 0 ? 'danger' : 'neutral'}
+            />
+            <SignalCard
+              title="resync_queue_length"
+              value={metrics.data!.resyncQueueLength.toLocaleString()}
+              hint={
+                metrics.data!.resyncQueueLength > 1000
+                  ? 'キューが大きいです。layout 変更直後でなければ詰まりを疑います。'
+                  : metrics.data!.resyncQueueLength > 0
+                    ? 'リシンク進行中です。layout 変更後は一時的に増加します。'
+                    : '正常。リシンク待ちのブロックはありません。'
+              }
+              tone={metrics.data!.resyncQueueLength > 1000 ? 'warning' : 'neutral'}
+            />
+            <SignalCard
+              title="corruption_counter"
+              value={metrics.data!.corruptionCounter.toString()}
+              hint={
+                metrics.data!.corruptionCounter > 0
+                  ? 'scrub が破損ブロックを検出しています。ディスク障害の可能性を確認してください。'
+                  : '正常。scrub による破損検出はありません。'
+              }
+              tone={metrics.data!.corruptionCounter > 0 ? 'danger' : 'neutral'}
+            />
           </div>
-          <div className="rounded-lg border border-dashed p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="font-medium">`block.corruption_counter`</p>
-              <Badge variant="outline">未接続</Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              scrub が検出した破損回数。増加はディスク障害の重要なサインです。
-            </p>
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="space-y-3">
