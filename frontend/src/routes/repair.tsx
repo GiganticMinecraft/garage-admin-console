@@ -264,9 +264,8 @@ function RepairPage() {
             <p className="text-sm font-medium text-muted-foreground">Maintenance Console</p>
             <h1 className="text-3xl font-semibold tracking-tight">メンテナンス判断と修復操作</h1>
             <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-              今見えている兆候から次に打つべき操作を判断し、そのまま実行できます。
-              本来重要な Prometheus メトリクスはまだ未接続のため、この画面では
-              「見えているもの」と「見えていないもの」を明示します。
+              クラスタ状態・ブロックエラー・Garage メトリクスから現在の兆候を確認し、
+              必要な修復操作をそのまま実行できます。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

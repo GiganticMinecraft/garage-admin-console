@@ -80,6 +80,12 @@ func handleMaintenanceMetrics(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			}
 		}
 
+		if err := scanner.Err(); err != nil {
+			slog.ErrorContext(r.Context(), "failed to read /metrics response", "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}
