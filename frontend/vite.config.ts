@@ -28,6 +28,9 @@ export default defineConfig({
             if (id.includes('radix-ui') || id.includes('lucide-react')) {
               return 'vendor-ui'
             }
+            if (id.includes('echarts')) {
+              return 'vendor-echarts'
+            }
           }
         },
       },

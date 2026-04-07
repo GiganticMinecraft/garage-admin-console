@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkersRouteImport } from './routes/workers'
 import { Route as LayoutRouteImport } from './routes/layout'
+import { Route as BlocksRouteImport } from './routes/blocks'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as KeysIndexRouteImport } from './routes/keys.index'
 import { Route as BucketsIndexRouteImport } from './routes/buckets.index'
@@ -25,6 +26,11 @@ const WorkersRoute = WorkersRouteImport.update({
 const LayoutRoute = LayoutRouteImport.update({
   id: '/layout',
   path: '/layout',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BlocksRoute = BlocksRouteImport.update({
+  id: '/blocks',
+  path: '/blocks',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -55,6 +61,7 @@ const BucketsIdRoute = BucketsIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/blocks': typeof BlocksRoute
   '/layout': typeof LayoutRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/blocks': typeof BlocksRoute
   '/layout': typeof LayoutRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
@@ -74,6 +82,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/blocks': typeof BlocksRoute
   '/layout': typeof LayoutRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
@@ -85,6 +94,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/blocks'
     | '/layout'
     | '/workers'
     | '/buckets/$id'
@@ -94,6 +104,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/blocks'
     | '/layout'
     | '/workers'
     | '/buckets/$id'
@@ -103,6 +114,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/blocks'
     | '/layout'
     | '/workers'
     | '/buckets/$id'
@@ -113,6 +125,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BlocksRoute: typeof BlocksRoute
   LayoutRoute: typeof LayoutRoute
   WorkersRoute: typeof WorkersRoute
   BucketsIdRoute: typeof BucketsIdRoute
@@ -135,6 +148,13 @@ declare module '@tanstack/react-router' {
       path: '/layout'
       fullPath: '/layout'
       preLoaderRoute: typeof LayoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/blocks': {
+      id: '/blocks'
+      path: '/blocks'
+      fullPath: '/blocks'
+      preLoaderRoute: typeof BlocksRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -177,6 +197,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BlocksRoute: BlocksRoute,
   LayoutRoute: LayoutRoute,
   WorkersRoute: WorkersRoute,
   BucketsIdRoute: BucketsIdRoute,
