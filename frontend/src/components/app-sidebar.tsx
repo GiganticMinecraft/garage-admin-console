@@ -4,6 +4,7 @@ import {
   KeyRound,
   Server,
   Cog,
+  HardDrive,
 } from "lucide-react"
 import { Link, useRouterState } from "@tanstack/react-router"
 
@@ -26,6 +27,7 @@ const navItems = [
   { title: "バケット", url: "/buckets", icon: Database },
   { title: "キー", url: "/keys", icon: KeyRound },
   { title: "レイアウト", url: "/layout", icon: Server },
+  { title: "ブロック", url: "/blocks", icon: HardDrive },
   { title: "ワーカー", url: "/workers", icon: Cog },
 ]
 

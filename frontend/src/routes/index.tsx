@@ -1,12 +1,19 @@
+import { useState, lazy, Suspense } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   getClusterHealth,
   getClusterStatus,
+  launchRepair,
   type ClusterHealth,
   type ClusterNode,
+  type RepairType,
+  type ScrubCommand,
 } from '@/api'
+
+const StorageCharts = lazy(() => import('@/components/storage-charts'))
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Table,
   TableHeader,
@@ -16,6 +23,8 @@ import {
   TableCell,
 } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/')({
   component: DashboardPage,
@@ -209,6 +218,116 @@ function NodesSkeleton() {
   )
 }
 
+const REPAIR_OPTIONS: { value: string; label: string }[] = [
+  { value: 'tables', label: 'テーブル修復' },
+  { value: 'blocks', label: 'ブロック整合性検証' },
+  { value: 'versions', label: 'バージョン修復' },
+  { value: 'multipartUploads', label: 'マルチパートアップロード修復' },
+  { value: 'blockRefs', label: 'ブロック参照修復' },
+  { value: 'blockRc', label: 'ブロック参照カウント修復' },
+  { value: 'rebalance', label: 'リバランス' },
+  { value: 'aliases', label: 'エイリアス修復' },
+  { value: 'clearResyncQueue', label: 'リシンクキューのクリア' },
+]
+
+const SCRUB_COMMANDS: { value: ScrubCommand; label: string }[] = [
+  { value: 'start', label: '開始' },
+  { value: 'pause', label: '一時停止' },
+  { value: 'resume', label: '再開' },
+  { value: 'cancel', label: 'キャンセル' },
+]
+
+function RepairSection() {
+  const [selectedRepair, setSelectedRepair] = useState(REPAIR_OPTIONS[0].value)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [pendingRepairType, setPendingRepairType] = useState<RepairType | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: (repairType: RepairType) => launchRepair(repairType),
+    onSuccess: (resp) => {
+      const successCount = Object.keys(resp.success).length
+      const errorCount = Object.keys(resp.error).length
+      if (errorCount > 0) {
+        const errors = Object.entries(resp.error).map(([n, m]) => `${n.slice(0, 12)}…: ${m}`).join(', ')
+        toast.error(`${errorCount}ノードでエラー: ${errors}`)
+      }
+      if (successCount > 0) {
+        toast.success(`${successCount}ノードで操作を実行しました`)
+      }
+    },
+    onError: () => toast.error('修復操作に失敗しました'),
+  })
+
+  const requestRepair = (repairType: RepairType) => {
+    setPendingRepairType(repairType)
+    setConfirmOpen(true)
+  }
+
+  return (
+    <div className="rounded-lg border p-4 space-y-4">
+      <h2 className="text-lg font-semibold">メンテナンス操作</h2>
+
+      <div className="space-y-3">
+        <div className="flex items-end gap-3">
+          <div className="space-y-1 flex-1">
+            <label htmlFor="repair-type" className="text-sm text-muted-foreground">
+              修復操作
+            </label>
+            <select
+              id="repair-type"
+              value={selectedRepair}
+              onChange={(e) => setSelectedRepair(e.target.value)}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+            >
+              {REPAIR_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <Button
+            size="sm"
+            disabled={mutation.isPending}
+            onClick={() => requestRepair(selectedRepair as RepairType)}
+          >
+            実行
+          </Button>
+        </div>
+
+        <div className="space-y-1">
+          <p className="text-sm text-muted-foreground">Scrub 操作</p>
+          <div className="flex gap-2 flex-wrap">
+            {SCRUB_COMMANDS.map((cmd) => (
+              <Button
+                key={cmd.value}
+                variant="outline"
+                size="sm"
+                disabled={mutation.isPending}
+                onClick={() => requestRepair({ scrub: cmd.value })}
+              >
+                Scrub {cmd.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="メンテナンス操作の実行"
+        description="この操作を全ノードに対して実行します。よろしいですか？"
+        onConfirm={() => {
+          if (pendingRepairType) mutation.mutate(pendingRepairType)
+        }}
+        isPending={mutation.isPending}
+        confirmLabel="実行"
+        pendingLabel="実行中..."
+        confirmVariant="default"
+      />
+    </div>
+  )
+}
+
 function DashboardPage() {
   const health = useQuery({
     queryKey: ['cluster', 'health'],
@@ -269,6 +388,15 @@ function DashboardPage() {
           </>
         )}
       </div>
+
+      {status.data && (
+        <Suspense fallback={<p className="text-muted-foreground">チャートを読み込み中...</p>}>
+          <StorageCharts nodes={status.data.nodes} />
+        </Suspense>
+      )}
+
+      <RepairSection />
     </div>
   )
 }
+

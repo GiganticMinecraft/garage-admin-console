@@ -230,3 +230,101 @@ export interface Worker {
 export async function listWorkers(): Promise<Worker[]> {
   return fetchJSON('/workers')
 }
+
+// Multi-node response wrapper
+export interface MultiResponse<T> {
+  success: Record<string, T>
+  error: Record<string, string>
+}
+
+// Blocks
+export interface BlockError {
+  nodeId: string
+  blockHash: string
+  refcount: number
+  errorCount: number
+  lastTrySecsAgo: number
+  nextTryInSecs: number
+}
+
+export type BlockVersionBacklink =
+  | { object: { bucketId: string; key: string } }
+  | { upload: {
+      bucketId?: string | null
+      key?: string | null
+      uploadId: string
+      uploadDeleted: boolean
+      uploadGarbageCollected: boolean
+    } }
+
+export interface BlockVersion {
+  versionId: string
+  refDeleted: boolean
+  versionDeleted: boolean
+  garbageCollected: boolean
+  backlink?: BlockVersionBacklink | null
+}
+
+export interface BlockInfo {
+  blockHash: string
+  refcount: number
+  versions: BlockVersion[]
+}
+
+export interface PurgeBlocksResult {
+  blocksPurged: number
+  objectsDeleted: number
+  uploadsDeleted: number
+  versionsDeleted: number
+}
+
+export async function listBlockErrors(): Promise<BlockError[]> {
+  return fetchJSON('/blocks/errors')
+}
+
+export async function getBlockInfo(blockHash: string): Promise<MultiResponse<BlockInfo>> {
+  return fetchJSON('/blocks/info', {
+    method: 'POST',
+    body: JSON.stringify({ blockHash }),
+  })
+}
+
+export async function purgeBlocks(blockHashes: string[]): Promise<MultiResponse<PurgeBlocksResult>> {
+  return fetchJSON('/blocks/purge', {
+    method: 'POST',
+    body: JSON.stringify(blockHashes),
+  })
+}
+
+export async function retryBlockResync(
+  body: { all: true } | { blockHashes: string[] },
+): Promise<MultiResponse<{ count: number }>> {
+  return fetchJSON('/blocks/resync', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+// Repair
+export type ScrubCommand = 'start' | 'pause' | 'resume' | 'cancel'
+
+export type RepairType =
+  | 'tables'
+  | 'blocks'
+  | 'versions'
+  | 'multipartUploads'
+  | 'blockRefs'
+  | 'blockRc'
+  | 'rebalance'
+  | 'aliases'
+  | 'clearResyncQueue'
+  | { scrub: ScrubCommand }
+
+export async function launchRepair(
+  repairType: RepairType,
+): Promise<MultiResponse<Record<string, never>>> {
+  return fetchJSON('/repair', {
+    method: 'POST',
+    body: JSON.stringify({ repairType }),
+  })
+}
