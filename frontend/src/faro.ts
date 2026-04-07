@@ -12,16 +12,7 @@ export function setupFaro() {
       },
       instrumentations: [
         ...getWebInstrumentations(),
-        new TracingInstrumentation({
-          instrumentationOptions: {
-            fetchInstrumentation: {
-              ignoreUrls: [/\/collect$/],
-            },
-            xhrInstrumentation: {
-              ignoreUrls: [/\/collect$/],
-            },
-          },
-        }),
+        new TracingInstrumentation(),
       ],
       sessionTracking: {
         enabled: true,
@@ -31,6 +22,7 @@ export function setupFaro() {
         sendTimeout: 1000,
       },
       ignoreErrors: [/ResizeObserver/],
+      ignoreUrls: [/\/collect$/],
     })
   }
 }
