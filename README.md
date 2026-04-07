@@ -23,7 +23,7 @@ Admin API (バケット・キー・クラスタ管理) と S3 API (オブジェ�
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 19, Vite, shadcn/ui, Tailwind CSS v4, TanStack Router, TanStack Query |
+| Frontend | React 19, Vite, shadcn/ui, Tailwind CSS v4, TanStack Router, TanStack Query, ECharts |
 | Backend | Go 1.26, chi, aws-sdk-go-v2 |
 | Web Server | nginx:1.27-alpine-otel |
 | Auth | GitHub OAuth (org team check) |
@@ -34,12 +34,13 @@ Admin API (バケット・キー・クラスタ管理) と S3 API (オブジェ�
 
 | Page | Path | Description |
 |------|------|-------------|
-| Dashboard | `/` | Cluster health, node list |
+| Dashboard | `/` | Cluster health, node list, storage charts, repair/scrub operations |
 | Buckets | `/buckets` | Bucket CRUD |
 | Bucket Detail | `/buckets/:id` | Object browser, upload/download/delete, key permissions |
 | Keys | `/keys` | Access key list, create/delete |
 | Key Detail | `/keys/:id` | Key info, bucket permissions |
 | Layout | `/layout` | Cluster layout view/modify/apply |
+| Blocks | `/blocks` | Block error list, info, purge, resync |
 | Workers | `/workers` | Background worker list (read-only) |
 
 ## Development
