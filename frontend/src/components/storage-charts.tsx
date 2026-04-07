@@ -34,13 +34,13 @@ export default function StorageCharts({ nodes }: { nodes: ClusterNode[] }) {
 
     return {
       tooltip: { trigger: 'item' as const, formatter: '{b}: {c} ({d}%)' },
-      legend: { bottom: 0 },
+      legend: { top: 0 },
       series: [
         {
           name: 'データ',
           type: 'pie' as const,
-          radius: ['40%', '65%'],
-          center: ['25%', '45%'],
+          radius: ['35%', '60%'],
+          center: ['25%', '55%'],
           data: [
             { value: usedData, name: `使用中 (${formatBytes(usedData)})` },
             { value: totalData - usedData, name: `空き (${formatBytes(totalData - usedData)})` },
@@ -52,8 +52,8 @@ export default function StorageCharts({ nodes }: { nodes: ClusterNode[] }) {
         {
           name: 'メタデータ',
           type: 'pie' as const,
-          radius: ['40%', '65%'],
-          center: ['75%', '45%'],
+          radius: ['35%', '60%'],
+          center: ['75%', '55%'],
           data: [
             { value: usedMeta, name: `使用中 (${formatBytes(usedMeta)})` },
             { value: totalMeta - usedMeta, name: `空き (${formatBytes(totalMeta - usedMeta)})` },
@@ -72,12 +72,11 @@ export default function StorageCharts({ nodes }: { nodes: ClusterNode[] }) {
       formatter: (params: Array<{ seriesName: string; name: string; value: number }>) =>
         params.map((p) => `${p.seriesName}: ${formatBytes(p.value)}`).join('<br/>'),
     },
-    legend: { bottom: 0 },
-    grid: { left: 60, right: 20, top: 20, bottom: 40 },
+    legend: { top: 0 },
+    grid: { left: 80, right: 20, top: 50, bottom: 30 },
     xAxis: {
       type: 'category' as const,
       data: nodes.map((n) => n.hostname),
-      axisLabel: { rotate: nodes.length > 4 ? 30 : 0 },
     },
     yAxis: {
       type: 'value' as const,
@@ -121,15 +120,11 @@ export default function StorageCharts({ nodes }: { nodes: ClusterNode[] }) {
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-lg border p-4">
           <h3 className="text-sm font-medium text-muted-foreground mb-2">全体使用率</h3>
-          <ReactEChartsCore echarts={echarts} option={pieOption} style={{ height: 240 }} />
-          <div className="flex justify-around text-xs text-muted-foreground mt-1">
-            <span>データ</span>
-            <span>メタデータ</span>
-          </div>
+          <ReactEChartsCore echarts={echarts} option={pieOption} style={{ height: 280 }} />
         </div>
         <div className="rounded-lg border p-4">
           <h3 className="text-sm font-medium text-muted-foreground mb-2">ノード別使用量</h3>
-          <ReactEChartsCore echarts={echarts} option={barOption} style={{ height: 260 }} />
+          <ReactEChartsCore echarts={echarts} option={barOption} style={{ height: 300 }} />
         </div>
       </div>
     </div>
