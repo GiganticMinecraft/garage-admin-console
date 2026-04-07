@@ -90,7 +90,11 @@ func main() {
 	r := newRouter(garageAdmin, s3Client)
 
 	addr := ":8080"
-	handler := otelhttp.NewHandler(r, "garage-admin-console")
+	handler := otelhttp.NewHandler(r, "garage-admin-console",
+		otelhttp.WithFilter(func(r *http.Request) bool {
+			return r.URL.Path != "/api/health"
+		}),
+	)
 	slog.Info("starting server", "addr", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		slog.Error("server error", "error", err)
