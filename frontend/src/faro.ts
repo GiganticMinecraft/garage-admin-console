@@ -12,7 +12,16 @@ export function setupFaro() {
       },
       instrumentations: [
         ...getWebInstrumentations(),
-        new TracingInstrumentation(),
+        new TracingInstrumentation({
+          instrumentationOptions: {
+            fetchInstrumentation: {
+              ignoreUrls: [/\/collect$/],
+            },
+            xhrInstrumentation: {
+              ignoreUrls: [/\/collect$/],
+            },
+          },
+        }),
       ],
       sessionTracking: {
         enabled: true,
