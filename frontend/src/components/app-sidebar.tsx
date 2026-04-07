@@ -5,6 +5,7 @@ import {
   Server,
   Cog,
   HardDrive,
+  Wrench,
 } from "lucide-react"
 import { Link, useRouterState } from "@tanstack/react-router"
 
@@ -28,6 +29,7 @@ const navItems = [
   { title: "キー", url: "/keys", icon: KeyRound },
   { title: "レイアウト", url: "/layout", icon: Server },
   { title: "ブロック", url: "/blocks", icon: HardDrive },
+  { title: "メンテナンス", url: "/repair", icon: Wrench },
   { title: "ワーカー", url: "/workers", icon: Cog },
 ]
 

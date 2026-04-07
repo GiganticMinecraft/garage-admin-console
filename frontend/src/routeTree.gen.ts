@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkersRouteImport } from './routes/workers'
+import { Route as RepairRouteImport } from './routes/repair'
 import { Route as LayoutRouteImport } from './routes/layout'
 import { Route as BlocksRouteImport } from './routes/blocks'
 import { Route as IndexRouteImport } from './routes/index'
@@ -21,6 +22,11 @@ import { Route as BucketsIdRouteImport } from './routes/buckets.$id'
 const WorkersRoute = WorkersRouteImport.update({
   id: '/workers',
   path: '/workers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RepairRoute = RepairRouteImport.update({
+  id: '/repair',
+  path: '/repair',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LayoutRoute = LayoutRouteImport.update({
@@ -63,6 +69,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/blocks': typeof BlocksRoute
   '/layout': typeof LayoutRoute
+  '/repair': typeof RepairRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
@@ -73,6 +80,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/blocks': typeof BlocksRoute
   '/layout': typeof LayoutRoute
+  '/repair': typeof RepairRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
@@ -84,6 +92,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/blocks': typeof BlocksRoute
   '/layout': typeof LayoutRoute
+  '/repair': typeof RepairRoute
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
@@ -96,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/blocks'
     | '/layout'
+    | '/repair'
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
@@ -106,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/blocks'
     | '/layout'
+    | '/repair'
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
@@ -116,6 +127,7 @@ export interface FileRouteTypes {
     | '/'
     | '/blocks'
     | '/layout'
+    | '/repair'
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
@@ -127,6 +139,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BlocksRoute: typeof BlocksRoute
   LayoutRoute: typeof LayoutRoute
+  RepairRoute: typeof RepairRoute
   WorkersRoute: typeof WorkersRoute
   BucketsIdRoute: typeof BucketsIdRoute
   KeysIdRoute: typeof KeysIdRoute
@@ -141,6 +154,13 @@ declare module '@tanstack/react-router' {
       path: '/workers'
       fullPath: '/workers'
       preLoaderRoute: typeof WorkersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/repair': {
+      id: '/repair'
+      path: '/repair'
+      fullPath: '/repair'
+      preLoaderRoute: typeof RepairRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/layout': {
@@ -199,6 +219,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BlocksRoute: BlocksRoute,
   LayoutRoute: LayoutRoute,
+  RepairRoute: RepairRoute,
   WorkersRoute: WorkersRoute,
   BucketsIdRoute: BucketsIdRoute,
   KeysIdRoute: KeysIdRoute,
