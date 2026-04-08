@@ -93,6 +93,11 @@ function WorkersPage() {
                       {worker.progress != null && (
                         <span>進捗: <span className="font-medium">{worker.progress}</span></span>
                       )}
+                      {worker.freeform.length > 0 && (
+                        <span className="basis-full text-xs">
+                          {worker.freeform.join(' / ')}
+                        </span>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
