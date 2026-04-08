@@ -273,7 +273,7 @@ function RepairPage() {
             <Link to="/layout">レイアウトを確認</Link>
           </Button>
           <Button asChild variant="outline" size="sm">
-            <a href="https://grafana.onp-k8s.admin.seichi.click/d/garage-block-metrics" target="_blank" rel="noopener noreferrer">
+            <a href="https://grafana.onp-k8s.admin.seichi.click/d/garage-block-metrics/45d7fdb?orgId=1" target="_blank" rel="noopener noreferrer">
               メトリクス推移 (Grafana)
             </a>
           </Button>
