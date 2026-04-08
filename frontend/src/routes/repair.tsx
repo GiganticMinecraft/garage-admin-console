@@ -132,12 +132,12 @@ const PLAYBOOKS: {
     ],
   },
   {
-    title: '定期メンテナンス',
-    summary: '四半期ごとを目安に Scrub を実行します。',
+    title: 'Scrub の確認と手動実行',
+    summary: 'Scrub は 25〜35 日ごとに自動実行されます。通常は手動で実行する必要はありません。',
     steps: [
-      { text: 'Scrub を開始してブロックの破損がないか検証' },
-      { text: 'ディスク I/O エラーの兆候があれば定期外でも Scrub を実行' },
-      { text: '上部の「破損検出回数」が増加していればディスク交換を検討' },
+      { text: 'ワーカーページで「Block scrub worker」の最終実行日時と次回予定を確認', link: { to: '/workers', label: 'ワーカー' } },
+      { text: 'ディスク I/O エラーの兆候があれば、次回予定を待たずに手動で Scrub を開始' },
+      { text: '「破損検出回数」が増加していればディスク交換を検討' },
     ],
   },
   {
@@ -441,7 +441,9 @@ function RepairPage() {
         <div>
           <h2 className="text-lg font-semibold">Scrub</h2>
           <p className="text-sm text-muted-foreground">
-            全ブロックのチェックサムを検証し、破損データを検出します。ディスク I/O が増加するため、負荷に注意してください。
+            全ブロックのチェックサムを検証し、破損データを検出します。
+            25〜35 日ごとに自動実行されるため、通常は手動操作は不要です。
+            ディスク障害の疑いがあるときに即座に開始したい場合や、I/O 負荷を制御したい場合に使います。
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
