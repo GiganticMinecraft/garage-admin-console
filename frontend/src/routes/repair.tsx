@@ -22,90 +22,90 @@ export const Route = createFileRoute('/repair')({
 const REPAIR_OPERATIONS: {
   value: Exclude<RepairType, { scrub: ScrubCommand }>
   label: string
-  why: string
-  trigger: string
+  description: string
+  when: string
   caution: string
   severity: 'low' | 'medium' | 'high'
 }[] = [
   {
     value: 'blocks',
     label: 'ブロック整合性検証',
-    why: '不足レプリカの再配置とブロック整合性の回復に使います。',
-    trigger: 'layout apply 後、ノード障害・交換後、復旧後の定番操作です。',
-    caution: '数時間待って resync が自然収束しない場合に実行します。',
+    description: 'レプリカが不足しているブロックを検出し、他のノードからコピーして再配置します。',
+    when: 'layout apply の後、ノード障害や交換の後に実行します。',
+    caution: 'リシンクが自然に収まるまで数時間待ってから実行してください。',
     severity: 'medium',
   },
   {
     value: 'blockRc',
     label: 'ブロック参照カウント修復',
-    why: '参照カウントを再計算し、RC 不整合を修正します。',
-    trigger: 'ログに RC 不整合が出るとき、ブロックエラーが高止まりしているとき。',
-    caution: '根本原因が block ref 側にある場合は blockRefs と併用を検討します。',
+    description: 'ブロックの参照カウントを全て再計算し、不整合を修正します。',
+    when: 'ログに参照カウント不整合の警告が出ているとき、ブロックエラーが減らないとき。',
+    caution: '原因がブロック参照側にある場合は blockRefs も合わせて実行してください。',
     severity: 'medium',
   },
   {
     value: 'tables',
     label: 'テーブル修復',
-    why: 'メタデータテーブルの全体同期を促します。',
-    trigger: '通常不要。メタデータ同期の異常や大規模障害後に限定します。',
-    caution: '毎時の自動同期があるため、安易な定期実行は不要です。',
+    description: 'メタデータテーブルの全体同期を手動で実行します。',
+    when: 'メタデータの同期がおかしいとき、大規模障害からの復旧時に限定して使います。',
+    caution: '毎時の自動同期があるため、通常は不要です。',
     severity: 'medium',
   },
   {
     value: 'versions',
     label: 'バージョン修復',
-    why: 'オブジェクト version メタデータの不整合を是正します。',
-    trigger: '長時間停止や障害後に object/version の整合が崩れた疑いがあるとき。',
-    caution: '通常運用で使う操作ではありません。',
+    description: '親オブジェクトが存在しない孤立バージョンを検出し、削除済みにマークします。',
+    when: '複数ノードの長時間停止後にオブジェクトの一覧や取得がおかしいとき。',
+    caution: '通常運用では使いません。',
     severity: 'medium',
   },
   {
     value: 'blockRefs',
     label: 'ブロック参照修復',
-    why: 'block ref と object/version の参照関係を修復します。',
-    trigger: '孤立参照が GC を妨げている、version 系の不整合が疑われるとき。',
-    caution: 'versions や blockRc とセットで判断する操作です。',
+    description: '親バージョンが存在しない孤立ブロック参照を検出し、削除済みにマークします。',
+    when: '孤立した参照がブロックの GC を妨げているとき。',
+    caution: 'versions や blockRc と合わせて判断してください。',
     severity: 'medium',
   },
   {
     value: 'rebalance',
     label: 'リバランス',
-    why: 'ストレージ構成変更後にデータ配置を均します。',
-    trigger: 'ディスク追加、ノード追加、容量配分変更後。',
-    caution: '障害対応ではなく構成変更後の整流化です。',
+    description: 'ストレージ間のデータ配置を均等化します。',
+    when: 'ディスクやノードの追加後、容量配分の変更後に実行します。',
+    caution: '障害対応ではなく、構成変更後の後処理です。',
     severity: 'low',
   },
   {
     value: 'multipartUploads',
-    label: 'マルチパート修復',
-    why: '中断された multipart upload 関連のメタデータを整えます。',
-    trigger: 'multipart upload 周りだけおかしいとき。',
-    caution: '一般的な障害対応の主軸ではありません。',
+    label: 'マルチパートアップロード修復',
+    description: '親バージョンが存在しないマルチパートアップロードのメタデータを削除済みにマークします。',
+    when: 'マルチパートアップロード周りだけが異常なとき。',
+    caution: '一般的な障害対応で使うことはほぼありません。',
     severity: 'low',
   },
   {
     value: 'aliases',
     label: 'エイリアス修復',
-    why: 'バケット alias の不整合を修正します。',
-    trigger: 'alias 解決だけが壊れているとき。',
-    caution: '極めてまれな用途です。',
+    description: 'バケットエイリアスの不整合を修正します。',
+    when: 'バケット名でのアクセスだけが壊れているとき。',
+    caution: '非常にまれな用途です。',
     severity: 'low',
   },
   {
     value: 'clearResyncQueue',
     label: 'リシンクキューのクリア',
-    why: '詰まった resync キューを強制的に空にします。',
-    trigger: '永久失敗ブロックを purge した後の最終手段です。',
-    caution: '先に /blocks で原因を確認し、必要な purge を済ませてから使います。',
+    description: 'リシンクキューを強制的に空にします。キューに残っているブロックは全てスキップされます。',
+    when: '喪失が確定したブロックを purge した後、キューが空にならないときの最終手段です。',
+    caution: '先にブロックエラーページで原因を確認し、必要な purge を済ませてから使ってください。',
     severity: 'high',
   },
 ]
 
-const SCRUB_COMMANDS: { value: ScrubCommand; label: string; summary: string }[] = [
-  { value: 'start', label: '開始', summary: '全ブロックの整合性検証を開始します。' },
-  { value: 'pause', label: '一時停止', summary: '実行中の scrub を止めます。' },
-  { value: 'resume', label: '再開', summary: '一時停止した scrub を再開します。' },
-  { value: 'cancel', label: 'キャンセル', summary: '実行中の scrub を中止します。' },
+const SCRUB_COMMANDS: { value: ScrubCommand; label: string; description: string }[] = [
+  { value: 'start', label: '開始', description: '全ブロックのチェックサム検証を開始します。ディスク I/O が増加します。' },
+  { value: 'pause', label: '一時停止', description: '実行中の Scrub を一時停止します。' },
+  { value: 'resume', label: '再開', description: '一時停止中の Scrub を再開します。' },
+  { value: 'cancel', label: 'キャンセル', description: '実行中の Scrub を中止します。' },
 ]
 
 const PLAYBOOKS: {
@@ -115,38 +115,38 @@ const PLAYBOOKS: {
 }[] = [
   {
     title: 'レイアウト変更後',
-    summary: '最も一般的なメンテナンス導線です。',
+    summary: '最もよくあるメンテナンス手順です。',
     steps: [
-      { text: 'layout apply 後しばらく待ち、自然収束しないなら blocks を実行' },
-      { text: 'ブロックエラーが残る場合は対象 hash を確認', link: { to: '/blocks', label: 'ブロックエラー' } },
-      { text: '必要なら purge 後に blockRefs / blockRc を続ける' },
+      { text: 'layout apply の後、数時間待ってリシンクが収まらなければ「ブロック整合性検証」を実行' },
+      { text: 'エラーが残る場合はブロックエラーページで対象を確認', link: { to: '/blocks', label: 'ブロックエラー' } },
+      { text: '必要なら purge してから blockRefs / blockRc を実行' },
     ],
   },
   {
-    title: 'リシンクエラー発生時',
-    summary: 'まずブロック単位で原因を見ます。',
+    title: 'リシンクエラーが出ているとき',
+    summary: 'まずどのブロックが失敗しているか確認します。',
     steps: [
-      { text: 'errored block を確認し、詳細を開く', link: { to: '/blocks', label: 'ブロックエラー' } },
-      { text: '喪失確定なら purge、その後 blockRefs / blockRc を実行' },
-      { text: 'キューだけが詰まるなら clearResyncQueue は最後に検討' },
+      { text: 'ブロックエラーページでエラーの詳細を確認', link: { to: '/blocks', label: 'ブロックエラー' } },
+      { text: '復旧不能なブロックは purge し、その後 blockRefs / blockRc を実行' },
+      { text: 'キューが空にならない場合のみ「リシンクキューのクリア」を検討' },
     ],
   },
   {
     title: '定期メンテナンス',
-    summary: 'scrub は定期運用で使う操作です。',
+    summary: '四半期ごとを目安に Scrub を実行します。',
     steps: [
-      { text: 'scrub は四半期ごとの実施を目安にする' },
-      { text: 'ディスク I/O エラーが疑われるときは定期外でも開始を検討' },
-      { text: 'corruption 系メトリクスは本来 Prometheus で監視する' },
+      { text: 'Scrub を開始してブロックの破損がないか検証' },
+      { text: 'ディスク I/O エラーの兆候があれば定期外でも Scrub を実行' },
+      { text: 'corruption_counter が増加していればディスク交換を検討' },
     ],
   },
   {
-    title: '大規模障害後',
-    summary: '広範囲の整合性確認が必要です。',
+    title: '大規模障害からの復旧',
+    summary: '広範囲の整合性確認が必要な場合の手順です。',
     steps: [
-      { text: 'metadata の異常が疑われるなら tables' },
-      { text: 'データ配置と不足レプリカの回復に blocks' },
-      { text: '症状が version / block ref に及ぶ場合のみ個別修復を追加' },
+      { text: 'メタデータの異常が疑われるなら「テーブル修復」を実行' },
+      { text: 'データの再配置には「ブロック整合性検証」を実行' },
+      { text: 'バージョンやブロック参照の不整合があれば個別の修復を追加' },
     ],
   },
 ]
@@ -238,7 +238,7 @@ function RepairPage() {
         toast.success(`${successCount}ノードで操作を実行しました`)
       }
     },
-    onError: () => toast.error('修復操作に失敗しました'),
+    onError: () => toast.error('操作に失敗しました'),
   })
 
   const requestRepair = (
@@ -258,47 +258,38 @@ function RepairPage() {
 
   return (
     <div className="space-y-8">
-      <div className="rounded-2xl border bg-gradient-to-br from-slate-50 via-white to-amber-50 p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-muted-foreground">Maintenance Console</p>
-            <h1 className="text-3xl font-semibold tracking-tight">メンテナンス判断と修復操作</h1>
-            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-              クラスタ状態・ブロックエラー・Garage メトリクスから現在の兆候を確認し、
-              必要な修復操作をそのまま実行できます。
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link to="/blocks">ブロックエラーを見る</Link>
-            </Button>
-            <Button asChild variant="outline" size="sm">
-              <Link to="/layout">レイアウトを確認</Link>
-            </Button>
-          </div>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold">メンテナンス</h1>
+          <p className="text-muted-foreground">
+            クラスタの状態を確認し、必要な修復操作を実行します。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link to="/blocks">ブロックエラーを見る</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/layout">レイアウトを確認</Link>
+          </Button>
         </div>
       </div>
 
       <div className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">現在見えているシグナル</h2>
-          <p className="text-sm text-muted-foreground">
-            即時判断に使えるのは、クラスタ状態とブロックエラー一覧です。
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold">クラスタの状態</h2>
         {health.isLoading || blockErrors.isLoading ? (
           <SectionSkeleton />
         ) : (
           <div className="grid gap-3 md:grid-cols-3">
             <SignalCard
-              title="クラスタ状態"
+              title="ヘルスステータス"
               value={health.isError ? '取得失敗' : isClusterHealthy ? 'healthy' : health.data?.status ?? 'unknown'}
               hint={
                 health.isError
-                  ? 'クラスタ health API の取得に失敗しました。'
+                  ? 'Garage API に接続できませんでした。'
                   : isClusterHealthy
-                    ? '大域的な health は正常です。'
-                    : 'クラスタ全体の健康状態に異常があります。'
+                    ? 'クラスタは正常です。'
+                    : 'クラスタに異常があります。'
               }
               tone={health.isError ? 'warning' : isClusterHealthy ? 'neutral' : 'warning'}
             />
@@ -307,20 +298,20 @@ function RepairPage() {
               value={blockErrors.isError ? '取得失敗' : errorCount.toString()}
               hint={
                 blockErrors.isError
-                  ? '/blocks 一覧を取得できませんでした。'
+                  ? 'ブロックエラーの取得に失敗しました。'
                   : errorCount > 0
-                    ? '0 でないため、まず /blocks で対象 hash を確認すべき状態です。'
-                    : '現時点で見えている resync error はありません。'
+                    ? 'エラーがあります。ブロックエラーページで内容を確認してください。'
+                    : 'リシンクエラーはありません。'
               }
               tone={blockErrors.isError ? 'warning' : errorCount > 0 ? 'danger' : 'neutral'}
             />
             <SignalCard
-              title="次の推奨アクション"
-              value={shouldInvestigateBlocks ? 'まず /blocks' : '定期保守のみ'}
+              title="推奨アクション"
+              value={shouldInvestigateBlocks ? 'エラー調査' : '異常なし'}
               hint={
                 shouldInvestigateBlocks
-                  ? 'blocks 実行や purge の前に、どの block が失敗しているかを確認します。'
-                  : '緊急兆候がなければ scrub や layout 後の blocks を計画的に行います。'
+                  ? '操作を実行する前に、ブロックエラーページで失敗しているブロックを確認してください。'
+                  : '緊急の対応は不要です。定期的な Scrub を計画してください。'
               }
               tone={shouldInvestigateBlocks ? 'danger' : 'neutral'}
             />
@@ -329,51 +320,46 @@ function RepairPage() {
       </div>
 
       <div className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">ブロック管理メトリクス</h2>
-          <p className="text-sm text-muted-foreground">
-            Garage の /metrics から取得した、修復判断に直結する 3 指標です。
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold">ブロック管理メトリクス</h2>
         {metrics.isLoading ? (
           <SectionSkeleton />
         ) : metrics.isError ? (
           <div className="grid gap-3 md:grid-cols-3">
-            <SignalCard title="resync_errored_blocks" value="取得失敗" hint="Garage /metrics エンドポイントに接続できませんでした。" tone="warning" />
-            <SignalCard title="resync_queue_length" value="取得失敗" hint="Garage /metrics エンドポイントに接続できませんでした。" tone="warning" />
-            <SignalCard title="corruption_counter" value="取得失敗" hint="Garage /metrics エンドポイントに接続できませんでした。" tone="warning" />
+            <SignalCard title="リシンクエラー数" value="取得失敗" hint="Garage の /metrics に接続できませんでした。" tone="warning" />
+            <SignalCard title="リシンクキュー長" value="取得失敗" hint="Garage の /metrics に接続できませんでした。" tone="warning" />
+            <SignalCard title="破損検出回数" value="取得失敗" hint="Garage の /metrics に接続できませんでした。" tone="warning" />
           </div>
         ) : (
           <div className="grid gap-3 md:grid-cols-3">
             <SignalCard
-              title="resync_errored_blocks"
+              title="リシンクエラー数"
               value={metrics.data!.resyncErroredBlocks.toString()}
               hint={
                 metrics.data!.resyncErroredBlocks > 0
-                  ? '0 でないためブロック喪失の可能性があります。/blocks で確認してください。'
-                  : '正常。リシンクに失敗しているブロックはありません。'
+                  ? 'リシンクに失敗しているブロックがあります。ブロックエラーページで確認してください。'
+                  : '正常です。'
               }
               tone={metrics.data!.resyncErroredBlocks > 0 ? 'danger' : 'neutral'}
             />
             <SignalCard
-              title="resync_queue_length"
+              title="リシンクキュー長"
               value={metrics.data!.resyncQueueLength.toLocaleString()}
               hint={
                 metrics.data!.resyncQueueLength > 1000
-                  ? 'キューが大きいです。layout 変更直後でなければ詰まりを疑います。'
+                  ? 'キューが大きくなっています。レイアウト変更直後でなければ問題の可能性があります。'
                   : metrics.data!.resyncQueueLength > 0
-                    ? 'リシンク進行中です。layout 変更後は一時的に増加します。'
-                    : '正常。リシンク待ちのブロックはありません。'
+                    ? 'リシンク処理中です。レイアウト変更後は一時的に増加します。'
+                    : '正常です。'
               }
               tone={metrics.data!.resyncQueueLength > 1000 ? 'warning' : 'neutral'}
             />
             <SignalCard
-              title="corruption_counter"
+              title="破損検出回数"
               value={metrics.data!.corruptionCounter.toString()}
               hint={
                 metrics.data!.corruptionCounter > 0
-                  ? 'scrub が破損ブロックを検出しています。ディスク障害の可能性を確認してください。'
-                  : '正常。scrub による破損検出はありません。'
+                  ? 'Scrub が破損ブロックを検出しました。ディスク障害の可能性があります。'
+                  : 'Scrub による破損検出はありません。'
               }
               tone={metrics.data!.corruptionCounter > 0 ? 'danger' : 'neutral'}
             />
@@ -382,12 +368,7 @@ function RepairPage() {
       </div>
 
       <div className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">状況別プレイブック</h2>
-          <p className="text-sm text-muted-foreground">
-            操作名から考えるのではなく、障害や変更イベントから逆引きします。
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold">よくある対応手順</h2>
         <div className="grid gap-3 lg:grid-cols-2">
           {PLAYBOOKS.map((playbook) => (
             <div key={playbook.title} className="rounded-lg border p-4 space-y-3">
@@ -421,12 +402,7 @@ function RepairPage() {
       </div>
 
       <div className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold">操作カタログ</h2>
-          <p className="text-sm text-muted-foreground">
-            各操作の用途、典型トリガー、注意点を並べています。高リスク操作は最後段に寄せています。
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold">修復操作</h2>
         <div className="grid gap-3">
           {REPAIR_OPERATIONS.map((op) => (
             <div key={op.value} className="rounded-lg border p-4 space-y-3">
@@ -436,7 +412,7 @@ function RepairPage() {
                     <h3 className="font-medium">{op.label}</h3>
                     <Badge variant={SEVERITY_VARIANT[op.severity]}>{SEVERITY_LABEL[op.severity]}</Badge>
                   </div>
-                  <p className="text-sm text-muted-foreground">{op.why}</p>
+                  <p className="text-sm text-muted-foreground">{op.description}</p>
                 </div>
                 <Button
                   size="sm"
@@ -449,11 +425,11 @@ function RepairPage() {
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-md bg-muted/40 p-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">使う場面</p>
-                  <p className="mt-1 text-sm">{op.trigger}</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">いつ使うか</p>
+                  <p className="mt-1 text-sm">{op.when}</p>
                 </div>
                 <div className="rounded-md bg-muted/40 p-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">注意点</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">注意</p>
                   <p className="mt-1 text-sm">{op.caution}</p>
                 </div>
               </div>
@@ -464,9 +440,9 @@ function RepairPage() {
 
       <div className="space-y-3">
         <div>
-          <h2 className="text-lg font-semibold">Scrub 操作</h2>
+          <h2 className="text-lg font-semibold">Scrub</h2>
           <p className="text-sm text-muted-foreground">
-            定期メンテナンスやディスク障害疑いの場面で使います。I/O 負荷が高く、実行時間も長くなりがちです。
+            全ブロックのチェックサムを検証し、破損データを検出します。ディスク I/O が増加するため、負荷に注意してください。
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -474,7 +450,7 @@ function RepairPage() {
             <div key={cmd.value} className="rounded-lg border p-4 space-y-3">
               <div className="space-y-1">
                 <h3 className="font-medium">Scrub {cmd.label}</h3>
-                <p className="text-sm text-muted-foreground">{cmd.summary}</p>
+                <p className="text-sm text-muted-foreground">{cmd.description}</p>
               </div>
               <Button
                 size="sm"
@@ -495,8 +471,8 @@ function RepairPage() {
         title={`${pendingLabel}の実行`}
         description={
           pendingSeverity === 'high'
-            ? 'この操作は最終手段です。先に /blocks で原因確認と purge の要否を確認したうえで実行してください。'
-            : 'この操作を全ノードに対して実行します。クラスタ負荷が一時的に上がる可能性があります。'
+            ? 'この操作は最終手段です。ブロックエラーページで原因を確認し、必要な purge を済ませたうえで実行してください。'
+            : 'この操作を全ノードに対して実行します。クラスタの負荷が一時的に上がる可能性があります。'
         }
         onConfirm={() => {
           if (pendingRepairType) mutation.mutate(pendingRepairType)
