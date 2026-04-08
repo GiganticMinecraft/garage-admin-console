@@ -328,3 +328,14 @@ export async function launchRepair(
     body: JSON.stringify({ repairType }),
   })
 }
+
+// Maintenance metrics (extracted from Garage /metrics)
+export interface MaintenanceMetrics {
+  resyncQueueLength: number
+  resyncErroredBlocks: number
+  corruptionCounter: number
+}
+
+export async function getMaintenanceMetrics(): Promise<MaintenanceMetrics> {
+  return fetchJSON('/metrics')
+}

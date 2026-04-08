@@ -77,6 +77,8 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 		})
 
 		r.Post("/api/repair", handleLaunchRepair(garageAdmin))
+
+		r.Get("/api/metrics", handleMaintenanceMetrics(garageAdmin))
 	})
 
 	return r
