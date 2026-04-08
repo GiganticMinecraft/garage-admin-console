@@ -272,6 +272,11 @@ function RepairPage() {
           <Button asChild variant="outline" size="sm">
             <Link to="/layout">レイアウトを確認</Link>
           </Button>
+          <Button asChild variant="outline" size="sm">
+            <a href="https://grafana.onp-k8s.admin.seichi.click/d/garage-block-metrics" target="_blank" rel="noopener noreferrer">
+              メトリクス推移 (Grafana)
+            </a>
+          </Button>
         </div>
       </div>
 
@@ -345,23 +350,17 @@ function RepairPage() {
               title="リシンクキュー長"
               value={metrics.data!.resyncQueueLength.toLocaleString()}
               hint={
-                metrics.data!.resyncQueueLength > 1000
-                  ? 'キューが大きくなっています。レイアウト変更直後でなければ問題の可能性があります。'
-                  : metrics.data!.resyncQueueLength > 0
-                    ? 'リシンク処理中です。レイアウト変更後は一時的に増加します。'
-                    : '正常です。'
+                metrics.data!.resyncQueueLength > 0
+                  ? 'リシンク待ちのブロックがあります。増減の推移は Grafana で確認してください。'
+                  : 'リシンク待ちはありません。'
               }
-              tone={metrics.data!.resyncQueueLength > 1000 ? 'warning' : 'neutral'}
+              tone="neutral"
             />
             <SignalCard
-              title="破損検出回数"
+              title="破損検出回数 (累積)"
               value={metrics.data!.corruptionCounter.toString()}
-              hint={
-                metrics.data!.corruptionCounter > 0
-                  ? 'Scrub が破損ブロックを検出しました。ディスク障害の可能性があります。'
-                  : 'Scrub による破損検出はありません。'
-              }
-              tone={metrics.data!.corruptionCounter > 0 ? 'danger' : 'neutral'}
+              hint="Scrub で検出された破損の累積回数です。増加の有無は Grafana で確認してください。"
+              tone="neutral"
             />
           </div>
         )}
