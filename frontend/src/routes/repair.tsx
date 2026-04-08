@@ -31,7 +31,7 @@ const REPAIR_OPERATIONS: {
     value: 'blocks',
     label: 'ブロック整合性検証',
     description: 'レプリカが不足しているブロックを検出し、他のノードからコピーして再配置します。',
-    when: 'layout apply の後、ノード障害や交換の後に実行します。',
+    when: 'ノードの追加・削除・ゾーン変更などのレイアウト変更を適用した後、ノード障害や交換の後に実行します。',
     caution: 'リシンクが自然に収まるまで数時間待ってから実行してください。',
     severity: 'medium',
   },
@@ -114,10 +114,10 @@ const PLAYBOOKS: {
   steps: { text: string; link?: { to: string; label: string } }[]
 }[] = [
   {
-    title: 'レイアウト変更後',
+    title: 'ノード追加・削除などのレイアウト変更後',
     summary: '最もよくあるメンテナンス手順です。',
     steps: [
-      { text: 'layout apply の後、数時間待ってリシンクが収まらなければ「ブロック整合性検証」を実行' },
+      { text: 'レイアウトの適用後、数時間待ってリシンクが収まらなければ「ブロック整合性検証」を実行' },
       { text: 'エラーが残る場合はブロックエラーページで対象を確認', link: { to: '/blocks', label: 'ブロックエラー' } },
       { text: '必要なら purge してから blockRefs / blockRc を実行' },
     ],
@@ -137,7 +137,7 @@ const PLAYBOOKS: {
     steps: [
       { text: 'Scrub を開始してブロックの破損がないか検証' },
       { text: 'ディスク I/O エラーの兆候があれば定期外でも Scrub を実行' },
-      { text: 'corruption_counter が増加していればディスク交換を検討' },
+      { text: '上部の「破損検出回数」が増加していればディスク交換を検討' },
     ],
   },
   {
@@ -158,8 +158,8 @@ const SEVERITY_VARIANT = {
 } as const
 
 const SEVERITY_LABEL = {
-  low: '限定用途',
-  medium: '要判断',
+  low: 'まれに使用',
+  medium: '障害時に使用',
   high: '最終手段',
 }
 
