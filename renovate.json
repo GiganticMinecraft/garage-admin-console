@@ -7,8 +7,12 @@
       "matchPackageNames": ["vite", "@vitejs/**", "@tailwindcss/vite"]
     },
     {
+      "groupName": "TypeScript packages",
+      "matchPackageNames": ["typescript", "typescript-eslint", "@typescript-eslint/**"]
+    },
+    {
       "groupName": "ESLint packages",
-      "matchPackageNames": ["eslint", "@eslint/**", "typescript-eslint", "@typescript-eslint/**"]
+      "matchPackageNames": ["eslint", "@eslint/**"]
     }
   ]
 }
