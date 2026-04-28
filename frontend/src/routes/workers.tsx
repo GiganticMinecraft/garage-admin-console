@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { listWorkers, type Worker } from '@/api'
+import { listWorkers, type Worker, type WorkerState } from '@/api'
 import {
   Table,
   TableHeader,
@@ -20,6 +20,17 @@ function formatSecsAgo(secs: number): string {
   if (secs < 3600) return `${Math.floor(secs / 60)}分前`
   if (secs < 86400) return `${Math.floor(secs / 3600)}時間前`
   return `${Math.floor(secs / 86400)}日前`
+}
+
+type StateKind = 'idle' | 'busy' | 'throttled' | 'other'
+
+function describeState(state: WorkerState): { label: string; kind: StateKind } {
+  if (typeof state === 'object' && state !== null && 'throttled' in state) {
+    return { label: `throttled (${state.throttled})`, kind: 'throttled' }
+  }
+  if (state === 'idle') return { label: 'idle', kind: 'idle' }
+  if (state === 'busy') return { label: 'busy', kind: 'busy' }
+  return { label: typeof state === 'string' && state.length > 0 ? state : 'unknown', kind: 'other' }
 }
 
 function WorkersPage() {
@@ -47,19 +58,23 @@ function WorkersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {workers?.map((worker: Worker) => (
+              {workers?.map((worker: Worker) => {
+                const { label: stateLabel, kind: stateKind } = describeState(worker.state)
+                const hasError = worker.consecutiveErrors > 0
+                const stateVariant = hasError
+                  ? 'destructive'
+                  : stateKind === 'idle'
+                    ? 'secondary'
+                    : stateKind === 'busy'
+                      ? 'default'
+                      : 'outline'
+                return (
                 <TableRow key={worker.id}>
                   <TableCell className="font-medium">
                     {worker.name || '-'}
                   </TableCell>
                   <TableCell>
-                    {worker.state === 'idle' ? (
-                      <Badge variant={worker.consecutiveErrors > 0 ? 'destructive' : 'secondary'}>idle</Badge>
-                    ) : worker.state === 'busy' ? (
-                      <Badge variant={worker.consecutiveErrors > 0 ? 'destructive' : 'default'}>busy</Badge>
-                    ) : (
-                      <Badge variant={worker.consecutiveErrors > 0 ? 'destructive' : 'outline'}>{worker.state || 'unknown'}</Badge>
-                    )}
+                    <Badge variant={stateVariant}>{stateLabel}</Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
@@ -101,7 +116,8 @@ function WorkersPage() {
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                )
+              })}
               {workers?.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
