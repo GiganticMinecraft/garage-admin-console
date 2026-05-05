@@ -176,8 +176,9 @@ function BucketDetailPage() {
     })
   }
 
+  const isAllSelected = allObjects.length > 0 && allObjects.every((obj) => selectedKeys.has(obj.key))
+
   const toggleSelectAll = () => {
-    const isAllSelected = allObjects.length > 0 && allObjects.every((obj) => selectedKeys.has(obj.key))
     setSelectedKeys((prev) => {
       const next = new Set(prev)
       if (isAllSelected) {
@@ -507,7 +508,7 @@ function BucketDetailPage() {
                   <TableHead className="w-10">
                     <input
                       type="checkbox"
-                      checked={allObjects.length > 0 && allObjects.every((obj) => selectedKeys.has(obj.key))}
+                      checked={isAllSelected}
                       onChange={toggleSelectAll}
                       className="rounded"
                     />

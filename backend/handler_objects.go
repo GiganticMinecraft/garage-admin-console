@@ -197,6 +197,9 @@ func streamBatchZip(s3Client *S3Client, ctx context.Context, bucket string, keys
 			Key:    aws.String(key),
 		})
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			slog.ErrorContext(ctx, "s3 GetObject failed for batch download", "bucket", bucket, "key", key, "error", err)
 			continue
 		}
