@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -185,6 +186,37 @@ type batchDownloadRequest struct {
 	Keys []string `json:"keys"`
 }
 
+// streamBatchZip writes a ZIP archive containing objects from S3 to the writer.
+func streamBatchZip(s3Client *S3Client, ctx context.Context, bucket string, keys []string, w io.Writer) {
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	for _, key := range keys {
+		output, err := s3Client.client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			slog.ErrorContext(ctx, "s3 GetObject failed for batch download", "bucket", bucket, "key", key, "error", err)
+			continue
+		}
+
+		fw, err := zw.Create(key)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to create zip entry", "key", key, "error", err)
+			output.Body.Close()
+			return
+		}
+
+		if _, err := io.Copy(fw, output.Body); err != nil {
+			slog.ErrorContext(ctx, "failed to copy object to zip", "key", key, "error", err)
+			output.Body.Close()
+			return
+		}
+		output.Body.Close()
+	}
+}
+
 // handleBatchDownloadObjects handles POST /api/objects/{bucket}/batch-download.
 // It accepts a list of keys, fetches each from S3, and streams a ZIP archive.
 func handleBatchDownloadObjects(s3Client *S3Client) http.HandlerFunc {
@@ -204,31 +236,26 @@ func handleBatchDownloadObjects(s3Client *S3Client) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-files.zip"`, bucket))
 
-		zw := zip.NewWriter(w)
-		defer zw.Close()
+		streamBatchZip(s3Client, r.Context(), bucket, req.Keys, w)
+	}
+}
 
-		for _, key := range req.Keys {
-			output, err := s3Client.client.GetObject(r.Context(), &s3.GetObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    aws.String(key),
-			})
-			if err != nil {
-				slog.ErrorContext(r.Context(), "s3 GetObject failed for batch download", "bucket", bucket, "key", key, "error", err)
-				continue
-			}
+// handleBatchDownloadObjectsGet handles GET /api/objects/{bucket}/batch-download?key=...&key=...
+// This allows anchor-tag based download to avoid loading the ZIP into browser memory.
+func handleBatchDownloadObjectsGet(s3Client *S3Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		bucket := chi.URLParam(r, "bucket")
 
-			fw, err := zw.Create(key)
-			if err != nil {
-				slog.ErrorContext(r.Context(), "failed to create zip entry", "key", key, "error", err)
-				output.Body.Close()
-				continue
-			}
-
-			if _, err := io.Copy(fw, output.Body); err != nil {
-				slog.ErrorContext(r.Context(), "failed to copy object to zip", "key", key, "error", err)
-			}
-			output.Body.Close()
+		keys := r.URL.Query()["key"]
+		if len(keys) == 0 {
+			http.Error(w, `{"error":"key parameter is required"}`, http.StatusBadRequest)
+			return
 		}
+
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-files.zip"`, bucket))
+
+		streamBatchZip(s3Client, r.Context(), bucket, keys, w)
 	}
 }
 
