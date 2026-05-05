@@ -177,11 +177,16 @@ function BucketDetailPage() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedKeys.size === allObjects.length) {
-      setSelectedKeys(new Set())
-    } else {
-      setSelectedKeys(new Set(allObjects.map((o) => o.key)))
-    }
+    const isAllSelected = allObjects.length > 0 && allObjects.every((obj) => selectedKeys.has(obj.key))
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      if (isAllSelected) {
+        for (const obj of allObjects) next.delete(obj.key)
+      } else {
+        for (const obj of allObjects) next.add(obj.key)
+      }
+      return next
+    })
   }
 
   const batchDownloadMutation = useMutation({
@@ -502,7 +507,7 @@ function BucketDetailPage() {
                   <TableHead className="w-10">
                     <input
                       type="checkbox"
-                      checked={allObjects.length > 0 && selectedKeys.size === allObjects.length}
+                      checked={allObjects.length > 0 && allObjects.every((obj) => selectedKeys.has(obj.key))}
                       onChange={toggleSelectAll}
                       className="rounded"
                     />
