@@ -190,6 +190,30 @@ export function downloadObjectUrl(bucket: string, key: string): string {
   return `${BASE}/objects/${bucket}/download?key=${encodeURIComponent(key)}`
 }
 
+export async function downloadObjectsZip(bucket: string, keys: string[]): Promise<void> {
+  const res = await fetch(`${BASE}/objects/${bucket}/batch-download`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+    body: JSON.stringify({ keys }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Batch download error: ${res.status}${text ? ` - ${text}` : ''}`)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${bucket}-files.zip`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 export async function uploadFile(bucket: string, file: File, prefix?: string): Promise<{ key: string }> {
   const form = new FormData()
   form.append('file', file)

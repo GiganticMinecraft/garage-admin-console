@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -176,6 +177,58 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 			"bucket": bucket,
 			"key":    key,
 		})
+	}
+}
+
+// batchDownloadRequest is the JSON body for batch download.
+type batchDownloadRequest struct {
+	Keys []string `json:"keys"`
+}
+
+// handleBatchDownloadObjects handles POST /api/objects/{bucket}/batch-download.
+// It accepts a list of keys, fetches each from S3, and streams a ZIP archive.
+func handleBatchDownloadObjects(s3Client *S3Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		bucket := chi.URLParam(r, "bucket")
+
+		var req batchDownloadRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		if len(req.Keys) == 0 {
+			http.Error(w, `{"error":"keys array is required and must not be empty"}`, http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-files.zip"`, bucket))
+
+		zw := zip.NewWriter(w)
+		defer zw.Close()
+
+		for _, key := range req.Keys {
+			output, err := s3Client.client.GetObject(r.Context(), &s3.GetObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				slog.ErrorContext(r.Context(), "s3 GetObject failed for batch download", "bucket", bucket, "key", key, "error", err)
+				continue
+			}
+
+			fw, err := zw.Create(key)
+			if err != nil {
+				slog.ErrorContext(r.Context(), "failed to create zip entry", "key", key, "error", err)
+				output.Body.Close()
+				continue
+			}
+
+			if _, err := io.Copy(fw, output.Body); err != nil {
+				slog.ErrorContext(r.Context(), "failed to copy object to zip", "key", key, "error", err)
+			}
+			output.Body.Close()
+		}
 	}
 }
 
