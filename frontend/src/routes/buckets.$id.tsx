@@ -7,6 +7,7 @@ import {
   uploadFile,
   deleteObject,
   downloadObjectUrl,
+  downloadObjectsZip,
   grantBucketKey,
   revokeBucketKey,
 } from '@/api'
@@ -118,6 +119,7 @@ function BucketDetailPage() {
   )
   const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [copied, setCopied] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
@@ -162,6 +164,34 @@ function BucketDetailPage() {
     },
     onError: (error) => {
       toast.error(`オブジェクトの削除に失敗しました: ${error.message}`)
+    },
+  })
+
+  const toggleSelect = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedKeys.size === allObjects.length) {
+      setSelectedKeys(new Set())
+    } else {
+      setSelectedKeys(new Set(allObjects.map((o) => o.key)))
+    }
+  }
+
+  const batchDownloadMutation = useMutation({
+    mutationFn: (keys: string[]) => downloadObjectsZip(id, keys),
+    onSuccess: () => {
+      setSelectedKeys(new Set())
+      toast.success('ダウンロードを開始しました')
+    },
+    onError: (error: Error) => {
+      toast.error(`一括ダウンロードに失敗しました: ${error.message}`)
     },
   })
 
@@ -408,6 +438,29 @@ function BucketDetailPage() {
           ここにファイルをドラッグ＆ドロップしてアップロード
         </div>
 
+        {/* Batch action bar */}
+        {selectedKeys.size > 0 && (
+          <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+            <span className="text-sm text-muted-foreground">
+              {selectedKeys.size}件選択中
+            </span>
+            <Button
+              size="sm"
+              onClick={() => batchDownloadMutation.mutate([...selectedKeys])}
+              disabled={batchDownloadMutation.isPending}
+            >
+              {batchDownloadMutation.isPending ? 'ダウンロード中...' : '一括ダウンロード'}
+            </Button>
+            <Button
+              variant="link"
+              size="sm"
+              onClick={() => setSelectedKeys(new Set())}
+            >
+              選択解除
+            </Button>
+          </div>
+        )}
+
         {/* Prefix navigation */}
         {prefix && (
           <Button
@@ -446,6 +499,14 @@ function BucketDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      checked={allObjects.length > 0 && selectedKeys.size === allObjects.length}
+                      onChange={toggleSelectAll}
+                      className="rounded"
+                    />
+                  </TableHead>
                   <TableHead>キー</TableHead>
                   <TableHead className="text-right">サイズ</TableHead>
                   <TableHead className="text-right">操作</TableHead>
@@ -454,6 +515,14 @@ function BucketDetailPage() {
               <TableBody>
                 {allObjects.map((obj) => (
                   <TableRow key={obj.key}>
+                    <TableCell>
+                      <input
+                        type="checkbox"
+                        checked={selectedKeys.has(obj.key)}
+                        onChange={() => toggleSelect(obj.key)}
+                        className="rounded"
+                      />
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{obj.key}</TableCell>
                     <TableCell className="text-right text-muted-foreground">
                       {formatBytes(obj.size)}
@@ -475,7 +544,7 @@ function BucketDetailPage() {
                 ))}
                 {allObjects.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
                       オブジェクトがありません
                     </TableCell>
                   </TableRow>
