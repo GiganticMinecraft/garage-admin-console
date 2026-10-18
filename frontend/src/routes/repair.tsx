@@ -330,39 +330,61 @@ function RepairPage() {
           <SectionSkeleton />
         ) : metrics.isError ? (
           <div className="grid gap-3 md:grid-cols-3">
-            <SignalCard title="リシンクエラー数" value="取得失敗" hint="Garage の /metrics に接続できませんでした。" tone="warning" />
-            <SignalCard title="リシンクキュー長" value="取得失敗" hint="Garage の /metrics に接続できませんでした。" tone="warning" />
+            <SignalCard title="リシンクエラー数" value="取得失敗" hint="Garage のノード統計を取得できませんでした。" tone="warning" />
+            <SignalCard title="リシンクキュー長" value="取得失敗" hint="Garage のノード統計を取得できませんでした。" tone="warning" />
             <SignalCard title="破損検出回数" value="取得失敗" hint="Garage の /metrics に接続できませんでした。" tone="warning" />
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-3">
-            <SignalCard
-              title="リシンクエラー数"
-              value={metrics.data!.resyncErroredBlocks.toString()}
-              hint={
-                metrics.data!.resyncErroredBlocks > 0
-                  ? 'リシンクに失敗しているブロックがあります。ブロックエラーページで確認してください。'
-                  : '正常です。'
-              }
-              tone={metrics.data!.resyncErroredBlocks > 0 ? 'danger' : 'neutral'}
-            />
-            <SignalCard
-              title="リシンクキュー長"
-              value={metrics.data!.resyncQueueLength.toLocaleString()}
-              hint={
-                metrics.data!.resyncQueueLength > 0
-                  ? 'リシンク待ちのブロックがあります。増減の推移は Grafana で確認してください。'
-                  : 'リシンク待ちはありません。'
-              }
-              tone="neutral"
-            />
-            <SignalCard
-              title="破損検出回数 (累積)"
-              value={metrics.data!.corruptionCounter.toString()}
-              hint="Scrub で検出された破損の累積回数です。増加の有無は Grafana で確認してください。"
-              tone="neutral"
-            />
-          </div>
+          <>
+            {(() => {
+              const m = metrics.data!
+              const nodeCount = m.nodes.length
+              const missing = Object.keys(m.nodeErrors).length
+              const scope = missing > 0
+                ? `${nodeCount} ノード分の合計。${missing} ノードから取得できていません。`
+                : `${nodeCount} ノード分の合計です。`
+              const breakdown = m.nodes
+                .map((n) => `${n.nodeId.slice(0, 8)}: ${n.resyncErrors}`)
+                .join(' / ')
+              const queueBreakdown = m.nodes
+                .map((n) => `${n.nodeId.slice(0, 8)}: ${n.resyncQueueLen.toLocaleString()}`)
+                .join(' / ')
+              return (
+                <div className="grid gap-3 md:grid-cols-3">
+                  <SignalCard
+                    title="リシンクエラー数"
+                    value={m.resyncErroredBlocks.toString()}
+                    hint={
+                      (m.resyncErroredBlocks > 0
+                        ? 'リシンクに失敗しているブロックがあります。ブロックエラーページで確認してください。'
+                        : '正常です。') + ` ${scope}` + (nodeCount > 1 ? ` (${breakdown})` : '')
+                    }
+                    tone={missing > 0 ? 'warning' : m.resyncErroredBlocks > 0 ? 'danger' : 'neutral'}
+                  />
+                  <SignalCard
+                    title="リシンクキュー長"
+                    value={m.resyncQueueLength.toLocaleString()}
+                    hint={
+                      (m.resyncQueueLength > 0
+                        ? 'リシンク待ちのブロックがあります。増減の推移は Grafana で確認してください。'
+                        : 'リシンク待ちはありません。') + ` ${scope}` + (nodeCount > 1 ? ` (${queueBreakdown})` : '')
+                    }
+                    tone={missing > 0 ? 'warning' : 'neutral'}
+                  />
+                  <SignalCard
+                    title="破損検出回数 (累積)"
+                    value={m.corruptionCounter == null ? '取得不可' : m.corruptionCounter.toString()}
+                    hint={
+                      m.corruptionCounter == null
+                        ? 'Admin エンドポイントのノードの /metrics を取得できませんでした (metrics_token 設定時は Admin トークンで読めません)。'
+                        : 'Scrub で検出された破損の累積回数です。Admin エンドポイントに接続したノードの値のみです。増加の有無は Grafana で確認してください。'
+                    }
+                    tone={m.corruptionCounter == null ? 'warning' : 'neutral'}
+                  />
+                </div>
+              )
+            })()}
+          </>
         )}
       </div>
 

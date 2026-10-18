@@ -4,12 +4,66 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 )
 
-// handleListWorkers proxies GET /api/workers to Garage POST /v2/ListWorkers.
-// The Garage response is { "success": { "nodeId": [...workers] }, "error": {} }.
-// We flatten all workers into a single array for the frontend.
+// workerEntry is one worker from one node, tagged with the node it runs on.
+// Worker IDs are per-node counters, so (nodeId, id) is the unique key.
+type workerEntry struct {
+	NodeID string `json:"nodeId"`
+	ID     int64  `json:"id"`
+	raw    map[string]any
+}
+
+func (w workerEntry) MarshalJSON() ([]byte, error) {
+	m := make(map[string]any, len(w.raw)+1)
+	for k, v := range w.raw {
+		m[k] = v
+	}
+	m["nodeId"] = w.NodeID
+	return json.Marshal(m)
+}
+
+// workersResponse is what GET /api/workers returns: every worker from every
+// node that answered, plus the error message for each node that did not, so
+// the UI can show partial results honestly instead of silently dropping nodes.
+type workersResponse struct {
+	Workers []workerEntry     `json:"workers"`
+	Errors  map[string]string `json:"errors"`
+}
+
+// flattenWorkers converts Garage's MultiResponse for ListWorkers into a
+// deterministic list: sorted by node ID then worker ID.
+func flattenWorkers(success map[string][]json.RawMessage, errors map[string]string) workersResponse {
+	out := workersResponse{Workers: []workerEntry{}, Errors: map[string]string{}}
+	for nodeID, workers := range success {
+		for _, raw := range workers {
+			var m map[string]any
+			if err := json.Unmarshal(raw, &m); err != nil {
+				continue
+			}
+			var id int64
+			if v, ok := m["id"].(float64); ok {
+				id = int64(v)
+			}
+			out.Workers = append(out.Workers, workerEntry{NodeID: nodeID, ID: id, raw: m})
+		}
+	}
+	sort.SliceStable(out.Workers, func(i, j int) bool {
+		if out.Workers[i].NodeID != out.Workers[j].NodeID {
+			return out.Workers[i].NodeID < out.Workers[j].NodeID
+		}
+		return out.Workers[i].ID < out.Workers[j].ID
+	})
+	for nodeID, msg := range errors {
+		out.Errors[nodeID] = msg
+	}
+	return out
+}
+
+// handleListWorkers proxies GET /api/workers to Garage POST /v2/ListWorkers?node=*.
+// The Garage response is { "success": { "nodeId": [...workers] }, "error": { "nodeId": "msg" } }.
 func handleListWorkers(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const garagePath = "/v2/ListWorkers?node=*"
@@ -29,24 +83,19 @@ func handleListWorkers(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 
 		var multiResp struct {
-			Success map[string]json.RawMessage `json:"success"`
+			Success map[string][]json.RawMessage `json:"success"`
+			Error   map[string]string            `json:"error"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&multiResp); err != nil {
 			slog.ErrorContext(r.Context(), "failed to decode ListWorkers response", "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
-
-		var allWorkers []json.RawMessage
-		for _, nodeWorkers := range multiResp.Success {
-			var workers []json.RawMessage
-			if err := json.Unmarshal(nodeWorkers, &workers); err != nil {
-				continue
-			}
-			allWorkers = append(allWorkers, workers...)
+		for nodeID, msg := range multiResp.Error {
+			slog.WarnContext(r.Context(), "ListWorkers failed on node", "node", nodeID, "error", msg)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(allWorkers)
+		json.NewEncoder(w).Encode(flattenWorkers(multiResp.Success, multiResp.Error))
 	}
 }
