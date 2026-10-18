@@ -65,15 +65,23 @@ func TestS3ClientHeaderTimeoutStillApplies(t *testing.T) {
 	defer srv.Close()
 	defer close(release)
 
-	client := newS3SDKClient(srv.URL, "garage", "ak", "sk", 100*time.Millisecond)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Disable the SDK's retries so the measured duration reflects a single
+	// attempt; with the default retryer the three attempts plus backoff make
+	// the timing meaningless on slow CI runners.
+	noRetry := func(o *s3.Options) { o.Retryer = aws.NopRetryer{} }
+	client := newS3SDKClient(srv.URL, "garage", "ak", "sk", 100*time.Millisecond, noRetry)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	start := time.Now()
 	_, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String("b"), Key: aws.String("k")})
+	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected an error from a server that never responds")
 	}
-	if time.Since(start) > 4*time.Second {
-		t.Fatalf("request did not time out via ResponseHeaderTimeout (took %s)", time.Since(start))
+	if ctx.Err() != nil || elapsed > 5*time.Second {
+		t.Fatalf("request did not time out via ResponseHeaderTimeout (took %s, err=%v)", elapsed, err)
+	}
+	if !strings.Contains(err.Error(), "timeout awaiting response headers") {
+		t.Fatalf("expected a response header timeout, got: %v", err)
 	}
 }

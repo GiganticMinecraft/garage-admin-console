@@ -56,7 +56,7 @@ func newS3Client() *S3Client {
 // backups routinely exceed 30s). Only the wait for response headers is
 // bounded; the body transfer is governed by the request context, which is
 // cancelled when the browser disconnects.
-func newS3SDKClient(endpoint, region, accessKey, secretKey string, headerTimeout time.Duration) *s3.Client {
+func newS3SDKClient(endpoint, region, accessKey, secretKey string, headerTimeout time.Duration, optFns ...func(*s3.Options)) *s3.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = headerTimeout
 
@@ -68,5 +68,5 @@ func newS3SDKClient(endpoint, region, accessKey, secretKey string, headerTimeout
 		HTTPClient: &http.Client{
 			Transport: otelhttp.NewTransport(transport),
 		},
-	})
+	}, optFns...)
 }
