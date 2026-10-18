@@ -13,7 +13,13 @@ interface ConfirmDialogProps {
   onOpenChange: (open: boolean) => void
   title: string
   description: string
-  onConfirm: () => void
+  /**
+   * Runs the confirmed action. When it returns a promise (e.g. mutateAsync),
+   * the dialog stays open with the pending label until it settles and only
+   * closes on success, so failures remain visible instead of silently
+   * vanishing with the dialog.
+   */
+  onConfirm: () => void | Promise<unknown>
   isPending?: boolean
   confirmLabel?: string
   pendingLabel?: string
@@ -45,8 +51,17 @@ export function ConfirmDialog({
           <Button
             variant={confirmVariant}
             onClick={() => {
-              onConfirm()
-              onOpenChange(false)
+              const result = onConfirm()
+              if (result && typeof (result as Promise<unknown>).then === 'function') {
+                ;(result as Promise<unknown>).then(
+                  () => onOpenChange(false),
+                  () => {
+                    // Keep the dialog open; the caller's onError reports the failure.
+                  },
+                )
+              } else {
+                onOpenChange(false)
+              }
             }}
             disabled={isPending}
           >

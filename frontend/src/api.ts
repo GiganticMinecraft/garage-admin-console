@@ -1,5 +1,46 @@
 const BASE = '/api'
 
+/** Error thrown for non-2xx API responses, carrying the upstream message. */
+export class ApiError extends Error {
+  status: number
+  /** Garage error code such as "BucketNotEmpty", when the upstream returned one. */
+  code?: string
+
+  constructor(status: number, message: string, code?: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
+/**
+ * Builds an ApiError from a failed response. Garage Admin API errors are JSON
+ * objects like {"code":"BucketNotEmpty","message":"..."}; the Go backend's own
+ * errors are either {"error":"..."} or plain text. Fall back to the status.
+ */
+export async function errorFromResponse(res: Response): Promise<ApiError> {
+  let message = ''
+  let code: string | undefined
+  try {
+    const text = await res.text()
+    if (text) {
+      try {
+        const body = JSON.parse(text) as { code?: unknown; message?: unknown; error?: unknown }
+        if (typeof body.message === 'string') message = body.message
+        else if (typeof body.error === 'string') message = body.error
+        if (typeof body.code === 'string') code = body.code
+      } catch {
+        message = text.trim()
+      }
+    }
+  } catch {
+    // body unreadable; keep the status-only message below
+  }
+  if (!message) message = `API error: ${res.status}`
+  return new ApiError(res.status, message, code)
+}
+
 export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!headers.has('Content-Type')) {
@@ -12,7 +53,7 @@ export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T>
     window.location.href = `${BASE}/auth/login`
     throw new Error('Unauthorized')
   }
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  if (!res.ok) throw await errorFromResponse(res)
   if (res.status === 204 || res.headers.get('Content-Length') === '0') {
     return undefined as T
   }
@@ -43,21 +84,29 @@ export interface ClusterHealth {
   partitionsAllOk: number
 }
 
+export interface PartitionUsage {
+  available: number
+  total: number
+}
+
+// Mirrors Garage's NodeResp: role, hostname and the partition stats are all
+// Option<_> upstream and come back as null for nodes that are down or have
+// no role assigned yet. Keep them nullable so the UI is forced to handle it.
 export interface ClusterNode {
   id: string
-  garageVersion: string
-  addr: string
-  hostname: string
+  garageVersion: string | null
+  addr: string | null
+  hostname: string | null
   isUp: boolean
   lastSeenSecsAgo: number | null
   role: {
     zone: string
     tags: string[]
-    capacity: number
-  }
+    capacity: number | null
+  } | null
   draining: boolean
-  dataPartition: { available: number; total: number }
-  metadataPartition: { available: number; total: number }
+  dataPartition: PartitionUsage | null
+  metadataPartition: PartitionUsage | null
 }
 
 export interface ClusterStatus {
@@ -216,7 +265,11 @@ export async function uploadFile(bucket: string, file: File, prefix?: string): P
     headers: { 'X-Requested-With': 'XMLHttpRequest' },
     body: form,
   })
-  if (!res.ok) throw new Error(`Upload error: ${res.status}`)
+  if (res.status === 401) {
+    window.location.href = `${BASE}/auth/login`
+    throw new Error('Unauthorized')
+  }
+  if (!res.ok) throw await errorFromResponse(res)
   return res.json()
 }
 

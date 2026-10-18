@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { getClusterLayout, applyLayout } from '@/api'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -65,8 +66,13 @@ function LayoutPage() {
     mutationFn: (body: unknown) => applyLayout(body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cluster', 'layout'] })
+      queryClient.invalidateQueries({ queryKey: ['cluster', 'status'] })
       setShowEdit(false)
       setJsonError('')
+      toast.success('レイアウトを適用しました')
+    },
+    onError: (error) => {
+      toast.error(`レイアウトの適用に失敗しました: ${error.message}`)
     },
   })
 
@@ -213,7 +219,7 @@ function LayoutPage() {
         confirmLabel="適用"
         pendingLabel="適用中..."
         confirmVariant="default"
-        onConfirm={() => applyMutation.mutate(parsedBody)}
+        onConfirm={() => applyMutation.mutateAsync(parsedBody)}
         isPending={applyMutation.isPending}
       />
     </div>

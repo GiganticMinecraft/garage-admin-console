@@ -142,7 +142,7 @@ function BlocksPage() {
       setSelectedHashes(new Set())
       queryClient.invalidateQueries({ queryKey: ['blockErrors'] })
     },
-    onError: () => toast.error('パージに失敗しました'),
+    onError: (error) => toast.error(`パージに失敗しました: ${error.message}`),
   })
 
   const resyncMutation = useMutation({
@@ -156,7 +156,7 @@ function BlocksPage() {
       toast.success(`${msg} (${summarizeMultiResponse(resp)})`)
       queryClient.invalidateQueries({ queryKey: ['blockErrors'] })
     },
-    onError: () => toast.error('リシンクに失敗しました'),
+    onError: (error) => toast.error(`リシンクに失敗しました: ${error.message}`),
   })
 
   const toggleSelect = (hash: string) => {
@@ -285,7 +285,7 @@ function BlocksPage() {
         onOpenChange={setPurgeDialogOpen}
         title="ブロックのパージ"
         description={`選択した${selectedHashes.size}件のブロックをパージします。この操作は元に戻せません。`}
-        onConfirm={() => purgeMutation.mutate([...selectedHashes])}
+        onConfirm={() => purgeMutation.mutateAsync([...selectedHashes])}
         isPending={purgeMutation.isPending}
         confirmLabel="パージ"
         pendingLabel="パージ中..."
@@ -296,7 +296,7 @@ function BlocksPage() {
         onOpenChange={setResyncDialogOpen}
         title="ブロックのリシンク"
         description={`選択した${selectedHashes.size}件のブロックのリシンクを再試行します。`}
-        onConfirm={() => resyncMutation.mutate({ blockHashes: [...selectedHashes] })}
+        onConfirm={() => resyncMutation.mutateAsync({ blockHashes: [...selectedHashes] })}
         isPending={resyncMutation.isPending}
         confirmLabel="リシンク"
         pendingLabel="リシンク中..."

@@ -238,7 +238,7 @@ function RepairPage() {
         toast.success(`${successCount}ノードで操作を実行しました`)
       }
     },
-    onError: () => toast.error('操作に失敗しました'),
+    onError: (error) => toast.error(`操作に失敗しました: ${error.message}`),
   })
 
   const requestRepair = (
@@ -476,7 +476,7 @@ function RepairPage() {
             : 'この操作を全ノードに対して実行します。クラスタの負荷が一時的に上がる可能性があります。'
         }
         onConfirm={() => {
-          if (pendingRepairType) mutation.mutate(pendingRepairType)
+          if (pendingRepairType) return mutation.mutateAsync(pendingRepairType)
         }}
         isPending={mutation.isPending}
         confirmLabel="実行"
