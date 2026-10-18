@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path"
 	"time"
 
@@ -116,8 +117,8 @@ func handleDownloadObject(s3Client *S3Client) http.HandlerFunc {
 		}
 		defer output.Body.Close()
 
-		filename := path.Base(key)
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.Header().Set("Content-Disposition", attachmentDisposition(path.Base(key)))
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if output.ContentType != nil {
 			w.Header().Set("Content-Type", *output.ContentType)
 		} else {
@@ -184,6 +185,46 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 // batchDownloadRequest is the JSON body for batch download.
 type batchDownloadRequest struct {
 	Keys []string `json:"keys"`
+	// Name is an optional human-readable bucket name (alias) used for the
+	// ZIP filename; falls back to the bucket path parameter (usually the ID).
+	Name string `json:"name"`
+}
+
+// zipFilename builds the download filename for a batch ZIP. The alias is
+// preferred over the 64-hex bucket ID when the client supplies one.
+func zipFilename(bucket, name string) string {
+	if name == "" {
+		name = bucket
+	}
+	return name + "-files.zip"
+}
+
+// attachmentDisposition builds a Content-Disposition header that is safe for
+// arbitrary object names. Quotes and control characters are stripped from the
+// ASCII fallback, and the UTF-8 name is carried in the RFC 6266 / RFC 8187
+// filename* parameter so browsers keep Japanese and other non-ASCII names.
+func attachmentDisposition(name string) string {
+	if name == "" || name == "." || name == "/" {
+		name = "download"
+	}
+	ascii := make([]byte, 0, len(name))
+	for _, r := range name {
+		switch {
+		case r == '"' || r == '\\':
+			ascii = append(ascii, '_')
+		case r < 0x20 || r == 0x7f:
+			// drop control characters
+		case r > 0x7e:
+			ascii = append(ascii, '_')
+		default:
+			ascii = append(ascii, byte(r))
+		}
+	}
+	fallback := string(ascii)
+	if fallback == "" {
+		fallback = "download"
+	}
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, fallback, url.PathEscape(name))
 }
 
 // streamBatchZip writes a ZIP archive containing objects from S3 to the writer.
@@ -237,7 +278,8 @@ func handleBatchDownloadObjects(s3Client *S3Client) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-files.zip"`, bucket))
+		w.Header().Set("Content-Disposition", attachmentDisposition(zipFilename(bucket, req.Name)))
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 
 		streamBatchZip(s3Client, r.Context(), bucket, req.Keys, w)
 	}
@@ -256,7 +298,8 @@ func handleBatchDownloadObjectsGet(s3Client *S3Client) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-files.zip"`, bucket))
+		w.Header().Set("Content-Disposition", attachmentDisposition(zipFilename(bucket, r.URL.Query().Get("name"))))
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 
 		streamBatchZip(s3Client, r.Context(), bucket, keys, w)
 	}

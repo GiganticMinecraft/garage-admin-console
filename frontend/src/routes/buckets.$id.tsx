@@ -191,7 +191,7 @@ function BucketDetailPage() {
   }
 
   const batchDownloadMutation = useMutation({
-    mutationFn: (keys: string[]) => downloadObjectsZip(id, keys),
+    mutationFn: (keys: string[]) => downloadObjectsZip(id, keys, bucket.data?.globalAliases?.[0]),
     onSuccess: () => {
       setSelectedKeys(new Set())
       toast.success('ダウンロードを開始しました')
