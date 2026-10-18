@@ -395,3 +395,32 @@ func TestLayoutPostProxy(t *testing.T) {
 		t.Errorf("expected proxied POST response, got: %s", respBody)
 	}
 }
+
+func TestGetKeyForwardsShowSecretKey(t *testing.T) {
+	var gotQuery string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/GetKeyInfo", func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"accessKeyId":"GK1","secretAccessKey":"s"}`))
+	})
+	garage := httptest.NewServer(mux)
+	defer garage.Close()
+	handler, store := setupTestRouter(t, garage.URL)
+
+	for _, tc := range []struct{ query, want string }{
+		{"", "id=GK1"},
+		{"?showSecretKey=true", "id=GK1&showSecretKey=true"},
+		{"?showSecretKey=yes", "id=GK1"},
+	} {
+		req := authenticatedRequest(t, store, http.MethodGet, "/api/keys/GK1"+tc.query, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if gotQuery != tc.want {
+			t.Errorf("query %q: upstream query = %q, want %q", tc.query, gotQuery, tc.want)
+		}
+	}
+}
