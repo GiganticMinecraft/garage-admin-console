@@ -45,8 +45,31 @@ func handleClusterLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return proxyGarageGET(garageAdmin, "/v2/GetClusterLayout")
 }
 
-// handleApplyLayout proxies POST /api/cluster/layout to Garage POST /v2/ApplyClusterLayout.
-// The request body is forwarded as-is.
+// Layout changes in Garage are a three-step workflow: stage role changes
+// (UpdateClusterLayout), optionally preview the resulting assignment
+// (PreviewClusterLayoutChanges), then commit them with ApplyClusterLayout,
+// whose body is only {"version": current+1} as a safety check. Staged changes
+// can be discarded with RevertClusterLayout.
+
+// handleStageLayout proxies POST /api/cluster/layout/stage to Garage POST /v2/UpdateClusterLayout.
+// Body: {"roles":[{"id":..., "zone":..., "capacity":..., "tags":[...]} | {"id":..., "remove":true}], "parameters":{...}}
+func handleStageLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return proxyGaragePOST(garageAdmin, "/v2/UpdateClusterLayout")
+}
+
+// handlePreviewLayout proxies POST /api/cluster/layout/preview to Garage POST /v2/PreviewClusterLayoutChanges.
+func handlePreviewLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return proxyGaragePOST(garageAdmin, "/v2/PreviewClusterLayoutChanges")
+}
+
+// handleRevertLayout proxies POST /api/cluster/layout/revert to Garage POST /v2/RevertClusterLayout.
+func handleRevertLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return proxyGaragePOST(garageAdmin, "/v2/RevertClusterLayout")
+}
+
+// handleApplyLayout proxies POST /api/cluster/layout/apply (and the legacy
+// POST /api/cluster/layout) to Garage POST /v2/ApplyClusterLayout.
+// The request body ({"version": n}) is forwarded as-is.
 func handleApplyLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const garagePath = "/v2/ApplyClusterLayout"

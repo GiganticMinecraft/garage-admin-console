@@ -122,15 +122,84 @@ export async function getClusterStatus(): Promise<ClusterStatus> {
   return fetchJSON('/cluster/status')
 }
 
-export async function getClusterLayout(): Promise<Record<string, unknown>> {
+// Cluster layout (mirrors Garage's GetClusterLayoutResponse)
+export interface LayoutNodeRole {
+  id: string
+  zone: string
+  tags: string[]
+  /** null for gateway nodes */
+  capacity: number | null
+  storedPartitions: number | null
+  usableCapacity: number | null
+}
+
+export type ZoneRedundancy = 'maximum' | { atLeast: number }
+
+export interface LayoutParameters {
+  zoneRedundancy: ZoneRedundancy
+}
+
+/** A staged change: either a new/updated role or a removal. */
+export type NodeRoleChange =
+  | { id: string; remove: true }
+  | { id: string; zone: string; tags: string[]; capacity: number | null }
+
+export interface ClusterLayout {
+  version: number
+  roles: LayoutNodeRole[]
+  parameters: LayoutParameters
+  partitionSize: number
+  stagedRoleChanges: NodeRoleChange[]
+  stagedParameters: LayoutParameters | null
+}
+
+export interface LayoutPreview {
+  message: string[]
+  newLayout: ClusterLayout
+}
+
+export interface LayoutApplyResult {
+  message: string[]
+  layout: ClusterLayout
+}
+
+export async function getClusterLayout(): Promise<ClusterLayout> {
   return fetchJSON('/cluster/layout')
 }
 
-export async function applyLayout(body: unknown): Promise<Record<string, unknown>> {
-  return fetchJSON('/cluster/layout', {
+/** Stage role/parameter changes (Garage UpdateClusterLayout). Nothing is applied yet. */
+export async function stageLayout(body: {
+  roles?: NodeRoleChange[]
+  parameters?: LayoutParameters
+}): Promise<ClusterLayout> {
+  return fetchJSON('/cluster/layout/stage', {
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+/** Compute what the staged changes would produce, without applying them. */
+export async function previewLayout(): Promise<LayoutPreview> {
+  const res = await fetchJSON<LayoutPreview | { error: string }>('/cluster/layout/preview', {
+    method: 'POST',
+    body: '{}',
+  })
+  // Garage returns 200 with {"error": "..."} when the layout cannot be computed.
+  if ('error' in res) throw new ApiError(200, res.error)
+  return res
+}
+
+/** Commit staged changes. `version` must be the current layout version + 1. */
+export async function applyLayout(version: number): Promise<LayoutApplyResult> {
+  return fetchJSON('/cluster/layout/apply', {
+    method: 'POST',
+    body: JSON.stringify({ version }),
+  })
+}
+
+/** Discard all staged changes. */
+export async function revertLayout(): Promise<void> {
+  await fetchJSON('/cluster/layout/revert', { method: 'POST', body: '{}' })
 }
 
 // Buckets
