@@ -113,7 +113,7 @@ func handleDownloadObject(s3Client *S3Client) http.HandlerFunc {
 		bucket := chi.URLParam(r, "bucket")
 		key := r.URL.Query().Get("key")
 		if key == "" {
-			writeJSONError(w, http.StatusBadRequest, "key parameter is required", "")
+			writeObjectError(w, http.StatusBadRequest, "key parameter is required", "")
 			return
 		}
 
@@ -238,8 +238,8 @@ type apiErrorBody struct {
 	Code  string `json:"code,omitempty"`
 }
 
-// writeJSONError writes {"error": msg, "code": code} with the given status.
-func writeJSONError(w http.ResponseWriter, status int, msg, code string) {
+// writeObjectError writes {"error": msg, "code": code} with the given status.
+func writeObjectError(w http.ResponseWriter, status int, msg, code string) {
 	body, err := json.Marshal(apiErrorBody{Error: msg, Code: code})
 	if err != nil {
 		body = []byte(`{"error":"internal error"}`)
@@ -273,7 +273,7 @@ func s3ErrorStatus(err error) (int, string) {
 // prefix such as "failed to list objects".
 func writeS3Error(w http.ResponseWriter, err error, action string) {
 	status, code := s3ErrorStatus(err)
-	writeJSONError(w, status, action+": "+err.Error(), code)
+	writeObjectError(w, status, action+": "+err.Error(), code)
 }
 
 // isNotFound reports whether err is an S3 "object/bucket does not exist" error.
@@ -330,7 +330,7 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 			// Draining a body known to exceed the cap would mean reading up
 			// to the cap for nothing; close the connection instead.
 			w.Header().Set("Connection", "close")
-			writeJSONError(w, http.StatusRequestEntityTooLarge,
+			writeObjectError(w, http.StatusRequestEntityTooLarge,
 				fmt.Sprintf("upload exceeds the limit of %d bytes", limit), "EntityTooLarge")
 			return
 		}
@@ -351,14 +351,14 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 				return false
 			}
 			if exists {
-				writeJSONError(w, http.StatusConflict, "object already exists: "+key, "ObjectAlreadyExists")
+				writeObjectError(w, http.StatusConflict, "object already exists: "+key, "ObjectAlreadyExists")
 				return false
 			}
 			return true
 		}
 
 		if len(key) > maxObjectKeyBytes {
-			writeJSONError(w, http.StatusBadRequest, "key is too long", "")
+			writeObjectError(w, http.StatusBadRequest, "key is too long", "")
 			return
 		}
 		keyChecked := false
@@ -371,14 +371,14 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 
 		mr, err := r.MultipartReader()
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "expected a multipart/form-data body: "+err.Error(), "")
+			writeObjectError(w, http.StatusBadRequest, "expected a multipart/form-data body: "+err.Error(), "")
 			return
 		}
 
 		for {
 			part, err := mr.NextPart()
 			if err == io.EOF {
-				writeJSONError(w, http.StatusBadRequest, "file field is required", "")
+				writeObjectError(w, http.StatusBadRequest, "file field is required", "")
 				return
 			}
 			if err != nil {
@@ -394,7 +394,7 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 					return
 				}
 				if len(b) > maxObjectKeyBytes {
-					writeJSONError(w, http.StatusBadRequest, "key is too long", "")
+					writeObjectError(w, http.StatusBadRequest, "key is too long", "")
 					return
 				}
 				if key == "" {
@@ -405,7 +405,7 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 					key = part.FileName()
 				}
 				if key == "" {
-					writeJSONError(w, http.StatusBadRequest, "key or file name is required", "")
+					writeObjectError(w, http.StatusBadRequest, "key or file name is required", "")
 					return
 				}
 				if !keyChecked && !checkOverwrite(key) {
@@ -497,11 +497,11 @@ func (d *drainBeforeReply) Write(b []byte) (int, error) {
 func writeUploadReadError(w http.ResponseWriter, err error, limit int64) {
 	var maxErr *http.MaxBytesError
 	if errors.As(err, &maxErr) {
-		writeJSONError(w, http.StatusRequestEntityTooLarge,
+		writeObjectError(w, http.StatusRequestEntityTooLarge,
 			fmt.Sprintf("upload exceeds the limit of %d bytes", limit), "EntityTooLarge")
 		return
 	}
-	writeJSONError(w, http.StatusBadRequest, "failed to read multipart body: "+err.Error(), "")
+	writeObjectError(w, http.StatusBadRequest, "failed to read multipart body: "+err.Error(), "")
 }
 
 // ---------------------------------------------------------------------------
@@ -801,15 +801,15 @@ func handleBatchDownloadObjects(s3Client *S3Client) http.HandlerFunc {
 
 		var req batchDownloadRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxKeysBodyBytes)).Decode(&req); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid request body", "")
+			writeObjectError(w, http.StatusBadRequest, "invalid request body", "")
 			return
 		}
 		if len(req.Keys) == 0 {
-			writeJSONError(w, http.StatusBadRequest, "keys array is required and must not be empty", "")
+			writeObjectError(w, http.StatusBadRequest, "keys array is required and must not be empty", "")
 			return
 		}
 		if len(req.Keys) > maxBatchDownloadKeys {
-			writeJSONError(w, http.StatusBadRequest,
+			writeObjectError(w, http.StatusBadRequest,
 				fmt.Sprintf("too many keys: %d (max %d)", len(req.Keys), maxBatchDownloadKeys), "TooManyKeys")
 			return
 		}
@@ -820,7 +820,7 @@ func handleBatchDownloadObjects(s3Client *S3Client) http.HandlerFunc {
 			if errors.Is(err, errTooManyTickets) {
 				status = http.StatusTooManyRequests
 			}
-			writeJSONError(w, status, err.Error(), "")
+			writeObjectError(w, status, err.Error(), "")
 			return
 		}
 
@@ -841,12 +841,12 @@ func handleBatchDownloadObjectsGet(s3Client *S3Client) http.HandlerFunc {
 		bucket := chi.URLParam(r, "bucket")
 		token := r.URL.Query().Get("token")
 		if token == "" {
-			writeJSONError(w, http.StatusBadRequest, "token parameter is required", "")
+			writeObjectError(w, http.StatusBadRequest, "token parameter is required", "")
 			return
 		}
 		ticket, ok := batchDownloadTickets.redeem(token, bucket)
 		if !ok {
-			writeJSONError(w, http.StatusNotFound, "download token is invalid or expired", "InvalidToken")
+			writeObjectError(w, http.StatusNotFound, "download token is invalid or expired", "InvalidToken")
 			return
 		}
 
@@ -870,7 +870,7 @@ func handleDeleteObject(s3Client *S3Client) http.HandlerFunc {
 		bucket := chi.URLParam(r, "bucket")
 		key := r.URL.Query().Get("key")
 		if key == "" {
-			writeJSONError(w, http.StatusBadRequest, "key parameter is required", "")
+			writeObjectError(w, http.StatusBadRequest, "key parameter is required", "")
 			return
 		}
 
@@ -967,7 +967,7 @@ func handleBatchDeleteObjects(s3Client *S3Client) http.HandlerFunc {
 		bucket := chi.URLParam(r, "bucket")
 		var req batchDeleteRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxKeysBodyBytes)).Decode(&req); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid request body", "")
+			writeObjectError(w, http.StatusBadRequest, "invalid request body", "")
 			return
 		}
 		seen := make(map[string]struct{}, len(req.Keys))
@@ -983,11 +983,11 @@ func handleBatchDeleteObjects(s3Client *S3Client) http.HandlerFunc {
 			keys = append(keys, k)
 		}
 		if len(keys) == 0 {
-			writeJSONError(w, http.StatusBadRequest, "keys array is required and must not be empty", "")
+			writeObjectError(w, http.StatusBadRequest, "keys array is required and must not be empty", "")
 			return
 		}
 		if len(keys) > maxBatchDeleteKeys {
-			writeJSONError(w, http.StatusBadRequest,
+			writeObjectError(w, http.StatusBadRequest,
 				fmt.Sprintf("too many keys: %d (max %d)", len(keys), maxBatchDeleteKeys), "TooManyKeys")
 			return
 		}
@@ -1063,7 +1063,7 @@ func handleDeletePrefix(s3Client *S3Client) http.HandlerFunc {
 		bucket := chi.URLParam(r, "bucket")
 		prefix := r.URL.Query().Get("prefix")
 		if prefix == "" {
-			writeJSONError(w, http.StatusBadRequest, "prefix parameter is required", "")
+			writeObjectError(w, http.StatusBadRequest, "prefix parameter is required", "")
 			return
 		}
 

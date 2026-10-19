@@ -187,7 +187,7 @@ func TestS3ErrorStatus(t *testing.T) {
 
 func TestWriteJSONErrorEscapes(t *testing.T) {
 	rec := httptest.NewRecorder()
-	writeJSONError(rec, http.StatusBadGateway, "boom \"quoted\"\nline", "X")
+	writeObjectError(rec, http.StatusBadGateway, "boom \"quoted\"\nline", "X")
 	var body map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("invalid JSON %q: %v", rec.Body.String(), err)
