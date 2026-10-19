@@ -11,16 +11,19 @@ import {
 } from '@/api'
 import {
   blockErrorsCard,
+  blockErrorsCoverage,
   decideMaintenanceStatus,
   nodeStatsInput,
   resyncErrorsCard,
   resyncQueueCard,
   scrubCorruptionCard,
+  staleCard,
   summarizeNodeMetric,
   type CardSpec,
   type FetchState,
 } from '@/lib/maintenance-status'
-import { multiResponseToast } from '@/lib/multi-response'
+import { showMultiResponseToast } from '@/lib/multi-response'
+import { nonStorageNodeIds } from '@/lib/nodes'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -172,7 +175,8 @@ function RepairPage() {
   const refreshAll = () => Promise.all([health.refetch(), blockErrors.refetch(), storageHealth.refetch()])
   const updatedAt = Math.max(health.dataUpdatedAt, blockErrors.dataUpdatedAt, storageHealth.dataUpdatedAt)
 
-  // Hostnames for the per-node breakdown; shares the dashboard's cache.
+  // Hostnames for the per-node breakdown, and which nodes hold no blocks
+  // (gateways are left out of block-level coverage); shares the dashboard's cache.
   const status = useQuery({
     queryKey: ['cluster', 'status'],
     queryFn: getClusterStatus,
@@ -181,15 +185,15 @@ function RepairPage() {
     () => new Map((status.data?.nodes ?? []).flatMap((n) => (n.hostname ? [[n.id, n.hostname] as const] : []))),
     [status.data],
   )
+  const skip = useMemo(() => nonStorageNodeIds(status.data?.nodes), [status.data])
 
   const mutation = useMutation({
     mutationFn: (repairType: RepairType) => launchRepair(repairType),
     onSuccess: (resp) => {
-      const t = multiResponseToast(resp, {
+      showMultiResponseToast(resp, {
         action: '操作',
         successMessage: () => '操作を実行しました',
       })
-      toast[t.level](t.message)
     },
     onError: (error) => toast.error(`操作に失敗しました: ${error.message}`),
   })
@@ -206,26 +210,32 @@ function RepairPage() {
   }
 
   const isClusterHealthy = health.data?.status === 'healthy'
+  const coverage = blockErrorsCoverage(blockErrors.data, skip)
   const blockErrorsInput = {
     state: fetchState(blockErrors),
-    count: blockErrors.data?.items.length ?? 0,
-    checkedNodeCount: blockErrors.data?.checkedNodes.length ?? 0,
-    nodeErrorCount: Object.keys(blockErrors.data?.nodeErrors ?? {}).length,
+    count: coverage.count,
+    checkedNodeCount: coverage.checkedNodeCount,
+    nodeErrorCount: coverage.nodeErrors.length,
   }
   const recommendation = decideMaintenanceStatus({
     health: { state: fetchState(health), status: health.data?.status },
     blockErrors: blockErrorsInput,
-    nodeStats: nodeStatsInput(fetchState(storageHealth), storageHealth.data),
+    nodeStats: nodeStatsInput(fetchState(storageHealth), storageHealth.data, skip),
   })
   const blockErrorsSpec = blockErrorsCard(blockErrorsInput)
 
-  // Decided on data presence, not isError: a paused query (offline) has neither.
+  // Decided on data presence, not isError: a paused query (offline) has
+  // neither. When a refetch failed over cached data, keep the values but
+  // flag them as stale.
   const sh = storageHealth.data
+  const opts = { names: nodeNames, skip }
+  const stale = (spec: CardSpec) =>
+    storageHealth.isError ? staleCard(spec, (storageHealth.errorUpdatedAt - storageHealth.dataUpdatedAt) / 1000) : spec
   const metricCards: { title: string; spec: CardSpec }[] | null = sh
     ? [
-        { title: 'リシンクエラー数', spec: resyncErrorsCard(summarizeNodeMetric(sh, (n) => n.resyncErrors, sh.statsError, nodeNames)) },
-        { title: 'リシンクキュー長', spec: resyncQueueCard(summarizeNodeMetric(sh, (n) => n.resyncQueueLen, sh.statsError, nodeNames)) },
-        { title: '破損検出回数 (累積)', spec: scrubCorruptionCard(summarizeNodeMetric(sh, (n) => n.scrubCorruptions, sh.varsError, nodeNames)) },
+        { title: 'リシンクエラー数', spec: stale(resyncErrorsCard(summarizeNodeMetric(sh, (n) => n.resyncErrors, 'stats', opts))) },
+        { title: 'リシンクキュー長', spec: stale(resyncQueueCard(summarizeNodeMetric(sh, (n) => n.resyncQueueLen, 'stats', opts))) },
+        { title: '破損検出回数 (累積)', spec: stale(scrubCorruptionCard(summarizeNodeMetric(sh, (n) => n.scrubCorruptions, 'vars', opts))) },
       ]
     : null
 

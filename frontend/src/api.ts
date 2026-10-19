@@ -754,7 +754,19 @@ export interface BlockErrorsResponse {
 }
 
 export async function listBlockErrors(): Promise<BlockErrorsResponse> {
-  return fetchJSON('/blocks/errors')
+  return normalizeBlockErrors(await fetchJSON<unknown>('/blocks/errors'))
+}
+
+/**
+ * Accepts the pre-#400 bare array as well, so a new bundle served by an old
+ * backend during a rollout still renders. The array says nothing about which
+ * nodes were checked, so checkedNodes stays empty (the UI then refuses to
+ * call it "no errors").
+ */
+export function normalizeBlockErrors(data: unknown): BlockErrorsResponse {
+  if (Array.isArray(data)) return { items: data as BlockError[], checkedNodes: [], nodeErrors: {} }
+  const d = (data ?? {}) as Partial<BlockErrorsResponse>
+  return { items: d.items ?? [], checkedNodes: d.checkedNodes ?? [], nodeErrors: d.nodeErrors ?? {} }
 }
 
 export async function getBlockInfo(blockHash: string): Promise<MultiResponse<BlockInfo>> {
@@ -990,7 +1002,14 @@ export interface NodeStorageHealth {
   scrubLastCompleted: string | null
   /** The node's "Block scrub worker", or null when ListWorkers did not report it. */
   scrub: ScrubWorkerStatus | null
+  /** Every problem of the node, joined and prefixed by fan-out. */
   error?: string
+  /** The same problems split by source: resync stats (GetNodeStatistics). */
+  statsError?: string
+  /** Scrub variables (GetWorkerVariable). */
+  varsError?: string
+  /** Scrub worker state (ListWorkers). */
+  workersError?: string
 }
 
 /**

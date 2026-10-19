@@ -332,3 +332,24 @@ func TestMaintenanceMetricsEndpointRemoved(t *testing.T) {
 		t.Errorf("GET /api/metrics status = %d, want 404", rec.Code)
 	}
 }
+
+// Per-node problems are also split by fan-out, so a card about one metric
+// can cite only the reason that concerns it.
+func TestStorageHealthSplitsNodeErrorsByFanOut(t *testing.T) {
+	garage, _ := fakeHealthGarageWithWorkers(t,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":{"blockManagerStats":{"resyncQueueLen":1,"resyncErrors":0}}},"error":{"`+healthNodeB+`":"stats down"}}`,
+		http.StatusOK, `{"success":{"`+healthNodeB+`":{"scrub-corruptions_detected":"2"}},"error":{"`+healthNodeA+`":"vars down"}}`,
+		http.StatusOK, `{"success":{},"error":{"`+healthNodeA+`":"workers down"}}`,
+	)
+	got := getStorageHealth(t, garage.URL)
+	a, b := mustHealthNode(t, got, healthNodeA), mustHealthNode(t, got, healthNodeB)
+	if a.StatsError != "" || a.VarsError != "vars down" || a.WorkersError != "workers down" {
+		t.Errorf("a = %+v", a)
+	}
+	if b.StatsError != "stats down" || b.VarsError != "" || b.WorkersError != "" {
+		t.Errorf("b = %+v", b)
+	}
+	if !strings.Contains(a.Error, "worker 変数: vars down") || !strings.Contains(a.Error, "worker 一覧: workers down") {
+		t.Errorf("combined error = %q", a.Error)
+	}
+}

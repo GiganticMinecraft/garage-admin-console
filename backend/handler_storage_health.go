@@ -34,7 +34,15 @@ type nodeStorageHealth struct {
 	// Scrub is the node's scrub worker, or null when ListWorkers failed or
 	// the node did not list one.
 	Scrub *scrubWorkerStatus `json:"scrub"`
-	Error string             `json:"error,omitempty"`
+	// Error joins every problem of the node (prefixed by fan-out). The
+	// per-fan-out fields below carry the same problems split by source, so a
+	// UI showing one metric can cite only the reason that concerns it:
+	// StatsError → resync stats, VarsError → scrub variables, WorkersError →
+	// scrub worker state.
+	Error        string `json:"error,omitempty"`
+	StatsError   string `json:"statsError,omitempty"`
+	VarsError    string `json:"varsError,omitempty"`
+	WorkersError string `json:"workersError,omitempty"`
 }
 
 // scrubWorkerStatus is the subset of Garage's WorkerInfoResp for the
@@ -160,6 +168,12 @@ func loadStorageHealth(ctx context.Context, garageAdmin *GarageAdminClient) stor
 func buildStorageHealth(stats nodeStatisticsMulti, statsErr error, vars garageMultiResponse, varsErr error, workers listWorkersMulti, workersErr error) storageHealthResponse {
 	out := storageHealthResponse{Nodes: map[string]*nodeStorageHealth{}}
 	errs := map[string][]string{}
+	// Per-node problems split by fan-out (unprefixed), for the per-source fields.
+	statsErrs, varsErrs, workersErrs := map[string][]string{}, map[string][]string{}, map[string][]string{}
+	addErr := func(kind map[string][]string, prefix, id, msg string) {
+		errs[id] = append(errs[id], prefix+msg)
+		kind[id] = append(kind[id], msg)
+	}
 	statsSeen, varsSeen := map[string]bool{}, map[string]bool{}
 	node := func(id string) *nodeStorageHealth {
 		if n, ok := out.Nodes[id]; ok {
@@ -184,7 +198,7 @@ func buildStorageHealth(stats nodeStatisticsMulti, statsErr error, vars garageMu
 		for id, msg := range block.NodeErrors {
 			statsSeen[id] = true
 			node(id)
-			errs[id] = append(errs[id], "ノード統計: "+msg)
+			addErr(statsErrs, "ノード統計: ", id, msg)
 		}
 	}
 
@@ -196,13 +210,13 @@ func buildStorageHealth(stats nodeStatisticsMulti, statsErr error, vars garageMu
 			n := node(id)
 			var m map[string]string
 			if err := json.Unmarshal(raw, &m); err != nil {
-				errs[id] = append(errs[id], "worker 変数の応答が不正です")
+				addErr(varsErrs, "", id, "worker 変数の応答が不正です")
 				continue
 			}
 			if v, ok := m["scrub-corruptions_detected"]; !ok {
-				errs[id] = append(errs[id], "scrub-corruptions_detected が報告されていません")
+				addErr(varsErrs, "", id, "scrub-corruptions_detected が報告されていません")
 			} else if c, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err != nil {
-				errs[id] = append(errs[id], "scrub-corruptions_detected を解釈できません: "+v)
+				addErr(varsErrs, "", id, "scrub-corruptions_detected を解釈できません: "+v)
 			} else {
 				n.ScrubCorruptions = &c
 			}
@@ -213,7 +227,7 @@ func buildStorageHealth(stats nodeStatisticsMulti, statsErr error, vars garageMu
 		for id, msg := range vars.Error {
 			varsSeen[id] = true
 			node(id)
-			errs[id] = append(errs[id], "worker 変数: "+msg)
+			addErr(varsErrs, "worker 変数: ", id, msg)
 		}
 	}
 
@@ -239,19 +253,22 @@ func buildStorageHealth(stats nodeStatisticsMulti, statsErr error, vars garageMu
 		}
 		for id, msg := range workers.Error {
 			node(id)
-			errs[id] = append(errs[id], "worker 一覧: "+msg)
+			addErr(workersErrs, "worker 一覧: ", id, msg)
 		}
 	}
 
 	// A node that answered one fan-out but is missing from the other.
 	for id, n := range out.Nodes {
 		if statsErr == nil && !statsSeen[id] {
-			errs[id] = append(errs[id], "ノード統計: "+nodeNotAnsweredMsg)
+			addErr(statsErrs, "ノード統計: ", id, nodeNotAnsweredMsg)
 		}
 		if varsErr == nil && !varsSeen[id] {
-			errs[id] = append(errs[id], "worker 変数: "+nodeNotAnsweredMsg)
+			addErr(varsErrs, "worker 変数: ", id, nodeNotAnsweredMsg)
 		}
 		n.Error = strings.Join(errs[id], "; ")
+		n.StatsError = strings.Join(statsErrs[id], "; ")
+		n.VarsError = strings.Join(varsErrs[id], "; ")
+		n.WorkersError = strings.Join(workersErrs[id], "; ")
 	}
 	return out
 }

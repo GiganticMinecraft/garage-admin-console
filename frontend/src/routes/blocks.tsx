@@ -1,15 +1,18 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listBlockErrors,
   getBlockInfo,
+  getClusterStatus,
   purgeBlocks,
   retryBlockResync,
   type BlockError,
   type BlockInfo,
 } from '@/api'
-import { multiResponseToast, type MultiResponseToast } from '@/lib/multi-response'
+import { showMultiResponseToast } from '@/lib/multi-response'
+import { blockErrorsCoverage } from '@/lib/maintenance-status'
+import { nonStorageNodeIds } from '@/lib/nodes'
 import { shortId } from '@/lib/format'
 import {
   Table,
@@ -42,10 +45,6 @@ function formatSecsUntil(secs: number): string {
   if (secs < 3600) return `${Math.floor(secs / 60)}分後`
   if (secs < 86400) return `${Math.floor(secs / 3600)}時間後`
   return `${Math.floor(secs / 86400)}日後`
-}
-
-function showToast(t: MultiResponseToast) {
-  toast[t.level](t.message)
 }
 
 function BlockInfoPanel({ blockHash }: { blockHash: string }) {
@@ -127,21 +126,22 @@ function BlocksPage() {
     queryKey: ['blockErrors'],
     queryFn: listBlockErrors,
   })
+  // Gateways hold no blocks: one being down must not flag block errors as unchecked.
+  const status = useQuery({ queryKey: ['cluster', 'status'], queryFn: getClusterStatus })
+  const skip = useMemo(() => nonStorageNodeIds(status.data?.nodes), [status.data])
   const errors = data?.items
-  const nodeErrors = Object.entries(data?.nodeErrors ?? {})
-  const checkedNodeCount = data?.checkedNodes.length ?? 0
+  const { nodeErrors, checkedNodeCount } = blockErrorsCoverage(data, skip)
 
   const purgeMutation = useMutation({
     mutationFn: (hashes: string[]) => purgeBlocks(hashes),
     onSuccess: (resp) => {
       // blocksPurged is per node, so show the first successful node's value, not a sum.
-      const t = multiResponseToast(resp, {
+      const outcome = showMultiResponseToast(resp, {
         action: 'パージ',
         successMessage: (results) => `${results[0].blocksPurged}ブロックをパージしました`,
       })
-      showToast(t)
       // Keep the selection when some node failed so the purge can be retried.
-      if (t.outcome === 'success') setSelectedHashes(new Set())
+      if (outcome === 'success') setSelectedHashes(new Set())
       queryClient.invalidateQueries({ queryKey: ['blockErrors'] })
     },
     onError: (error) => toast.error(`パージに失敗しました: ${error.message}`),
@@ -151,10 +151,10 @@ function BlocksPage() {
     mutationFn: (body: { all: true } | { blockHashes: string[] }) => retryBlockResync(body),
     onSuccess: (resp) => {
       // count is per-node (e.g. blockHashes.len()), so show representative value not sum
-      showToast(multiResponseToast(resp, {
+      showMultiResponseToast(resp, {
         action: 'リシンク',
         successMessage: (results) => `${results[0].count}ブロックのリシンクをキューしました`,
-      }))
+      })
       queryClient.invalidateQueries({ queryKey: ['blockErrors'] })
     },
     onError: (error) => toast.error(`リシンクに失敗しました: ${error.message}`),
@@ -206,7 +206,7 @@ function BlocksPage() {
       {nodeErrors.length > 0 && (
         <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
           <p className="font-medium text-destructive">
-            {nodeErrors.length} ノードからブロックエラーを取得できませんでした。以下の一覧には、これらのノードのエラーは含まれていません。
+            {nodeErrors.length} ノードからブロックエラーを取得できませんでした。以下の一覧には、これらのノードのエラーの一部または全部が含まれていない可能性があります。
           </p>
           <ul className="mt-1 space-y-0.5 text-muted-foreground">
             {nodeErrors.map(([nodeId, msg]) => (

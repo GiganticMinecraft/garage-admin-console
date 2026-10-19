@@ -1,4 +1,5 @@
 import type { MultiResponse } from '@/api'
+import { toast } from 'sonner'
 import { shortId } from '@/lib/format'
 
 /**
@@ -76,4 +77,17 @@ export function multiResponseToast<T>(
     }
   }
   return { outcome: s.outcome, level: 'success', message: `${lead} (${s.succeeded.length}ノード)` }
+}
+
+/**
+ * Builds the toast with multiResponseToast, shows it at its level and
+ * returns the outcome (e.g. to decide whether to clear a selection).
+ */
+export function showMultiResponseToast<T>(
+  resp: MultiResponse<T>,
+  opts: { action: string; successMessage: (succeeded: T[]) => string },
+): MultiOutcome {
+  const t = multiResponseToast(resp, opts)
+  toast[t.level](t.message)
+  return t.outcome
 }

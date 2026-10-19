@@ -1,4 +1,5 @@
-import type { NodeStorageHealth, StorageHealth } from '@/api'
+import type { BlockErrorsResponse, NodeStorageHealth, StorageHealth } from '@/api'
+import { formatCount } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 
 /** react-query state of one input, reduced to what the decision needs. */
@@ -115,14 +116,36 @@ export function decideMaintenanceStatus(inp: MaintenanceInputs): MaintenanceStat
   }
 }
 
+/** Nodes to leave out of block-level coverage (see nonStorageNodeIds). */
+export type SkipNodes = ReadonlySet<string>
+const NO_SKIP: SkipNodes = new Set()
+
 /**
- * The decision's nodeStats input from the storage-health query: a node is
- * checked when it reported its resync stats.
+ * Coverage of a GET /api/blocks/errors answer, ignoring nodes that hold no
+ * blocks: a gateway that is down neither counts as unchecked nor shows in
+ * the banner, and a gateway that answered does not count as checked.
  */
-export function nodeStatsInput(state: FetchState, health: StorageHealth | undefined): FanOutInput {
+export function blockErrorsCoverage(
+  data: BlockErrorsResponse | undefined,
+  skip: SkipNodes = NO_SKIP,
+): { count: number; checkedNodeCount: number; nodeErrors: [string, string][] } {
+  return {
+    count: data?.items.length ?? 0,
+    checkedNodeCount: (data?.checkedNodes ?? []).filter((id) => !skip.has(id)).length,
+    nodeErrors: Object.entries(data?.nodeErrors ?? {})
+      .filter(([id]) => !skip.has(id))
+      .sort(([a], [b]) => a.localeCompare(b)),
+  }
+}
+
+/**
+ * The decision's nodeStats input from the storage-health query: a storage
+ * node is checked when it reported its resync stats.
+ */
+export function nodeStatsInput(state: FetchState, health: StorageHealth | undefined, skip: SkipNodes = NO_SKIP): FanOutInput {
   if (state !== 'success' || !health) return { state: state === 'success' ? 'error' : state, checkedNodeCount: 0, nodeErrorCount: 0 }
   if (health.statsError) return { state: 'error', checkedNodeCount: 0, nodeErrorCount: 0 }
-  const nodes = Object.values(health.nodes)
+  const nodes = Object.entries(health.nodes).filter(([id]) => !skip.has(id)).map(([, n]) => n)
   const checked = nodes.filter((n) => n.resyncQueueLen != null && n.resyncErrors != null).length
   return { state: 'success', checkedNodeCount: checked, nodeErrorCount: nodes.length - checked }
 }
@@ -134,37 +157,45 @@ export interface NodeMetricSummary {
   perNode: { nodeId: string; label: string; value: number }[]
   /** Nodes whose value is unknown, with the reason. */
   missing: { nodeId: string; label: string; reason: string }[]
-  /** Why nothing may be known when no node is listed at all (fan-out errors). */
-  fanOutErrors: string[]
+  /** Error of the fan-out that produces the metric, if it failed as a whole. */
+  fanOutError?: string
 }
 
+/** Which storage-health fan-out a card's metric comes from. */
+export type MetricSource = 'stats' | 'vars'
+
 /**
- * Sums one per-node metric of storage-health. `fanOutError` is the error of
- * the fan-out that produces it (statsError / varsError), used as a node's
- * reason when the node carries none. `names` maps node ID to hostname.
+ * Sums one per-node metric of storage-health over the storage nodes. Only
+ * the reasons of the fan-out the metric comes from are cited (statsError for
+ * resync, varsError for scrub), falling back to the combined `error` for a
+ * backend that does not split them. `names` maps node ID to hostname.
  */
 export function summarizeNodeMetric(
   health: StorageHealth,
   pick: (n: NodeStorageHealth) => number | null,
-  fanOutError: string | undefined,
-  names: ReadonlyMap<string, string> = new Map(),
+  source: MetricSource,
+  opts: { names?: ReadonlyMap<string, string>; skip?: SkipNodes } = {},
 ): NodeMetricSummary {
+  const names = opts.names ?? new Map<string, string>()
+  const skip = opts.skip ?? NO_SKIP
+  const fanOutError = source === 'stats' ? health.statsError : health.varsError
+  const nodeError = (n: NodeStorageHealth) =>
+    (source === 'stats' ? n.statsError : n.varsError) ??
+    (n.statsError === undefined && n.varsError === undefined && n.workersError === undefined ? n.error : undefined)
   const label = (id: string) => nodeDisplayName({ id, hostname: names.get(id) ?? null })
   const perNode: NodeMetricSummary['perNode'] = []
   const missing: NodeMetricSummary['missing'] = []
   for (const [nodeId, n] of Object.entries(health.nodes)) {
+    if (skip.has(nodeId)) continue
     const v = pick(n)
     if (v != null) perNode.push({ nodeId, label: label(nodeId), value: v })
-    else missing.push({ nodeId, label: label(nodeId), reason: n.error || fanOutError || '値が報告されていません' })
+    else missing.push({ nodeId, label: label(nodeId), reason: nodeError(n) || fanOutError || '値が報告されていません' })
   }
   const byLabel = (a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label)
   perNode.sort(byLabel)
   missing.sort(byLabel)
-  const fanOutErrors = [fanOutError, health.statsError, health.varsError, health.workersError].filter(
-    (e, i, all): e is string => !!e && all.indexOf(e) === i,
-  )
   const total = perNode.length > 0 ? perNode.reduce((s, n) => s + n.value, 0) : null
-  return { total, perNode, missing, fanOutErrors }
+  return { total, perNode, missing, fanOutError }
 }
 
 export interface CardSpec {
@@ -173,10 +204,8 @@ export interface CardSpec {
   tone: Tone
 }
 
-const fmt = (n: number) => n.toLocaleString('ja-JP')
-
 function breakdown(s: NodeMetricSummary): string {
-  return s.perNode.length > 1 ? ` 内訳: ${s.perNode.map((n) => `${n.label}: ${fmt(n.value)}`).join(' / ')}` : ''
+  return s.perNode.length > 1 ? ` 内訳: ${s.perNode.map((n) => `${n.label}: ${formatCount(n.value)}`).join(' / ')}` : ''
 }
 
 function missingText(s: NodeMetricSummary): string {
@@ -189,9 +218,7 @@ function missingText(s: NodeMetricSummary): string {
 function unavailableCard(s: NodeMetricSummary): CardSpec {
   const why = s.missing.length > 0
     ? missingText(s).trim()
-    : s.fanOutErrors.length > 0
-      ? s.fanOutErrors.join(' / ')
-      : 'Garage から応答したノードがありません。'
+    : s.fanOutError ?? 'Garage から応答したノードがありません。'
   return { value: '取得失敗', hint: `どのノードからも取得できませんでした。${why}`, tone: 'warning' }
 }
 
@@ -201,7 +228,7 @@ export function scrubCorruptionCard(s: NodeMetricSummary): CardSpec {
   const about =
     'Scrub が検出した破損の累積回数(各ノードの worker 変数 scrub-corruptions_detected の合計)です。Garage が永続化しておりリセットされないため、増えていなければ新たな破損はありません。検出ブロックはレプリカから再取得されます。'
   return {
-    value: fmt(s.total),
+    value: formatCount(s.total),
     hint: `${about}${breakdown(s)}${missingText(s)}`,
     tone: s.missing.length > 0 ? 'warning' : 'neutral',
   }
@@ -215,7 +242,7 @@ function scope(s: NodeMetricSummary): string {
 export function resyncErrorsCard(s: NodeMetricSummary): CardSpec {
   if (s.total == null) return unavailableCard(s)
   return {
-    value: fmt(s.total),
+    value: formatCount(s.total),
     hint:
       (s.total > 0
         ? 'リシンクに失敗しているブロックがあります。ブロックエラーページで確認してください。'
@@ -229,7 +256,7 @@ export function resyncErrorsCard(s: NodeMetricSummary): CardSpec {
 export function resyncQueueCard(s: NodeMetricSummary): CardSpec {
   if (s.total == null) return unavailableCard(s)
   return {
-    value: fmt(s.total),
+    value: formatCount(s.total),
     hint:
       (s.total > 0
         ? 'リシンク待ちのブロックがあります。増減の推移は Grafana で確認してください。'
@@ -239,8 +266,22 @@ export function resyncQueueCard(s: NodeMetricSummary): CardSpec {
   }
 }
 
+/**
+ * A card whose latest refetch failed while older data is still cached: keep
+ * the value, but flag it and say how old it was when the refetch failed.
+ * `ageSecs` is errorUpdatedAt - dataUpdatedAt.
+ */
+export function staleCard(spec: CardSpec, ageSecs: number): CardSpec {
+  const age = Math.max(0, Math.round(ageSecs))
+  return {
+    value: spec.value,
+    hint: `取得失敗: 最新の取得に失敗したため、その ${formatCount(age)} 秒前に取得した値を表示しています。${spec.hint}`,
+    tone: spec.tone === 'danger' ? 'danger' : 'warning',
+  }
+}
+
 /** "ブロックエラー数" card on the repair page. */
-export function blockErrorsCard(b: { state: FetchState; count: number; checkedNodeCount: number; nodeErrorCount: number }): CardSpec {
+export function blockErrorsCard(b: MaintenanceInputs['blockErrors']): CardSpec {
   if (b.state === 'error') return { value: '取得失敗', hint: 'ブロックエラーの取得に失敗しました。', tone: 'warning' }
   if (b.state === 'pending') return { value: '確認中', hint: 'ブロックエラーを取得しています。', tone: 'neutral' }
   if (b.checkedNodeCount === 0 && b.count === 0) {
@@ -254,7 +295,7 @@ export function blockErrorsCard(b: { state: FetchState; count: number; checkedNo
   }
   const unchecked = b.nodeErrorCount > 0 ? ` ${b.nodeErrorCount} ノードから取得できていません。` : ''
   if (b.count > 0) {
-    return { value: fmt(b.count), hint: `エラーがあります。ブロックエラーページで内容を確認してください。${unchecked}`, tone: 'danger' }
+    return { value: formatCount(b.count), hint: `エラーがあります。ブロックエラーページで内容を確認してください。${unchecked}`, tone: 'danger' }
   }
   return b.nodeErrorCount > 0
     ? { value: '0', hint: `確認できた範囲ではリシンクエラーはありません。${unchecked}`, tone: 'warning' }

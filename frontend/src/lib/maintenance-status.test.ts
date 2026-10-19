@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { NodeStorageHealth, StorageHealth } from '@/api'
 import {
   blockErrorsCard,
+  blockErrorsCoverage,
   decideMaintenanceStatus,
   nodeStatsInput,
   resyncErrorsCard,
   resyncQueueCard,
   scrubCorruptionCard,
+  staleCard,
   summarizeNodeMetric,
   type MaintenanceInputs,
 } from './maintenance-status'
@@ -121,6 +123,11 @@ describe('nodeStatsInput', () => {
     expect(nodeStatsInput('success', h)).toEqual({ state: 'success', checkedNodeCount: 1, nodeErrorCount: 1 })
   })
 
+  it('leaves gateway nodes out, so a gateway being down is not "unchecked"', () => {
+    const h: StorageHealth = { nodes: { a: node(), gw: node({ resyncQueueLen: null, resyncErrors: null, error: 'x' }) } }
+    expect(nodeStatsInput('success', h, new Set(['gw']))).toEqual({ state: 'success', checkedNodeCount: 1, nodeErrorCount: 0 })
+  })
+
   it('treats a stats fan-out error as a failed fetch', () => {
     expect(nodeStatsInput('success', { nodes: {}, statsError: 'boom' }).state).toBe('error')
   })
@@ -135,6 +142,30 @@ describe('nodeStatsInput', () => {
   })
 })
 
+describe('blockErrorsCoverage', () => {
+  const data = {
+    items: [{ nodeId: 'a', blockHash: 'h', refcount: 1, errorCount: 1, lastTrySecsAgo: 0, nextTryInSecs: 0 }],
+    checkedNodes: ['a', 'gw1'],
+    nodeErrors: { gw2: 'Not connected', b: 'timeout' },
+  }
+
+  it('counts everything when no gateway is known', () => {
+    expect(blockErrorsCoverage(data)).toEqual({
+      count: 1,
+      checkedNodeCount: 2,
+      nodeErrors: [['b', 'timeout'], ['gw2', 'Not connected']],
+    })
+  })
+
+  it('leaves gateways out of checked and unchecked nodes', () => {
+    expect(blockErrorsCoverage(data, new Set(['gw1', 'gw2']))).toEqual({ count: 1, checkedNodeCount: 1, nodeErrors: [['b', 'timeout']] })
+  })
+
+  it('handles missing data', () => {
+    expect(blockErrorsCoverage(undefined)).toEqual({ count: 0, checkedNodeCount: 0, nodeErrors: [] })
+  })
+})
+
 const names = new Map([
   ['id0', 'garage-0'],
   ['id1', 'garage-1'],
@@ -146,7 +177,7 @@ describe('scrub corruptions', () => {
     const h: StorageHealth = {
       nodes: { id2: node({ scrubCorruptions: 64 }), id0: node({ scrubCorruptions: 15 }), id1: node({ scrubCorruptions: 19 }) },
     }
-    const s = summarizeNodeMetric(h, (n) => n.scrubCorruptions, h.varsError, names)
+    const s = summarizeNodeMetric(h, (n) => n.scrubCorruptions, 'vars', { names })
     expect(s.total).toBe(98)
     expect(s.perNode.map((n) => `${n.label}=${n.value}`)).toEqual(['garage-0=15', 'garage-1=19', 'garage-2=64'])
     const card = scrubCorruptionCard(s)
@@ -157,8 +188,10 @@ describe('scrub corruptions', () => {
 
   it('lists nodes without a value (unnamed ones by short ID) and flags the card', () => {
     const id = 'b'.repeat(64)
-    const h: StorageHealth = { nodes: { id0: node({ scrubCorruptions: 3 }), [id]: node({ scrubCorruptions: null, error: 'ノードが応答しませんでした' }) } }
-    const s = summarizeNodeMetric(h, (n) => n.scrubCorruptions, h.varsError, names)
+    const h: StorageHealth = {
+      nodes: { id0: node({ scrubCorruptions: 3 }), [id]: node({ scrubCorruptions: null, varsError: 'ノードが応答しませんでした' }) },
+    }
+    const s = summarizeNodeMetric(h, (n) => n.scrubCorruptions, 'vars', { names })
     expect(s.total).toBe(3)
     expect(s.missing).toEqual([{ nodeId: id, label: `${'b'.repeat(16)}…`, reason: 'ノードが応答しませんでした' }])
     const card = scrubCorruptionCard(s)
@@ -166,26 +199,61 @@ describe('scrub corruptions', () => {
     expect(card.hint).toContain(`未取得 1 ノード: ${'b'.repeat(16)}… (ノードが応答しませんでした)`)
   })
 
+  it('cites only the scrub variables reason, not unrelated fan-outs', () => {
+    const h: StorageHealth = {
+      nodes: {
+        id0: node({
+          scrubCorruptions: null,
+          error: 'ノード統計: x; worker 変数: vars down; worker 一覧: y',
+          statsError: 'x',
+          varsError: 'vars down',
+          workersError: 'y',
+        }),
+      },
+      workersError: 'worker 一覧の取得に失敗しました',
+    }
+    const s = summarizeNodeMetric(h, (n) => n.scrubCorruptions, 'vars', { names })
+    expect(s.missing[0].reason).toBe('vars down')
+    expect(scrubCorruptionCard(s).hint).not.toContain('worker 一覧')
+  })
+
+  it('falls back to the combined error for a backend that does not split it', () => {
+    const h: StorageHealth = { nodes: { id0: node({ scrubCorruptions: null, error: 'old style' }) } }
+    expect(summarizeNodeMetric(h, (n) => n.scrubCorruptions, 'vars').missing[0].reason).toBe('old style')
+  })
+
   it('falls back to the fan-out error for a node without one', () => {
     const h: StorageHealth = { nodes: { id0: node({ scrubCorruptions: null }) }, varsError: 'worker 変数の取得に失敗しました' }
-    const s = summarizeNodeMetric(h, (n) => n.scrubCorruptions, h.varsError, names)
+    const s = summarizeNodeMetric(h, (n) => n.scrubCorruptions, 'vars', { names })
     expect(s.total).toBeNull()
     expect(s.missing[0].reason).toBe('worker 変数の取得に失敗しました')
     expect(scrubCorruptionCard(s).value).toBe('取得失敗')
   })
 
-  it('keeps the fan-out errors when no node is listed at all', () => {
-    const h: StorageHealth = { nodes: {}, statsError: 'ノード統計の取得に失敗しました', varsError: 'worker 変数の取得に失敗しました: boom' }
-    const card = scrubCorruptionCard(summarizeNodeMetric(h, (n) => n.scrubCorruptions, h.varsError, names))
+  it('keeps the relevant fan-out error when no node is listed at all', () => {
+    const h: StorageHealth = {
+      nodes: {},
+      statsError: 'ノード統計の取得に失敗しました',
+      varsError: 'worker 変数の取得に失敗しました: boom',
+      workersError: 'worker 一覧の取得に失敗しました',
+    }
+    const card = scrubCorruptionCard(summarizeNodeMetric(h, (n) => n.scrubCorruptions, 'vars'))
     expect(card.value).toBe('取得失敗')
     expect(card.hint).toContain('worker 変数の取得に失敗しました: boom')
-    expect(card.hint).toContain('ノード統計の取得に失敗しました')
+    expect(card.hint).not.toContain('ノード統計')
+    expect(card.hint).not.toContain('worker 一覧')
   })
 
   it('says no node answered for an empty answer without errors', () => {
-    const card = scrubCorruptionCard(summarizeNodeMetric({ nodes: {} }, (n) => n.scrubCorruptions, undefined))
+    const card = scrubCorruptionCard(summarizeNodeMetric({ nodes: {} }, (n) => n.scrubCorruptions, 'vars'))
     expect(card).toMatchObject({ value: '取得失敗', tone: 'warning' })
     expect(card.hint).toContain('応答したノードがありません')
+  })
+
+  it('skips gateway nodes', () => {
+    const h: StorageHealth = { nodes: { id0: node({ scrubCorruptions: 4 }), gw: node({ scrubCorruptions: null, varsError: 'down' }) } }
+    const s = summarizeNodeMetric(h, (n) => n.scrubCorruptions, 'vars', { skip: new Set(['gw']) })
+    expect(s).toMatchObject({ total: 4, missing: [] })
   })
 })
 
@@ -194,34 +262,52 @@ describe('resync cards', () => {
     nodes: {
       id0: node({ resyncQueueLen: 5, resyncErrors: 1 }),
       id1: node({ resyncQueueLen: 2, resyncErrors: 0 }),
-      id2: node({ resyncQueueLen: null, resyncErrors: null, error: 'ノード統計: Not connected' }),
+      id2: node({ resyncQueueLen: null, resyncErrors: null, statsError: 'Not connected', workersError: 'unrelated' }),
     },
   }
 
-  it('sums the nodes that answered and lists the missing one', () => {
-    const errors = resyncErrorsCard(summarizeNodeMetric(h, (n) => n.resyncErrors, h.statsError, names))
+  it('sums the nodes that answered and lists the missing one with the stats reason only', () => {
+    const errors = resyncErrorsCard(summarizeNodeMetric(h, (n) => n.resyncErrors, 'stats', { names }))
     expect(errors).toMatchObject({ value: '1', tone: 'danger' })
     expect(errors.hint).toContain('2 ノード分の合計')
-    expect(errors.hint).toContain('garage-2 (ノード統計: Not connected)')
-    const queue = resyncQueueCard(summarizeNodeMetric(h, (n) => n.resyncQueueLen, h.statsError, names))
+    expect(errors.hint).toContain('garage-2 (Not connected)')
+    expect(errors.hint).not.toContain('unrelated')
+    const queue = resyncQueueCard(summarizeNodeMetric(h, (n) => n.resyncQueueLen, 'stats', { names }))
     expect(queue).toMatchObject({ value: '7', tone: 'warning' })
     expect(queue.hint).toContain('garage-0: 5 / garage-1: 2')
   })
 
-  it('reports the stats fan-out error instead of 0', () => {
-    const failed: StorageHealth = { nodes: {}, statsError: 'ノード統計の取得に失敗しました' }
-    const card = resyncErrorsCard(summarizeNodeMetric(failed, (n) => n.resyncErrors, failed.statsError))
+  it('reports the stats fan-out error instead of 0, without the workers error', () => {
+    const failed: StorageHealth = { nodes: {}, statsError: 'ノード統計の取得に失敗しました', workersError: 'worker 一覧の取得に失敗しました' }
+    const card = resyncErrorsCard(summarizeNodeMetric(failed, (n) => n.resyncErrors, 'stats'))
     expect(card.value).toBe('取得失敗')
     expect(card.hint).toContain('ノード統計の取得に失敗しました')
+    expect(card.hint).not.toContain('worker 一覧')
+  })
+})
+
+describe('staleCard', () => {
+  it('keeps the value but flags it and says how old it is', () => {
+    const s = staleCard({ value: '98', hint: '説明', tone: 'neutral' }, 31.6)
+    expect(s.value).toBe('98')
+    expect(s.tone).toBe('warning')
+    expect(s.hint).toContain('取得失敗')
+    expect(s.hint).toContain('32 秒前')
+    expect(s.hint).toContain('説明')
+  })
+
+  it('keeps danger as danger', () => {
+    expect(staleCard({ value: '1', hint: '', tone: 'danger' }, 5).tone).toBe('danger')
   })
 })
 
 describe('blockErrorsCard', () => {
-  it('distinguishes clean, partial, empty and failed answers', () => {
+  it('distinguishes clean, partial, empty, pending and failed answers', () => {
     expect(blockErrorsCard({ state: 'success', count: 0, checkedNodeCount: 3, nodeErrorCount: 0 })).toMatchObject({ value: '0', tone: 'neutral' })
     expect(blockErrorsCard({ state: 'success', count: 0, checkedNodeCount: 2, nodeErrorCount: 1 })).toMatchObject({ value: '0', tone: 'warning' })
     expect(blockErrorsCard({ state: 'success', count: 0, checkedNodeCount: 0, nodeErrorCount: 0 })).toMatchObject({ value: '取得失敗' })
     expect(blockErrorsCard({ state: 'success', count: 2, checkedNodeCount: 2, nodeErrorCount: 1 })).toMatchObject({ value: '2', tone: 'danger' })
+    expect(blockErrorsCard({ state: 'pending', count: 0, checkedNodeCount: 0, nodeErrorCount: 0 }).value).toBe('確認中')
     expect(blockErrorsCard({ state: 'error', count: 0, checkedNodeCount: 0, nodeErrorCount: 0 }).value).toBe('取得失敗')
   })
 })
