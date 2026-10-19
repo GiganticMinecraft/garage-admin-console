@@ -1,13 +1,11 @@
 import { useId, useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { addBucketAlias, listKeys, removeBucketAlias } from '@/api'
+import { addBucketAlias, removeBucketAlias } from '@/api'
 import type { BucketAliasTarget, BucketDetail } from '@/api'
-import { Combobox } from '@/components/combobox'
-import type { ComboboxOption } from '@/components/combobox'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { ListTruncatedBanner } from '@/components/list-status'
+import { KeyPicker } from '@/components/key-picker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -20,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { shortId } from '@/lib/format'
 
 /** One alias of the bucket, global or in a key's local namespace. */
 type AliasRow =
@@ -44,22 +43,28 @@ function bucketAliasRows(bucket: BucketDetail): AliasRow[] {
 }
 
 /**
- * Client-side copy of Garage's is_valid_bucket_name (S3 bucket naming
- * rules), which applies to both global and local aliases. Returns an error
- * message, or null when the name is acceptable. The backend and Garage check
- * again; punycode is left to Garage.
+ * True when `name` parses as an IPv4 address the way Rust's Ipv4Addr does
+ * (four decimal octets 0-255 without leading zeros). `256.1.1.1` is not one,
+ * so Garage accepts it as a name. (IPv6 cannot pass the character check.)
+ */
+function isIPv4(name: string): boolean {
+  const parts = name.split('.')
+  return parts.length === 4 && parts.every((p) => /^(0|[1-9]\d{0,2})$/.test(p) && Number(p) <= 255)
+}
+
+/**
+ * UX-only mirror of Garage's is_valid_bucket_name (S3 bucket naming rules),
+ * which Garage applies to both global and local aliases. Returns an error
+ * message, or null when the name looks acceptable. Garage is the authority
+ * (the backend forwards its error); punycode is left to Garage.
  */
 function aliasNameError(name: string): string | null {
   if (name.length < 3 || name.length > 63) return '3〜63 文字で入力してください'
   if (!/^[a-z0-9.-]+$/.test(name)) return '英小文字・数字・ハイフン・ドットのみ使えます'
   if (!/^[a-z0-9].*[a-z0-9]$/.test(name)) return '先頭と末尾は英小文字か数字にしてください'
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return 'IP アドレス形式の名前は使えません'
+  if (isIPv4(name)) return 'IP アドレス形式の名前は使えません'
   if (name.endsWith('-s3alias')) return '「-s3alias」で終わる名前は使えません'
   return null
-}
-
-function shortId(id: string): string {
-  return id.length > 16 ? `${id.slice(0, 16)}…` : id
 }
 
 interface BucketAliasesProps {
@@ -80,34 +85,23 @@ export function BucketAliases({ bucket }: BucketAliasesProps) {
   const [isLocal, setIsLocal] = useState(false)
   const [aliasInput, setAliasInput] = useState('')
   const [keyId, setKeyId] = useState<string | null>(null)
-  // The enriched key list fans out one GetKeyInfo per key: only load it once
-  // the picker is opened.
-  const [listRequested, setListRequested] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<AliasRow | null>(null)
 
   const rows = useMemo(() => bucketAliasRows(bucket), [bucket])
   const globalCount = rows.filter((r) => r.kind === 'global').length
 
-  const allKeys = useQuery({ queryKey: ['keys'], queryFn: listKeys, enabled: listRequested })
-  const keyOptions = useMemo<ComboboxOption[]>(
-    () =>
-      (allKeys.data?.items ?? []).map((k) => ({
-        value: k.id,
-        label: k.name || '(名前なし)',
-        detail: shortId(k.id),
-        keywords: [k.id],
-      })),
-    [allKeys.data],
-  )
-
-  // Both the bucket list and key pages show aliases. On failure the bucket is
-  // refetched too, in case the change raced with another one.
+  // Both the bucket list and key pages show aliases. A local alias also
+  // links the key to the bucket, which changes the key list's bucket count
+  // (same set as use-bucket-key-permissions.ts). On failure the bucket is
+  // refetched too, in case the change raced with another one. The key's
+  // secret query is deliberately not touched (exact match).
   const refresh = (target: BucketAliasTarget, updated?: BucketDetail) => {
     if (updated) queryClient.setQueryData(['bucket', bucket.id], updated)
     else queryClient.invalidateQueries({ queryKey: ['bucket', bucket.id] })
     queryClient.invalidateQueries({ queryKey: ['buckets'] })
     if ('accessKeyId' in target) {
       queryClient.invalidateQueries({ queryKey: ['key', target.accessKeyId], exact: true })
+      queryClient.invalidateQueries({ queryKey: ['keys'] })
     }
   }
 
@@ -177,25 +171,13 @@ export function BucketAliases({ bucket }: BucketAliasesProps) {
             </span>
           </label>
         </div>
-        {isLocal && allKeys.data?.truncated && (
-          <ListTruncatedBanner>
-            Garage の一覧取得の上限に達したため、候補に無いキーがあります。アクセスキー ID を入力すると「この ID を使う」を選べます。
-          </ListTruncatedBanner>
-        )}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-end gap-2">
           {isLocal && (
-            <Combobox
-              className="min-w-0 flex-1"
-              options={keyOptions}
+            <KeyPicker
+              className="flex-1"
               value={keyId}
               onChange={setKeyId}
-              onOpenChange={(open) => {
-                if (open) setListRequested(true)
-              }}
-              loading={allKeys.isLoading}
-              acceptCustomValue={(text) => /^GK[0-9a-fA-F]{8,}$/.test(text)}
-              placeholder={allKeys.isError ? 'キー一覧を取得できませんでした' : 'キーを選択'}
-              searchPlaceholder="名前 / アクセスキー ID で検索"
+              placeholder="キーを選択"
               emptyText="キーがありません"
               aria-label="ローカルエイリアスを付けるキー"
             />

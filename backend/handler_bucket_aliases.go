@@ -4,17 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
 
-// maxAliasBodyBytes bounds the tiny JSON body of the alias endpoints.
+// maxAliasBodyBytes bounds the tiny JSON body of POST /api/buckets/{id}/aliases.
 const maxAliasBodyBytes = 4 << 10
 
-// bucketAliasRequest is the body of POST / DELETE /api/buckets/{id}/aliases:
+// bucketAliasRequest is the body of POST /api/buckets/{id}/aliases:
 // either {"globalAlias": "..."} or {"localAlias": "...", "accessKeyId": "..."}.
 type bucketAliasRequest struct {
 	GlobalAlias *string `json:"globalAlias"`
@@ -22,77 +22,31 @@ type bucketAliasRequest struct {
 	AccessKeyID *string `json:"accessKeyId"`
 }
 
-// isValidBucketAlias mirrors Garage's is_valid_bucket_name (S3 bucket naming
-// rules), which Garage applies to both global and local aliases. Punycode
-// labels are left for Garage to judge since that depends on its
-// allow_punycode setting.
-func isValidBucketAlias(n string) bool {
-	if len(n) < 3 || len(n) > 63 {
-		return false
-	}
-	for _, c := range n {
-		if c != '.' && c != '-' && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
-			return false
-		}
-	}
-	if strings.HasPrefix(n, "-") || strings.HasPrefix(n, ".") || strings.HasSuffix(n, "-") || strings.HasSuffix(n, ".") {
-		return false
-	}
-	if net.ParseIP(n) != nil {
-		return false
-	}
-	return !strings.HasSuffix(n, "-s3alias")
-}
-
-const invalidAliasMessage = "alias must be 3-63 characters of lowercase letters, digits, '-' and '.', start and end with a letter or digit, not look like an IP address and not end with -s3alias"
-
-// garageBody validates the request and builds the Garage AddBucketAlias /
-// RemoveBucketAlias body. strict applies the S3 naming rules (adding);
-// removal only needs a non-empty name so that an alias created under other
-// rules (e.g. punycode) can still be removed. It returns a client error
-// message when the request is invalid.
-func (req bucketAliasRequest) garageBody(bucketID string, strict bool) (map[string]any, string) {
-	hasGlobal := req.GlobalAlias != nil
-	if hasGlobal == (req.LocalAlias != nil) {
-		return nil, "exactly one of globalAlias or localAlias is required"
-	}
-	var alias string
-	if hasGlobal {
-		if req.AccessKeyID != nil {
-			return nil, "accessKeyId is only allowed with localAlias"
-		}
-		alias = *req.GlobalAlias
-	} else {
-		alias = *req.LocalAlias
-	}
+// garageAliasBody builds the Garage AddBucketAlias / RemoveBucketAlias body:
+// a global alias when accessKeyID is nil, else a local alias in that key's
+// namespace. Only the shape is checked here (non-empty names); the S3 naming
+// rules are Garage's to enforce, and its error message is forwarded.
+func garageAliasBody(bucketID, alias string, accessKeyID *string) ([]byte, string) {
 	if strings.TrimSpace(alias) == "" {
 		return nil, "alias must not be empty"
 	}
-	if strict && !isValidBucketAlias(alias) {
-		return nil, invalidAliasMessage
+	if accessKeyID == nil {
+		b, _ := json.Marshal(map[string]string{"bucketId": bucketID, "globalAlias": alias})
+		return b, ""
 	}
-	if hasGlobal {
-		return map[string]any{"bucketId": bucketID, "globalAlias": alias}, ""
+	if strings.TrimSpace(*accessKeyID) == "" {
+		return nil, "accessKeyId must not be empty for a local alias"
 	}
-	if req.AccessKeyID == nil || strings.TrimSpace(*req.AccessKeyID) == "" {
-		return nil, "accessKeyId is required with localAlias"
-	}
-	return map[string]any{"bucketId": bucketID, "localAlias": alias, "accessKeyId": *req.AccessKeyID}, ""
+	b, _ := json.Marshal(map[string]string{"bucketId": bucketID, "localAlias": alias, "accessKeyId": *accessKeyID})
+	return b, ""
 }
 
-// handleBucketAlias serves POST /api/buckets/{id}/aliases (add → Garage
-// AddBucketAlias) and DELETE /api/buckets/{id}/aliases (→ RemoveBucketAlias),
-// injecting the bucket ID from the URL. Garage answers with the updated
-// GetBucketInfo response, which is forwarded as-is; the list caches are
+// handleAddBucketAlias serves POST /api/buckets/{id}/aliases → Garage
+// AddBucketAlias, injecting the bucket ID from the URL. Garage answers with
+// the updated GetBucketInfo response, forwarded as-is; the list caches are
 // cleared on success because the bucket and key lists show aliases.
-func handleBucketAlias(garageAdmin *GarageAdminClient, add bool) http.HandlerFunc {
-	garagePath := "/v2/RemoveBucketAlias"
-	if add {
-		garagePath = "/v2/AddBucketAlias"
-	}
+func handleAddBucketAlias(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		bucketID := chi.URLParam(r, "id")
-
 		var req bucketAliasRequest
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAliasBodyBytes))
 		dec.DisallowUnknownFields()
@@ -104,16 +58,61 @@ func handleBucketAlias(garageAdmin *GarageAdminClient, add bool) http.HandlerFun
 			writeJSONError(w, http.StatusBadRequest, "invalid request body: unexpected trailing data")
 			return
 		}
-		body, msg := req.garageBody(bucketID, add)
+		if (req.GlobalAlias != nil) == (req.LocalAlias != nil) {
+			writeJSONError(w, http.StatusBadRequest, "exactly one of globalAlias or localAlias is required")
+			return
+		}
+		var alias string
+		if req.GlobalAlias != nil {
+			if req.AccessKeyID != nil {
+				writeJSONError(w, http.StatusBadRequest, "accessKeyId is only allowed with localAlias")
+				return
+			}
+			alias = *req.GlobalAlias
+		} else {
+			if req.AccessKeyID == nil {
+				writeJSONError(w, http.StatusBadRequest, "accessKeyId is required with localAlias")
+				return
+			}
+			alias = *req.LocalAlias
+		}
+		body, msg := garageAliasBody(chi.URLParam(r, "id"), alias, req.AccessKeyID)
 		if msg != "" {
 			writeJSONError(w, http.StatusBadRequest, msg)
 			return
 		}
-		b, err := json.Marshal(body)
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
+		proxyGarageMutation(w, r, garageAdmin, "/v2/AddBucketAlias", bytes.NewReader(body))
+	}
+}
+
+// handleRemoveBucketAlias serves DELETE /api/buckets/{id}/aliases/{alias}
+// → Garage RemoveBucketAlias. Without a query it removes the global alias;
+// with ?accessKeyId=GK... it removes that key's local alias. The target is
+// in the URL (like DELETE /api/buckets/{id}/keys/{kid}) since DELETE bodies
+// can be dropped by proxies. Garage refuses to remove a bucket's last alias.
+func handleRemoveBucketAlias(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		alias := chi.URLParam(r, "alias")
+		// chi matches on the escaped path when the URL needed escaping, so
+		// the parameter is still percent-encoded in that case.
+		if r.URL.RawPath != "" {
+			unescaped, err := url.PathUnescape(alias)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, "invalid alias in path")
+				return
+			}
+			alias = unescaped
+		}
+		var accessKeyID *string
+		if q := r.URL.Query(); q.Has("accessKeyId") {
+			v := q.Get("accessKeyId")
+			accessKeyID = &v
+		}
+		body, msg := garageAliasBody(chi.URLParam(r, "id"), alias, accessKeyID)
+		if msg != "" {
+			writeJSONError(w, http.StatusBadRequest, msg)
 			return
 		}
-		proxyGarageMutation(w, r, garageAdmin, garagePath, bytes.NewReader(b))
+		proxyGarageMutation(w, r, garageAdmin, "/v2/RemoveBucketAlias", bytes.NewReader(body))
 	}
 }

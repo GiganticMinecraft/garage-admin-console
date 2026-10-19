@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -47,22 +48,26 @@ func newFakeAliasGarage(t *testing.T, failStatus int, failBody string) (*httptes
 	}
 }
 
-func aliasesPath() string { return "/api/buckets/" + testBucketID + "/aliases" }
+const aliasesPath = "/api/buckets/" + testBucketID + "/aliases"
 
 func TestBucketAliasForwardsToGarage(t *testing.T) {
 	for _, tc := range []struct {
-		name, method, body, wantPath string
-		want                         map[string]string
+		name, method, path, body, wantPath string
+		want                               map[string]string
 	}{
-		{"add global", http.MethodPost, `{"globalAlias":"extra"}`, "/v2/AddBucketAlias",
+		{"add global", http.MethodPost, aliasesPath, `{"globalAlias":"extra"}`, "/v2/AddBucketAlias",
 			map[string]string{"bucketId": testBucketID, "globalAlias": "extra"}},
-		{"add local", http.MethodPost, `{"localAlias":"mine","accessKeyId":"` + testKeyID + `"}`, "/v2/AddBucketAlias",
+		{"add local", http.MethodPost, aliasesPath, `{"localAlias":"mine","accessKeyId":"` + testKeyID + `"}`, "/v2/AddBucketAlias",
 			map[string]string{"bucketId": testBucketID, "localAlias": "mine", "accessKeyId": testKeyID}},
-		{"remove global", http.MethodDelete, `{"globalAlias":"extra"}`, "/v2/RemoveBucketAlias",
-			map[string]string{"bucketId": testBucketID, "globalAlias": "extra"}},
-		// Removal does not apply the naming rules, so legacy names stay removable.
-		{"remove local legacy name", http.MethodDelete, `{"localAlias":"Old_Name","accessKeyId":"` + testKeyID + `"}`, "/v2/RemoveBucketAlias",
-			map[string]string{"bucketId": testBucketID, "localAlias": "Old_Name", "accessKeyId": testKeyID}},
+		// Naming rules are Garage's to enforce: the backend forwards the name.
+		{"add global any name", http.MethodPost, aliasesPath, `{"globalAlias":"Not_Valid"}`, "/v2/AddBucketAlias",
+			map[string]string{"bucketId": testBucketID, "globalAlias": "Not_Valid"}},
+		{"remove global", http.MethodDelete, aliasesPath + "/extra.example", "", "/v2/RemoveBucketAlias",
+			map[string]string{"bucketId": testBucketID, "globalAlias": "extra.example"}},
+		{"remove local", http.MethodDelete, aliasesPath + "/mine?accessKeyId=" + testKeyID, "", "/v2/RemoveBucketAlias",
+			map[string]string{"bucketId": testBucketID, "localAlias": "mine", "accessKeyId": testKeyID}},
+		{"remove escaped name", http.MethodDelete, aliasesPath + "/" + url.PathEscape("a b/c") + "?accessKeyId=" + testKeyID, "", "/v2/RemoveBucketAlias",
+			map[string]string{"bucketId": testBucketID, "localAlias": "a b/c", "accessKeyId": testKeyID}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			garage, calls := newFakeAliasGarage(t, 0, "")
@@ -70,7 +75,7 @@ func TestBucketAliasForwardsToGarage(t *testing.T) {
 			bucketInfoCache.put("stale", garageBucketInfo{})
 			t.Cleanup(bucketInfoCache.clear)
 
-			rec := c.do(tc.method, aliasesPath(), tc.body)
+			rec := c.do(tc.method, tc.path, tc.body)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 			}
@@ -100,45 +105,37 @@ func TestBucketAliasForwardsToGarage(t *testing.T) {
 	}
 }
 
-func TestBucketAliasRejectsInvalidBodies(t *testing.T) {
+func TestBucketAliasRejectsInvalidRequests(t *testing.T) {
 	garage, calls := newFakeAliasGarage(t, 0, "")
 	c := newNodeTestClient(t, garage.URL)
 
 	for _, tc := range []struct {
-		method, body string
+		method, path, body string
 	}{
-		{http.MethodPost, `{}`},
-		{http.MethodPost, `not json`},
-		{http.MethodPost, `{"globalAlias":"a-b","localAlias":"c-d","accessKeyId":"GK1"}`},
-		{http.MethodPost, `{"globalAlias":""}`},
-		{http.MethodPost, `{"globalAlias":"ab"}`},
-		{http.MethodPost, `{"globalAlias":"` + strings.Repeat("a", 64) + `"}`},
-		{http.MethodPost, `{"globalAlias":"Upper"}`},
-		{http.MethodPost, `{"globalAlias":"under_score"}`},
-		{http.MethodPost, `{"globalAlias":"-start"}`},
-		{http.MethodPost, `{"globalAlias":"end."}`},
-		{http.MethodPost, `{"globalAlias":"192.168.1.1"}`},
-		{http.MethodPost, `{"globalAlias":"foo-s3alias"}`},
-		{http.MethodPost, `{"globalAlias":"ok-name","accessKeyId":"GK1"}`},
-		{http.MethodPost, `{"globalAlias":"ok-name","bucketId":"other"}`},
-		{http.MethodPost, `{"globalAlias":"ok-name"} {"globalAlias":"x"}`},
-		{http.MethodPost, `{"localAlias":"mine"}`},
-		{http.MethodPost, `{"localAlias":"mine","accessKeyId":" "}`},
-		{http.MethodPost, `{"localAlias":"Bad!","accessKeyId":"GK1"}`},
-		{http.MethodDelete, `{}`},
-		{http.MethodDelete, `{"globalAlias":"  "}`},
-		{http.MethodDelete, `{"localAlias":"mine"}`},
+		{http.MethodPost, aliasesPath, `{}`},
+		{http.MethodPost, aliasesPath, `not json`},
+		{http.MethodPost, aliasesPath, `{"globalAlias":"a-b","localAlias":"c-d","accessKeyId":"GK1"}`},
+		{http.MethodPost, aliasesPath, `{"globalAlias":""}`},
+		{http.MethodPost, aliasesPath, `{"globalAlias":"  "}`},
+		{http.MethodPost, aliasesPath, `{"globalAlias":"ok-name","accessKeyId":"GK1"}`},
+		{http.MethodPost, aliasesPath, `{"globalAlias":"ok-name","bucketId":"other"}`},
+		{http.MethodPost, aliasesPath, `{"globalAlias":"ok-name"} {"globalAlias":"x"}`},
+		{http.MethodPost, aliasesPath, `{"localAlias":"mine"}`},
+		{http.MethodPost, aliasesPath, `{"localAlias":"","accessKeyId":"GK1"}`},
+		{http.MethodPost, aliasesPath, `{"localAlias":"mine","accessKeyId":" "}`},
+		{http.MethodDelete, aliasesPath + "/%20", ""},
+		{http.MethodDelete, aliasesPath + "/mine?accessKeyId=", ""},
 	} {
-		rec := c.do(tc.method, aliasesPath(), tc.body)
+		rec := c.do(tc.method, tc.path, tc.body)
 		if rec.Code != http.StatusBadRequest {
-			t.Errorf("%s %s: status = %d, want 400", tc.method, tc.body, rec.Code)
+			t.Errorf("%s %s %s: status = %d, want 400", tc.method, tc.path, tc.body, rec.Code)
 		}
 		if !strings.Contains(rec.Body.String(), `"error"`) {
-			t.Errorf("%s %s: expected JSON error, got %s", tc.method, tc.body, rec.Body.String())
+			t.Errorf("%s %s %s: expected JSON error, got %s", tc.method, tc.path, tc.body, rec.Body.String())
 		}
 	}
 	if got := calls(); len(got) != 0 {
-		t.Errorf("invalid bodies must not reach Garage, got %+v", got)
+		t.Errorf("invalid requests must not reach Garage, got %+v", got)
 	}
 }
 
@@ -149,7 +146,7 @@ func TestBucketAliasForwardsGarageErrors(t *testing.T) {
 	bucketInfoCache.put("kept", garageBucketInfo{})
 	t.Cleanup(bucketInfoCache.clear)
 
-	rec := c.do(http.MethodDelete, aliasesPath(), `{"globalAlias":"backups"}`)
+	rec := c.do(http.MethodDelete, aliasesPath+"/backups", "")
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "doesn't have other aliases") {
 		t.Errorf("status = %d body = %s, want Garage's 400 forwarded", rec.Code, rec.Body.String())
 	}
@@ -168,8 +165,8 @@ func TestBucketAliasIntegration(t *testing.T) {
 	}
 	client := &GarageAdminClient{baseURL: endpoint, token: os.Getenv("GARAGE_TEST_ADMIN_TOKEN"), httpClient: &http.Client{Timeout: 10 * time.Second}}
 	r := chi.NewRouter()
-	r.Post("/api/buckets/{id}/aliases", handleBucketAlias(client, true))
-	r.Delete("/api/buckets/{id}/aliases", handleBucketAlias(client, false))
+	r.Post("/api/buckets/{id}/aliases", handleAddBucketAlias(client))
+	r.Delete("/api/buckets/{id}/aliases/{alias}", handleRemoveBucketAlias(client))
 	type info struct {
 		GlobalAliases []string `json:"globalAliases"`
 		Keys          []struct {
@@ -177,14 +174,19 @@ func TestBucketAliasIntegration(t *testing.T) {
 			BucketLocalAliases []string `json:"bucketLocalAliases"`
 		} `json:"keys"`
 	}
-	do := func(method, path, body string) info {
+	send := func(method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
+		return rec
+	}
+	do := func(method, path, body string) info {
+		t.Helper()
+		rec := send(method, path, body)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("%s %s: %d %s", method, body, rec.Code, rec.Body.String())
+			t.Fatalf("%s %s %s: %d %s", method, path, body, rec.Code, rec.Body.String())
 		}
 		var out info
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
@@ -226,6 +228,11 @@ func TestBucketAliasIntegration(t *testing.T) {
 	extra := "i378-extra-" + suffix
 	local := "i378-local-" + suffix
 
+	// Garage's own naming check is forwarded as a client error.
+	if rec := send(http.MethodPost, path, `{"globalAlias":"I378_Bad"}`); rec.Code < 400 || rec.Code >= 500 {
+		t.Errorf("invalid name: status %d %s, want a 4xx from Garage", rec.Code, rec.Body.String())
+	}
+
 	got := do(http.MethodPost, path, `{"globalAlias":"`+extra+`"}`)
 	if !slices.Contains(got.GlobalAliases, extra) || !slices.Contains(got.GlobalAliases, mainAlias) {
 		t.Errorf("after add global: %+v", got.GlobalAliases)
@@ -240,22 +247,19 @@ func TestBucketAliasIntegration(t *testing.T) {
 	if !found {
 		t.Errorf("after add local: keys = %+v", got.Keys)
 	}
-	got = do(http.MethodDelete, path, `{"localAlias":"`+local+`","accessKeyId":"`+key.AccessKeyID+`"}`)
+	got = do(http.MethodDelete, path+"/"+local+"?accessKeyId="+key.AccessKeyID, "")
 	for _, k := range got.Keys {
 		if slices.Contains(k.BucketLocalAliases, local) {
 			t.Errorf("local alias not removed: %+v", got.Keys)
 		}
 	}
-	got = do(http.MethodDelete, path, `{"globalAlias":"`+extra+`"}`)
+	got = do(http.MethodDelete, path+"/"+extra, "")
 	if slices.Contains(got.GlobalAliases, extra) || !slices.Contains(got.GlobalAliases, mainAlias) {
 		t.Errorf("after remove global: %+v", got.GlobalAliases)
 	}
 
 	// Garage refuses to remove the very last alias; the error is forwarded.
-	req := httptest.NewRequest(http.MethodDelete, path, strings.NewReader(`{"globalAlias":"`+mainAlias+`"}`))
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-	if rec.Code < 400 || rec.Code >= 500 {
+	if rec := send(http.MethodDelete, path+"/"+mainAlias, ""); rec.Code < 400 || rec.Code >= 500 {
 		t.Errorf("removing the last alias: status %d %s, want a 4xx from Garage", rec.Code, rec.Body.String())
 	}
 }

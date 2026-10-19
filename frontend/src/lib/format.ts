@@ -23,6 +23,11 @@ export function formatDateTime(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : dateTimeFormat.format(d)
 }
 
+/** Shortens a long hex ID (bucket ID, access key ID) to its first 16 characters + "…". */
+export function shortId(id: string): string {
+  return id.length > 16 ? `${id.slice(0, 16)}…` : id
+}
+
 /** Formats a count with thousands separators (or '-' when unknown). */
 export function formatCount(n: number | null | undefined): string {
   return n === null || n === undefined ? '-' : n.toLocaleString('ja-JP')

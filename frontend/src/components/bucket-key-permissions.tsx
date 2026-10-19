@@ -1,12 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
-import { listKeys } from '@/api'
 import type { BucketKeyPermissions } from '@/api'
-import { Combobox } from '@/components/combobox'
-import type { ComboboxOption } from '@/components/combobox'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { ListTruncatedBanner } from '@/components/list-status'
+import { KeyPicker } from '@/components/key-picker'
 import { EditPermissionsDialog } from '@/components/edit-permissions-dialog'
 import type { EditPermissionsTarget } from '@/components/edit-permissions-dialog'
 import { PermissionBadges, PermissionFields } from '@/components/bucket-permission-fields'
@@ -30,10 +26,6 @@ interface BucketKeyPermissionsProps {
   keys: BucketKeyEntry[] | undefined
 }
 
-function shortId(id: string): string {
-  return id.length > 16 ? `${id.slice(0, 16)}…` : id
-}
-
 /**
  * 「キーの権限」 section of the bucket page: grant a key picked from the key
  * list, edit read / write / owner per key, and revoke. Alias-only entries
@@ -41,30 +33,17 @@ function shortId(id: string): string {
  */
 export function BucketKeyPermissions({ bucketId, bucketLabel, keys }: BucketKeyPermissionsProps) {
   const { grant: grantMutation, edit, revoke } = useBucketKeyPermissionMutations()
-  // The enriched key list fans out one GetKeyInfo per key: only load it once
-  // the picker is opened.
-  const [listRequested, setListRequested] = useState(false)
   const [grantKeyId, setGrantKeyId] = useState<string | null>(null)
   const [grantPermissions, setGrantPermissions] = useState<BucketKeyPermissions>(DEFAULT_GRANT)
   const [editTarget, setEditTarget] = useState<EditPermissionsTarget | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<BucketKeyEntry | null>(null)
 
-  const allKeys = useQuery({ queryKey: ['keys'], queryFn: listKeys, enabled: listRequested })
-
-  const options = useMemo<ComboboxOption[]>(() => {
-    // Keys that already hold a permission are edited from their row instead.
-    const granted = new Set(
-      (keys ?? []).filter((k) => hasAnyPermission(k.permissions)).map((k) => k.accessKeyId),
-    )
-    return (allKeys.data?.items ?? [])
-      .filter((k) => !granted.has(k.id))
-      .map((k) => ({
-        value: k.id,
-        label: k.name || '(名前なし)',
-        detail: shortId(k.id),
-        keywords: [k.id],
-      }))
-  }, [allKeys.data, keys])
+  // Keys that already hold a permission are edited from their row instead.
+  const granted = useMemo(
+    () =>
+      new Set((keys ?? []).filter((k) => hasAnyPermission(k.permissions)).map((k) => k.accessKeyId)),
+    [keys],
+  )
 
   const grant = () => {
     if (!grantKeyId) return
@@ -87,25 +66,14 @@ export function BucketKeyPermissions({ bucketId, bucketLabel, keys }: BucketKeyP
       <h2 className="text-lg font-semibold">キーの権限</h2>
 
       <div className="space-y-3 rounded-lg border p-4">
-        {allKeys.data?.truncated && (
-          <ListTruncatedBanner>
-            Garage の一覧取得の上限に達したため、候補に無いキーがあります。アクセスキー ID を入力すると「この ID で付与」を選べます。
-          </ListTruncatedBanner>
-        )}
-        <div className="flex flex-wrap gap-2">
-          <Combobox
-            className="min-w-0 flex-1"
-            options={options}
+        <div className="flex flex-wrap items-end gap-2">
+          <KeyPicker
+            className="flex-1"
             value={grantKeyId}
             onChange={setGrantKeyId}
-            onOpenChange={(open) => {
-              if (open) setListRequested(true)
-            }}
-            loading={allKeys.isLoading}
-            acceptCustomValue={(text) => /^GK[0-9a-fA-F]{8,}$/.test(text)}
+            excludeIds={granted}
             customValueLabel="この ID で付与"
-            placeholder={allKeys.isError ? 'キー一覧を取得できませんでした' : '付与するキーを選択'}
-            searchPlaceholder="名前 / アクセスキー ID で検索"
+            placeholder="付与するキーを選択"
             emptyText="付与できるキーがありません"
             aria-label="付与するキー"
           />

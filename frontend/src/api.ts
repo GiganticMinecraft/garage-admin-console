@@ -1114,7 +1114,7 @@ export async function deleteAdminToken(id: string): Promise<void> {
 }
 
 // Bucket aliases (#378)
-/** Body of POST / DELETE /api/buckets/{id}/aliases. */
+/** A global alias, or a local alias in one key's namespace (body of POST /api/buckets/{id}/aliases). */
 export type BucketAliasTarget =
   | { globalAlias: string }
   | { localAlias: string; accessKeyId: string }
@@ -1128,12 +1128,14 @@ export async function addBucketAlias(bucketId: string, target: BucketAliasTarget
 }
 
 /**
- * Removes a global or local alias (Garage RemoveBucketAlias). Garage refuses
- * to remove a bucket's very last alias.
+ * Removes a global or local alias (Garage RemoveBucketAlias). The target is
+ * in the URL: DELETE /buckets/{id}/aliases/{alias}[?accessKeyId=GK...].
+ * Garage refuses to remove a bucket's very last alias.
  */
 export async function removeBucketAlias(bucketId: string, target: BucketAliasTarget): Promise<BucketDetail> {
-  return fetchJSON(`/buckets/${bucketId}/aliases`, {
-    method: 'DELETE',
-    body: JSON.stringify(target),
-  })
+  const path =
+    'globalAlias' in target
+      ? `/buckets/${bucketId}/aliases/${encodeURIComponent(target.globalAlias)}`
+      : `/buckets/${bucketId}/aliases/${encodeURIComponent(target.localAlias)}?accessKeyId=${encodeURIComponent(target.accessKeyId)}`
+  return fetchJSON(path, { method: 'DELETE' })
 }

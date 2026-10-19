@@ -21,12 +21,19 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useBucketKeyPermissionMutations } from '@/hooks/use-bucket-key-permissions'
+import { LocalNameBadge } from '@/components/local-name-badge'
+import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
+import { shortId } from '@/lib/format'
 import { DEFAULT_GRANT, hasAnyPermission } from '@/lib/permissions'
 
 type KeyBucket = KeyDetail['buckets'][number]
 
-function bucketLabel(b: { id: string; globalAliases?: string[]; localAliases?: string[] }): string {
-  return b.globalAliases?.[0] || b.localAliases?.[0] || `${b.id.slice(0, 16)}…`
+function nameOf(b: KeyBucket) {
+  return bucketDisplayName(b.id, b.globalAliases, b.localAliases)
+}
+
+function bucketLabel(b: KeyBucket): string {
+  return bucketDisplayLabel(nameOf(b))
 }
 
 interface KeyBucketPermissionsProps {
@@ -58,12 +65,15 @@ export function KeyBucketPermissions({ keyId, keyName, buckets }: KeyBucketPermi
     const granted = new Set(buckets.filter((b) => hasAnyPermission(b.permissions)).map((b) => b.id))
     return (allBuckets.data?.items ?? [])
       .filter((b) => !granted.has(b.id))
-      .map((b) => ({
-        value: b.id,
-        label: b.globalAliases[0] || b.localAliases[0]?.alias || '(エイリアスなし)',
-        detail: b.id.slice(0, 16),
-        keywords: [b.id, ...b.globalAliases, ...b.localAliases.map((a) => a.alias)],
-      }))
+      .map((b) => {
+        const name = bucketDisplayName(b.id, b.globalAliases, b.localAliases.map((a) => a.alias))
+        return {
+          value: b.id,
+          label: name.source === 'id' ? '(エイリアスなし)' : bucketDisplayLabel(name),
+          detail: shortId(b.id),
+          keywords: [b.id, ...b.globalAliases, ...b.localAliases.map((a) => a.alias)],
+        }
+      })
   }, [allBuckets.data, buckets])
 
   const grant = () => {
@@ -140,13 +150,16 @@ export function KeyBucketPermissions({ keyId, keyName, buckets }: KeyBucketPermi
                 return (
                   <TableRow key={bucket.id}>
                     <TableCell>
-                      <Link
-                        to="/buckets/$id"
-                        params={{ id: bucket.id }}
-                        className="break-all text-primary underline-offset-4 hover:underline"
-                      >
-                        {bucketLabel(bucket)}
-                      </Link>
+                      <span className="flex flex-wrap items-center gap-2">
+                        <Link
+                          to="/buckets/$id"
+                          params={{ id: bucket.id }}
+                          className="break-all text-primary underline-offset-4 hover:underline"
+                        >
+                          {nameOf(bucket).name}
+                        </Link>
+                        <LocalNameBadge name={nameOf(bucket)} />
+                      </span>
                     </TableCell>
                     <TableCell className="whitespace-normal">
                       {bucket.localAliases?.length ? (
