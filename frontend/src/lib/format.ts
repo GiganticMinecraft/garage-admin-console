@@ -1,5 +1,8 @@
 const UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
 
+/** Bytes in one GiB. */
+export const GIB = 1024 ** 3
+
 /** Human-readable binary size, e.g. 1536 -> "1.50 KiB". */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'

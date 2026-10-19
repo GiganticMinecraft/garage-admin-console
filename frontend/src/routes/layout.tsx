@@ -10,8 +10,6 @@ import {
   applyLayout,
   revertLayout,
   type ClusterLayout,
-  type ClusterNode,
-  type LayoutNodeRole,
   type NodeRoleChange,
   type ZoneRedundancy,
 } from '@/api'
@@ -32,12 +30,11 @@ import { LayoutPreview } from '@/components/layout-preview'
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
 import { formatBytes } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
+import { draftFromNode, draftToChange, type RoleDraft } from '@/lib/layout-draft'
 
 export const Route = createFileRoute('/layout')({
   component: LayoutPage,
 })
-
-const GIB = 1024 ** 3
 
 /** formatBytes for nullable fields (gateway roles have no capacity). */
 function formatSize(bytes: number | null): string {
@@ -46,98 +43,6 @@ function formatSize(bytes: number | null): string {
 
 function formatRedundancy(z: ZoneRedundancy): string {
   return z === 'maximum' ? 'maximum' : `atLeast ${z.atLeast}`
-}
-
-/** The editable fields of a row, as strings so "unchanged" can be detected exactly. */
-interface RoleFields {
-  zone: string
-  capacityGiB: string
-  tags: string
-}
-
-/**
- * One row of the edit form. Capacity is edited in GiB; empty means gateway.
- * `effective` is what the next layout version would contain for this node
- * (a staged change wins over the applied role), `original` is the form state
- * derived from it so a row only counts as changed when the operator edited it.
- */
-interface RoleDraft extends RoleFields {
-  id: string
-  hostname: string | null
-  isUp: boolean
-  /** Role in the applied layout, if any. */
-  applied: LayoutNodeRole | null
-  /** Role after staged changes: null when unassigned or staged for removal. */
-  effective: Pick<LayoutNodeRole, 'zone' | 'tags' | 'capacity'> | null
-  original: RoleFields
-  remove: boolean
-}
-
-function capacityToGiB(capacity: number | null): string {
-  return capacity != null ? String(Math.round((capacity / GIB) * 100) / 100) : ''
-}
-
-function draftFromNode(
-  node: Pick<ClusterNode, 'id' | 'hostname' | 'isUp'>,
-  applied: LayoutNodeRole | undefined,
-  staged: NodeRoleChange | undefined,
-): RoleDraft {
-  const stagedRemove = staged != null && 'remove' in staged
-  const effective = stagedRemove ? null : (staged ?? applied ?? null)
-  const fields: RoleFields = {
-    zone: effective?.zone ?? applied?.zone ?? '',
-    capacityGiB: capacityToGiB(effective?.capacity ?? applied?.capacity ?? null),
-    tags: (effective?.tags ?? applied?.tags ?? []).join(', '),
-  }
-  return {
-    id: node.id,
-    hostname: node.hostname,
-    isUp: node.isUp,
-    applied: applied ?? null,
-    effective,
-    original: fields,
-    ...fields,
-    remove: stagedRemove,
-  }
-}
-
-function parseTags(s: string): string[] {
-  return s.split(',').map((t) => t.trim()).filter(Boolean)
-}
-
-/**
- * Convert a draft to the change Garage expects, or null when the operator did
- * not touch the row. Comparison is on the form strings, not on bytes
- * re-derived from a rounded GiB value, so untouched rows never re-stage.
- */
-function draftToChange(d: RoleDraft): NodeRoleChange | null | Error {
-  const name = nodeDisplayName(d)
-  const wasRemoved = d.effective == null && d.applied != null
-  if (d.remove) {
-    if (wasRemoved) return null // already staged for removal
-    return d.applied ? { id: d.id, remove: true } : null
-  }
-  const untouched =
-    d.zone === d.original.zone && d.capacityGiB === d.original.capacityGiB && d.tags === d.original.tags
-  if (untouched && !wasRemoved) return null
-  if (untouched && wasRemoved && !d.zone.trim()) return null
-
-  const zone = d.zone.trim()
-  const tags = parseTags(d.tags)
-  let capacity: number | null = null
-  if (d.capacityGiB.trim() !== '') {
-    const n = Number(d.capacityGiB)
-    if (!Number.isFinite(n) || n <= 0) {
-      return new Error(`${name}: 容量は正の数 (GiB) で入力してください`)
-    }
-    capacity = Math.round(n * GIB)
-  }
-  if (!zone) {
-    // Node that has no role and was left blank: nothing to stage.
-    if (!d.effective && !d.applied) return null
-    return new Error(`${name}: ゾーンは必須です`)
-  }
-  return { id: d.id, zone, tags, capacity }
 }
 
 function LayoutPage() {
@@ -370,7 +275,7 @@ function LayoutPage() {
                           <Badge variant={before ? 'secondary' : 'default'}>{before ? '変更' : '追加'}</Badge>
                           <span>
                             zone {before && before.zone !== c.zone ? <s className="text-muted-foreground">{before.zone}</s> : null} {c.zone}
-                            {' / '}容量 {before && before.capacity !== c.capacity ? <s className="text-muted-foreground">{formatSize(before.capacity)}</s> : null} {c.capacity == null ? 'gateway' : formatSize(c.capacity)}
+                            {' / '}容量 {before && (before.capacity ?? null) !== (c.capacity ?? null) ? <s className="text-muted-foreground">{formatSize(before.capacity)}</s> : null} {c.capacity == null ? 'gateway' : formatSize(c.capacity)}
                             {' / '}tags [{c.tags.join(', ')}]
                           </span>
                         </>
@@ -406,63 +311,69 @@ function LayoutPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {drafts.map((d) => (
-                      <TableRow key={d.id} className={d.remove ? 'opacity-60' : undefined}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <span className={`inline-block h-2 w-2 rounded-full ${d.isUp ? 'bg-green-500' : 'bg-red-500'}`} />
-                            <div>
-                              <div className="font-medium">{nodeDisplayName(d)}</div>
-                              <div className="font-mono text-xs text-muted-foreground">{nodeDisplayName({ id: d.id, hostname: null })}</div>
-                              {!d.applied && !d.effective && <Badge variant="outline" className="mt-1">ロール未割当</Badge>}
-                              {d.applied && d.effective == null && !d.remove && <Badge variant="destructive" className="mt-1">削除をステージ中</Badge>}
-                              {d.effective && d.applied && d.effective !== d.applied && <Badge variant="secondary" className="mt-1">変更をステージ中</Badge>}
-                              {d.effective && !d.applied && <Badge variant="default" className="mt-1">追加をステージ中</Badge>}
+                    {drafts.map((d) => {
+                      const name = nodeDisplayName(d)
+                      return (
+                        <TableRow key={d.id} className={d.remove ? 'opacity-60' : undefined}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <span className={`inline-block h-2 w-2 rounded-full ${d.isUp ? 'bg-green-500' : 'bg-red-500'}`} />
+                              <div>
+                                <div className="font-medium">{name}</div>
+                                <div className="font-mono text-xs text-muted-foreground">{nodeDisplayName({ id: d.id, hostname: null })}</div>
+                                {!d.applied && !d.effective && <Badge variant="outline" className="mt-1">ロール未割当</Badge>}
+                                {d.applied && d.effective == null && !d.remove && <Badge variant="destructive" className="mt-1">削除をステージ中</Badge>}
+                                {d.effective && d.applied && d.effective !== d.applied && <Badge variant="secondary" className="mt-1">変更をステージ中</Badge>}
+                                {d.effective && !d.applied && <Badge variant="default" className="mt-1">追加をステージ中</Badge>}
+                              </div>
                             </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            value={d.zone}
-                            list="layout-zones"
-                            disabled={d.remove}
-                            onChange={(e) => updateDraft(d.id, { zone: e.target.value })}
-                            className="w-32"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={0}
-                            step="any"
-                            value={d.capacityGiB}
-                            disabled={d.remove}
-                            placeholder="gateway"
-                            onChange={(e) => updateDraft(d.id, { capacityGiB: e.target.value })}
-                            className="w-32"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            value={d.tags}
-                            disabled={d.remove}
-                            onChange={(e) => updateDraft(d.id, { tags: e.target.value })}
-                            className="w-40"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          {(d.applied || d.effective) && (
-                            <input
-                              type="checkbox"
-                              className="rounded"
-                              checked={d.remove}
-                              onChange={(e) => updateDraft(d.id, { remove: e.target.checked })}
-                              aria-label={`${d.hostname ?? d.id} をレイアウトから削除`}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              value={d.zone}
+                              list="layout-zones"
+                              disabled={d.remove}
+                              onChange={(e) => updateDraft(d.id, { zone: e.target.value })}
+                              aria-label={`${name} のゾーン`}
+                              className="w-32"
                             />
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={d.capacityGiB}
+                              disabled={d.remove}
+                              placeholder="gateway"
+                              onChange={(e) => updateDraft(d.id, { capacityGiB: e.target.value })}
+                              aria-label={`${name} の容量 (GiB、空欄でゲートウェイ)`}
+                              className="w-32"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              value={d.tags}
+                              disabled={d.remove}
+                              onChange={(e) => updateDraft(d.id, { tags: e.target.value })}
+                              aria-label={`${name} のタグ (カンマ区切り)`}
+                              className="w-40"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            {(d.applied || d.effective) && (
+                              <input
+                                type="checkbox"
+                                className="rounded"
+                                checked={d.remove}
+                                onChange={(e) => updateDraft(d.id, { remove: e.target.checked })}
+                                aria-label={`${name} をレイアウトから削除`}
+                              />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
                 <datalist id="layout-zones">
@@ -485,6 +396,7 @@ function LayoutPage() {
                     min={1}
                     value={redundancyN}
                     onChange={(e) => setRedundancyN(e.target.value)}
+                    aria-label="ゾーン冗長性 (atLeast) の最小ゾーン数"
                     className="w-20"
                   />
                 )}
