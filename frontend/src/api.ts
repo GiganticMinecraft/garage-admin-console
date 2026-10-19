@@ -457,37 +457,109 @@ export function downloadObjectUrl(bucket: string, key: string): string {
   return `${BASE}/objects/${bucket}/download?key=${encodeURIComponent(key)}`
 }
 
-export function batchDownloadUrl(bucket: string, keys: string[], name?: string): string {
-  const params = keys.map((k) => `key=${encodeURIComponent(k)}`)
-  if (name) params.push(`name=${encodeURIComponent(name)}`)
-  return `${BASE}/objects/${bucket}/batch-download?${params.join('&')}`
-}
+// Batch ZIP download. The key list is POSTed (no URL length limit) in
+// exchange for a short-lived single-use token; the ZIP itself is then fetched
+// with a plain GET so the browser's download manager streams it to disk
+// instead of buffering it in JS memory. `name` is the bucket alias used for
+// the ZIP filename; `bucket` is the ID used for the S3 request.
+export const MAX_BATCH_DOWNLOAD_KEYS = 1000
 
-// `name` is the bucket alias used for the ZIP filename; `bucket` is the ID
-// used for the S3 request.
 export async function downloadObjectsZip(bucket: string, keys: string[], name?: string): Promise<void> {
+  const { token } = await fetchJSON<{ token: string }>(`/objects/${bucket}/batch-download`, {
+    method: 'POST',
+    body: JSON.stringify({ keys, name }),
+  })
   const a = document.createElement('a')
-  a.href = batchDownloadUrl(bucket, keys, name)
+  a.href = `${BASE}/objects/${bucket}/batch-download?token=${encodeURIComponent(token)}`
   a.download = `${name || bucket}-files.zip`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
 }
 
-export async function uploadFile(bucket: string, file: File, prefix?: string): Promise<{ key: string }> {
-  const form = new FormData()
-  form.append('file', file)
-  if (prefix) {
-    const keyPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`
-    form.append('key', keyPrefix + file.name)
+/** Same parsing as errorFromResponse, for a status and body read off an XHR. */
+function apiErrorFromText(status: number, text: string): ApiError {
+  let message = ''
+  let code: string | undefined
+  if (text) {
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (parsed && typeof parsed === 'object') {
+        const body = parsed as { code?: unknown; message?: unknown; error?: unknown }
+        if (typeof body.message === 'string') message = body.message
+        else if (typeof body.error === 'string') message = body.error
+        if (typeof body.code === 'string') code = body.code
+      } else {
+        message = text.trim()
+      }
+    } catch {
+      message = text.trim()
+    }
   }
-  const res = await fetch(`${BASE}/objects/${bucket}/upload`, {
-    method: 'POST',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    body: form,
+  if (!message) message = `API error: ${status}`
+  return new ApiError(status, message, code)
+}
+
+export interface UploadObjectOptions {
+  /** Full object key. */
+  key: string
+  /** When false, the server answers 409 (ApiError.status) if the key exists. */
+  overwrite?: boolean
+  onProgress?: (loaded: number, total: number) => void
+}
+
+/**
+ * Uploads one file with XMLHttpRequest so upload progress can be reported
+ * (fetch has no upload progress events). The key travels in the query
+ * string, which lets the server reject an existing key with 409 before the
+ * body is read.
+ */
+export function uploadObject(
+  bucket: string,
+  file: File,
+  { key, overwrite = true, onProgress }: UploadObjectOptions,
+): Promise<{ key: string }> {
+  return new Promise((resolve, reject) => {
+    const params = new URLSearchParams({ key })
+    if (!overwrite) params.set('overwrite', 'false')
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${BASE}/objects/${bucket}/upload?${params.toString()}`)
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest')
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total)
+      }
+    }
+    xhr.onload = () => {
+      // Built straight from the XHR fields: a Response object cannot carry
+      // statuses like 204 with a body (it throws), which would leave this
+      // promise pending forever.
+      try {
+        if (xhr.status === 401) {
+          window.location.href = `${BASE}/auth/login`
+          reject(new Error('Unauthorized'))
+          return
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText) as { key: string })
+          } catch {
+            resolve({ key })
+          }
+          return
+        }
+        reject(apiErrorFromText(xhr.status, xhr.responseText))
+      } catch (e) {
+        reject(e instanceof Error ? e : new ApiError(xhr.status, String(e)))
+      }
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'ネットワークエラーによりアップロードが中断されました'))
+    xhr.onabort = () => reject(new ApiError(0, 'アップロードが中断されました'))
+    const form = new FormData()
+    form.append('key', key)
+    form.append('file', file)
+    xhr.send(form)
   })
-  await assertOk(res)
-  return res.json()
 }
 
 export async function deleteObject(bucket: string, key: string): Promise<void> {
@@ -759,4 +831,36 @@ export async function createMetadataSnapshot(
 
 export async function listNodeWorkers(id: string): Promise<WorkersResponse> {
   return fetchJSON(nodePath(id, '/workers'))
+}
+
+// Bulk object deletion (#381)
+export interface BatchDeleteResult {
+  deleted: number
+  errors: { key: string; code?: string; message: string }[]
+  /** Prefix delete only: the per-call cap was hit and objects remain. */
+  truncated: boolean
+}
+
+export async function deleteObjects(bucket: string, keys: string[]): Promise<BatchDeleteResult> {
+  return fetchJSON(`/objects/${bucket}/batch`, {
+    method: 'DELETE',
+    body: JSON.stringify({ keys }),
+  })
+}
+
+export interface PrefixSummary {
+  count: number
+  bytes: number
+  /** Counting stopped at the server's cap; the real count is higher. */
+  truncated: boolean
+}
+
+export async function getPrefixSummary(bucket: string, prefix: string): Promise<PrefixSummary> {
+  return fetchJSON(`/objects/${bucket}/prefix-summary?prefix=${encodeURIComponent(prefix)}`)
+}
+
+export async function deletePrefix(bucket: string, prefix: string): Promise<BatchDeleteResult> {
+  return fetchJSON(`/objects/${bucket}/prefix?prefix=${encodeURIComponent(prefix)}`, {
+    method: 'DELETE',
+  })
 }

@@ -1,32 +1,20 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useCallback, useRef } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useCallback } from 'react'
 import {
   getBucket,
-  listObjects,
-  uploadFile,
-  deleteObject,
-  downloadObjectUrl,
-  downloadObjectsZip,
   grantBucketKey,
   revokeBucketKey,
 } from '@/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { ObjectBrowser } from '@/components/object-browser'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
-import { Folder, FolderUp, Copy, Check } from 'lucide-react'
+import { Copy, Check } from 'lucide-react'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
@@ -60,46 +48,6 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
-function PrefixBreadcrumb({
-  prefix,
-  onNavigate,
-}: {
-  prefix: string
-  onNavigate: (prefix: string) => void
-}) {
-  if (!prefix) return null
-  const segments = prefix.split('/').filter(Boolean)
-  return (
-    <div className="flex items-center gap-1 text-sm text-muted-foreground">
-      <button
-        className="hover:underline"
-        onClick={() => onNavigate('')}
-      >
-        /
-      </button>
-      {segments.map((seg, i) => {
-        const path = segments.slice(0, i + 1).join('/') + '/'
-        const isLast = i === segments.length - 1
-        return (
-          <span key={path} className="flex items-center gap-1">
-            <span>&gt;</span>
-            {isLast ? (
-              <span>{seg}</span>
-            ) : (
-              <button
-                className="hover:underline"
-                onClick={() => onNavigate(path)}
-              >
-                {seg}
-              </button>
-            )}
-          </span>
-        )
-      })}
-    </div>
-  )
-}
-
 function BucketDetailPage() {
   const { id } = Route.useParams()
   const { prefix: rawPrefix } = Route.useSearch()
@@ -117,108 +65,13 @@ function BucketDetailPage() {
     },
     [navigate, id],
   )
-  const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [copied, setCopied] = useState(false)
-  const [isDragging, setIsDragging] = useState(false)
-  const dragCounter = useRef(0)
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
     queryFn: () => getBucket(id) as unknown as Promise<BucketDetail>,
   })
-
-  const objects = useInfiniteQuery({
-    queryKey: ['objects', id, prefix],
-    queryFn: ({ pageParam }) =>
-      listObjects(id, prefix || undefined, pageParam || undefined),
-    initialPageParam: '' as string,
-    getNextPageParam: (lastPage) =>
-      lastPage.isTruncated ? lastPage.nextContinuationToken : undefined,
-  })
-
-  const allObjects = objects.data?.pages.flatMap((p) => p.objects) ?? []
-  const allPrefixes = [
-    ...new Set(objects.data?.pages.flatMap((p) => p.prefixes) ?? []),
-  ]
-
-  const uploadMutation = useMutation({
-    mutationFn: (file: File) => uploadFile(id, file, prefix || undefined),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['objects', id] })
-      queryClient.invalidateQueries({ queryKey: ['bucket', id] })
-      toast.success(`アップロードしました: ${data.key}`)
-    },
-    onError: (error) => {
-      toast.error(`アップロードに失敗しました: ${error.message}`)
-    },
-  })
-
-  const deleteMutation = useMutation({
-    mutationFn: (key: string) => deleteObject(id, key),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['objects', id] })
-      setDeleteObjectTarget(null)
-      toast.success('オブジェクトを削除しました')
-    },
-    onError: (error) => {
-      toast.error(`オブジェクトの削除に失敗しました: ${error.message}`)
-    },
-  })
-
-  const toggleSelect = (key: string) => {
-    setSelectedKeys((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
-
-  const isAllSelected = allObjects.length > 0 && allObjects.every((obj) => selectedKeys.has(obj.key))
-
-  const toggleSelectAll = () => {
-    setSelectedKeys((prev) => {
-      const next = new Set(prev)
-      if (isAllSelected) {
-        for (const obj of allObjects) next.delete(obj.key)
-      } else {
-        for (const obj of allObjects) next.add(obj.key)
-      }
-      return next
-    })
-  }
-
-  const batchDownloadMutation = useMutation({
-    mutationFn: (keys: string[]) => downloadObjectsZip(id, keys, bucket.data?.globalAliases?.[0]),
-    onSuccess: () => {
-      setSelectedKeys(new Set())
-      toast.success('ダウンロードを開始しました')
-    },
-    onError: (error: Error) => {
-      toast.error(`一括ダウンロードに失敗しました: ${error.message}`)
-    },
-  })
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      dragCounter.current = 0
-      setIsDragging(false)
-      const files = Array.from(e.dataTransfer.files)
-      files.forEach((file) => uploadMutation.mutate(file))
-    },
-    [uploadMutation],
-  )
-
-  const handleFileSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files ?? [])
-      files.forEach((file) => uploadMutation.mutate(file))
-    },
-    [uploadMutation],
-  )
 
   // Key grant state
   const [grantKeyId, setGrantKeyId] = useState('')
@@ -399,189 +252,12 @@ function BucketDetailPage() {
       </div>
 
       {/* Object Browser */}
-      <div className="space-y-2">
-        <h2 className="text-lg font-semibold">オブジェクト</h2>
-        <PrefixBreadcrumb prefix={prefix} onNavigate={setPrefix} />
-        <div className="flex gap-2">
-          <Input
-            value={prefix}
-            onChange={(e) => setPrefix(e.target.value)}
-            placeholder="プレフィックスで絞り込み"
-            className="flex-1"
-          />
-          <Button asChild size="sm">
-            <label className="cursor-pointer">
-              アップロード
-              <input type="file" className="hidden" multiple onChange={handleFileSelect} />
-            </label>
-          </Button>
-        </div>
-
-        {uploadMutation.isPending && (
-          <p className="text-sm text-muted-foreground">アップロード中...</p>
-        )}
-        {uploadMutation.isError && (
-          <p className="text-sm text-destructive">{uploadMutation.error.message}</p>
-        )}
-
-        <div
-          onDragOver={(e) => e.preventDefault()}
-          onDragEnter={(e) => {
-            e.preventDefault()
-            dragCounter.current++
-            setIsDragging(true)
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault()
-            dragCounter.current--
-            if (dragCounter.current === 0) setIsDragging(false)
-          }}
-          onDrop={handleDrop}
-          className={`rounded-lg border-2 border-dashed p-4 text-center text-sm text-muted-foreground transition-colors ${
-            isDragging ? 'border-primary bg-primary/5' : ''
-          }`}
-        >
-          ここにファイルをドラッグ＆ドロップしてアップロード
-        </div>
-
-        {/* Batch action bar */}
-        {selectedKeys.size > 0 && (
-          <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
-            <span className="text-sm text-muted-foreground">
-              {selectedKeys.size}件選択中
-            </span>
-            <Button
-              size="sm"
-              onClick={() => batchDownloadMutation.mutate([...selectedKeys])}
-              disabled={batchDownloadMutation.isPending}
-            >
-              {batchDownloadMutation.isPending ? 'ダウンロード中...' : '一括ダウンロード'}
-            </Button>
-            <Button
-              variant="link"
-              size="sm"
-              onClick={() => setSelectedKeys(new Set())}
-            >
-              選択解除
-            </Button>
-          </div>
-        )}
-
-        {/* Prefix navigation */}
-        {prefix && (
-          <Button
-            variant="link"
-            size="sm"
-            className="flex h-auto items-center gap-1.5 p-0"
-            onClick={() => {
-              const segments = prefix.replace(/\/$/, '').split('/')
-              segments.pop()
-              setPrefix(segments.length > 0 ? segments.join('/') + '/' : '')
-            }}
-          >
-            <FolderUp className="h-4 w-4" />
-            ../
-          </Button>
-        )}
-        {allPrefixes.map((p: string) => (
-          <Button
-            key={p}
-            variant="link"
-            size="sm"
-            className="flex h-auto items-center gap-1.5 p-0"
-            onClick={() => setPrefix(p)}
-          >
-            <Folder className="h-4 w-4" />
-            {p}
-          </Button>
-        ))}
-
-        {objects.isLoading ? (
-          <p className="text-muted-foreground">オブジェクトを読み込み中...</p>
-        ) : objects.isError ? (
-          <p className="text-destructive">オブジェクトの読み込みに失敗しました</p>
-        ) : (
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">
-                    <input
-                      type="checkbox"
-                      checked={isAllSelected}
-                      onChange={toggleSelectAll}
-                      className="rounded"
-                    />
-                  </TableHead>
-                  <TableHead>キー</TableHead>
-                  <TableHead className="text-right">サイズ</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {allObjects.map((obj) => (
-                  <TableRow key={obj.key}>
-                    <TableCell>
-                      <input
-                        type="checkbox"
-                        checked={selectedKeys.has(obj.key)}
-                        onChange={() => toggleSelect(obj.key)}
-                        className="rounded"
-                      />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{obj.key}</TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      {formatBytes(obj.size)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="link" size="sm" asChild className="mr-1">
-                        <a href={downloadObjectUrl(id, obj.key)}>ダウンロード</a>
-                      </Button>
-                      <Button
-                        variant="link"
-                        size="sm"
-                        className="text-destructive"
-                        onClick={() => setDeleteObjectTarget(obj.key)}
-                      >
-                        削除
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {allObjects.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
-                      オブジェクトがありません
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-            {objects.hasNextPage && (
-              <div className="border-t px-4 py-2 text-center">
-                <Button
-                  variant="link"
-                  size="sm"
-                  onClick={() => objects.fetchNextPage()}
-                  disabled={objects.isFetchingNextPage}
-                >
-                  {objects.isFetchingNextPage ? '読み込み中...' : 'さらに読み込む'}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <ConfirmDialog
-        open={deleteObjectTarget !== null}
-        onOpenChange={(open) => { if (!open) setDeleteObjectTarget(null) }}
-        title="オブジェクトの削除"
-        description={`「${deleteObjectTarget}」を削除しますか？この操作は取り消せません。`}
-        onConfirm={() => {
-          if (deleteObjectTarget) return deleteMutation.mutateAsync(deleteObjectTarget)
-        }}
-        isPending={deleteMutation.isPending}
+      <ObjectBrowser
+        key={id}
+        bucketId={id}
+        bucketName={data?.globalAliases?.[0]}
+        prefix={prefix}
+        onPrefixChange={setPrefix}
       />
 
       <ConfirmDialog

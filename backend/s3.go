@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -15,13 +16,43 @@ import (
 // S3Client wraps an *s3.Client for object operations against Garage's S3 API.
 type S3Client struct {
 	client *s3.Client
+	// maxUploadBytes caps the request body of a single upload. Zero means
+	// defaultMaxUploadBytes (see uploadLimit).
+	maxUploadBytes int64
+}
+
+// defaultMaxUploadBytes is the per-request upload cap when
+// GARAGE_MAX_UPLOAD_BYTES is unset: 10 GiB.
+const defaultMaxUploadBytes int64 = 10 << 30
+
+// uploadLimit returns the effective per-request upload cap.
+func (c *S3Client) uploadLimit() int64 {
+	if c.maxUploadBytes > 0 {
+		return c.maxUploadBytes
+	}
+	return defaultMaxUploadBytes
+}
+
+// parseMaxUploadBytes reads GARAGE_MAX_UPLOAD_BYTES (a positive integer byte
+// count). Invalid values are logged and replaced by the default.
+func parseMaxUploadBytes(v string) int64 {
+	if v == "" {
+		return defaultMaxUploadBytes
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		slog.Warn("invalid GARAGE_MAX_UPLOAD_BYTES, using default", "value", v, "default", defaultMaxUploadBytes)
+		return defaultMaxUploadBytes
+	}
+	return n
 }
 
 // newS3Client creates a new S3Client configured from environment variables.
 // Required: GARAGE_S3_ACCESS_KEY, GARAGE_S3_SECRET_KEY.
 // Optional: GARAGE_S3_ENDPOINT (default: http://garage.garage.svc.cluster.local:3900),
 //
-//	GARAGE_S3_REGION (default: seichi-cloud).
+//	GARAGE_S3_REGION (default: seichi-cloud),
+//	GARAGE_MAX_UPLOAD_BYTES (default: 10 GiB).
 func newS3Client() *S3Client {
 	endpoint := os.Getenv("GARAGE_S3_ENDPOINT")
 	if endpoint == "" {
@@ -45,7 +76,10 @@ func newS3Client() *S3Client {
 		region = "seichi-cloud"
 	}
 
-	return &S3Client{client: newS3SDKClient(endpoint, region, accessKey, secretKey, 30*time.Second)}
+	return &S3Client{
+		client:         newS3SDKClient(endpoint, region, accessKey, secretKey, 30*time.Second),
+		maxUploadBytes: parseMaxUploadBytes(os.Getenv("GARAGE_MAX_UPLOAD_BYTES")),
+	}
 }
 
 // newS3SDKClient builds the underlying SDK client.
