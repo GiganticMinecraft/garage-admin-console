@@ -740,7 +740,18 @@ export interface PurgeBlocksResult {
   versionsDeleted: number
 }
 
-export async function listBlockErrors(): Promise<BlockError[]> {
+/**
+ * GET /api/blocks/errors. `items` holds the block errors of every node that
+ * answered; `nodeErrors` maps each node that did not to Garage's message.
+ * Empty items with nodeErrors means "none found where we could look", not
+ * "no block errors".
+ */
+export interface BlockErrorsResponse {
+  items: BlockError[]
+  nodeErrors: Record<string, string>
+}
+
+export async function listBlockErrors(): Promise<BlockErrorsResponse> {
   return fetchJSON('/blocks/errors')
 }
 
@@ -794,12 +805,11 @@ export async function launchRepair(
 // Maintenance metrics for the repair page.
 // resyncQueueLength / resyncErroredBlocks are summed over every node that
 // answered GetNodeStatistics; `nodes` has the breakdown and `nodeErrors` the
-// nodes that could not be reached. corruptionCounter comes from the admin
-// endpoint node's /metrics only and is null when unavailable.
+// nodes that could not be reached. The scrub corruption count is not here:
+// read scrubCorruptions from getStorageHealth (persisted per node).
 export interface MaintenanceMetrics {
   resyncQueueLength: number
   resyncErroredBlocks: number
-  corruptionCounter: number | null
   nodes: { nodeId: string; resyncQueueLen: number; resyncErrors: number }[]
   nodeErrors: Record<string, string>
 }

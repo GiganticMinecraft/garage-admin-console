@@ -8,8 +8,8 @@ import {
   retryBlockResync,
   type BlockError,
   type BlockInfo,
-  type MultiResponse,
 } from '@/api'
+import { multiResponseToast, type MultiResponseToast } from '@/lib/multi-response'
 import {
   Table,
   TableHeader,
@@ -43,13 +43,8 @@ function formatSecsUntil(secs: number): string {
   return `${Math.floor(secs / 86400)}日後`
 }
 
-function summarizeMultiResponse<T>(resp: MultiResponse<T>): string {
-  const successCount = Object.keys(resp.success).length
-  const errorCount = Object.keys(resp.error).length
-  const parts: string[] = []
-  if (successCount > 0) parts.push(`${successCount}ノード成功`)
-  if (errorCount > 0) parts.push(`${errorCount}ノードエラー`)
-  return parts.join('、')
+function showToast(t: MultiResponseToast) {
+  toast[t.level](t.message)
 }
 
 function BlockInfoPanel({ blockHash }: { blockHash: string }) {
@@ -127,21 +122,24 @@ function BlocksPage() {
   const [purgeDialogOpen, setPurgeDialogOpen] = useState(false)
   const [resyncDialogOpen, setResyncDialogOpen] = useState(false)
 
-  const { data: errors, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['blockErrors'],
     queryFn: listBlockErrors,
   })
+  const errors = data?.items
+  const nodeErrors = Object.entries(data?.nodeErrors ?? {})
 
   const purgeMutation = useMutation({
     mutationFn: (hashes: string[]) => purgeBlocks(hashes),
     onSuccess: (resp) => {
-      // Show representative result from first successful node, not sum across nodes
-      const firstResult = Object.values(resp.success)[0]
-      const msg = firstResult
-        ? `${firstResult.blocksPurged}ブロックをパージしました`
-        : 'パージが完了しました'
-      toast.success(`${msg} (${summarizeMultiResponse(resp)})`)
-      setSelectedHashes(new Set())
+      // blocksPurged is per node, so show the first successful node's value, not a sum.
+      const t = multiResponseToast(resp, {
+        action: 'パージ',
+        successMessage: (results) => `${results[0].blocksPurged}ブロックをパージしました`,
+      })
+      showToast(t)
+      // Keep the selection when some node failed so the purge can be retried.
+      if (t.outcome === 'success') setSelectedHashes(new Set())
       queryClient.invalidateQueries({ queryKey: ['blockErrors'] })
     },
     onError: (error) => toast.error(`パージに失敗しました: ${error.message}`),
@@ -151,11 +149,10 @@ function BlocksPage() {
     mutationFn: (body: { all: true } | { blockHashes: string[] }) => retryBlockResync(body),
     onSuccess: (resp) => {
       // count is per-node (e.g. blockHashes.len()), so show representative value not sum
-      const firstResult = Object.values(resp.success)[0]
-      const msg = firstResult
-        ? `${firstResult.count}ブロックのリシンクをキューしました`
-        : 'リシンクが完了しました'
-      toast.success(`${msg} (${summarizeMultiResponse(resp)})`)
+      showToast(multiResponseToast(resp, {
+        action: 'リシンク',
+        successMessage: (results) => `${results[0].count}ブロックのリシンクをキューしました`,
+      }))
       queryClient.invalidateQueries({ queryKey: ['blockErrors'] })
     },
     onError: (error) => toast.error(`リシンクに失敗しました: ${error.message}`),
@@ -204,6 +201,21 @@ function BlocksPage() {
         </div>
       </div>
 
+      {nodeErrors.length > 0 && (
+        <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+          <p className="font-medium text-destructive">
+            {nodeErrors.length} ノードからブロックエラーを取得できませんでした。以下の一覧には、これらのノードのエラーは含まれていません。
+          </p>
+          <ul className="mt-1 space-y-0.5 text-muted-foreground">
+            {nodeErrors.map(([nodeId, msg]) => (
+              <li key={nodeId}>
+                <span className="font-mono text-xs">{nodeId.slice(0, 16)}…</span>: {msg}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {isLoading ? (
         <p className="text-muted-foreground">読み込み中...</p>
       ) : isError ? (
@@ -218,6 +230,7 @@ function BlocksPage() {
                     type="checkbox"
                     checked={uniqueHashes.length > 0 && selectedHashes.size === uniqueHashes.length}
                     onChange={toggleSelectAll}
+                    aria-label="全て選択"
                     className="rounded"
                   />
                 </TableHead>
@@ -240,6 +253,7 @@ function BlocksPage() {
                         type="checkbox"
                         checked={selectedHashes.has(err.blockHash)}
                         onChange={() => toggleSelect(err.blockHash)}
+                        aria-label={`${err.blockHash.slice(0, 12)} を選択`}
                         className="rounded"
                       />
                     </TableCell>
@@ -273,7 +287,9 @@ function BlocksPage() {
               {errors?.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
-                    ブロックエラーはありません
+                    {nodeErrors.length > 0
+                      ? '確認できた範囲ではブロックエラーはありません(未確認ノードあり)'
+                      : 'ブロックエラーはありません'}
                   </TableCell>
                 </TableRow>
               )}
