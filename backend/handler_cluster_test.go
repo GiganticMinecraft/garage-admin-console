@@ -60,6 +60,139 @@ func TestLayoutWorkflowRoutesProxyToGarage(t *testing.T) {
 	}
 }
 
+func TestLayoutHistoryAndSkipDeadNodesProxyToGarage(t *testing.T) {
+	var calls []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/GetClusterLayoutHistory", func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" /v2/GetClusterLayoutHistory")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"currentVersion":3,"minAck":2,"versions":[{"version":3,"status":"Current","storageNodes":2,"gatewayNodes":0},{"version":2,"status":"Draining","storageNodes":2,"gatewayNodes":0}],"updateTrackers":{"n1":{"ack":3,"sync":2,"syncAck":2}}}`))
+	})
+	mux.HandleFunc("/v2/ClusterLayoutSkipDeadNodes", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := readAll(r)
+		calls = append(calls, r.Method+" /v2/ClusterLayoutSkipDeadNodes "+body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(body, `"version":9`) {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"code":"InvalidRequest","message":"Bad request: Invalid version, you may use the following version numbers: 3"}`))
+			return
+		}
+		w.Write([]byte(`{"ackUpdated":["n2"],"syncUpdated":[]}`))
+	})
+	garage := httptest.NewServer(mux)
+	defer garage.Close()
+	handler, store := setupTestRouter(t, garage.URL)
+
+	req := authenticatedRequest(t, store, http.MethodGet, "/api/cluster/layout/history", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history: status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var hist struct {
+		CurrentVersion int                       `json:"currentVersion"`
+		MinAck         int                       `json:"minAck"`
+		UpdateTrackers map[string]map[string]int `json:"updateTrackers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &hist); err != nil {
+		t.Fatalf("history body: %v", err)
+	}
+	if hist.CurrentVersion != 3 || hist.MinAck != 2 || hist.UpdateTrackers["n1"]["syncAck"] != 2 {
+		t.Errorf("history = %+v", hist)
+	}
+
+	post := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := authenticatedRequest(t, store, http.MethodPost, "/api/cluster/layout/skip-dead-nodes", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post(`{"version":3,"allowMissingData":false}`); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ackUpdated":["n2"]`) {
+		t.Fatalf("skip-dead-nodes: status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	// Garage's 400 (and its message) must reach the client unchanged so the dialog can show it.
+	if rec := post(`{"version":9,"allowMissingData":true}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Invalid version") {
+		t.Fatalf("skip-dead-nodes error: status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	want := []string{
+		`GET /v2/GetClusterLayoutHistory`,
+		`POST /v2/ClusterLayoutSkipDeadNodes {"version":3,"allowMissingData":false}`,
+		`POST /v2/ClusterLayoutSkipDeadNodes {"version":9,"allowMissingData":true}`,
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Errorf("upstream calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestSkipDeadNodesRequiresCSRFHeader(t *testing.T) {
+	called := false
+	garage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
+	defer garage.Close()
+	handler, store := setupTestRouter(t, garage.URL)
+	req := authenticatedRequest(t, store, http.MethodPost, "/api/cluster/layout/skip-dead-nodes", strings.NewReader(`{"version":2,"allowMissingData":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK || called {
+		t.Fatalf("skip-dead-nodes without X-Requested-With reached Garage: status = %d", rec.Code)
+	}
+}
+
+// TestLayoutHistoryIntegration reads the layout history from a real Garage
+// and checks that skip-dead-nodes forwards Garage's own validation error.
+// It never changes the layout: on a cluster with a single live version Garage
+// refuses the skip, and on a cluster with an update in flight the test only
+// sends an out-of-range version, which Garage also rejects.
+func TestLayoutHistoryIntegration(t *testing.T) {
+	endpoint := os.Getenv("GARAGE_TEST_ADMIN_ENDPOINT")
+	if endpoint == "" {
+		t.Skip("GARAGE_TEST_ADMIN_ENDPOINT not set")
+	}
+	admin := &GarageAdminClient{baseURL: endpoint, token: os.Getenv("GARAGE_TEST_ADMIN_TOKEN"), httpClient: &http.Client{Timeout: 10 * time.Second}}
+	r := chi.NewRouter()
+	r.Get("/api/cluster/layout/history", handleLayoutHistory(admin))
+	r.Post("/api/cluster/layout/skip-dead-nodes", handleSkipDeadNodes(admin))
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/cluster/layout/history", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history: %d %s", rec.Code, rec.Body.String())
+	}
+	var hist struct {
+		CurrentVersion int64 `json:"currentVersion"`
+		MinAck         int64 `json:"minAck"`
+		Versions       []struct {
+			Version int64  `json:"version"`
+			Status  string `json:"status"`
+		} `json:"versions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &hist); err != nil {
+		t.Fatalf("history body: %v", err)
+	}
+	if hist.CurrentVersion == 0 || len(hist.Versions) == 0 || hist.Versions[0].Status != "Current" {
+		t.Fatalf("unexpected history: %s", rec.Body.String())
+	}
+
+	// currentVersion+1 is never a valid target, so Garage must refuse it whatever the cluster state.
+	body := fmt.Sprintf(`{"version":%d,"allowMissingData":false}`, hist.CurrentVersion+1)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/cluster/layout/skip-dead-nodes", strings.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("skip-dead-nodes: status = %d body = %s, want 400", rec.Code, rec.Body.String())
+	}
+	var garageErr struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &garageErr); err != nil || garageErr.Message == "" {
+		t.Fatalf("skip-dead-nodes error body not forwarded: %s", rec.Body.String())
+	}
+}
+
 func readAll(r *http.Request) (string, error) {
 	b, err := io.ReadAll(r.Body)
 	return string(b), err
