@@ -253,6 +253,7 @@ function BucketDetailPage() {
 
       {/* Object Browser */}
       <ObjectBrowser
+        key={id}
         bucketId={id}
         bucketName={data?.globalAliases?.[0]}
         prefix={prefix}

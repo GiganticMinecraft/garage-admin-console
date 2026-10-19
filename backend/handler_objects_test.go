@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/go-chi/chi/v5"
@@ -301,6 +302,10 @@ func fakeS3(t *testing.T, objects map[string]string) *S3Client {
 		}
 		key := strings.TrimPrefix(r.URL.Path, "/b/")
 		body, ok := objects[key]
+		if ok && r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+			return
+		}
 		if !ok || r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusNotFound)
 			io.WriteString(w, `<?xml version="1.0"?><Error><Code>NoSuchKey</Code><Message>key not found</Message></Error>`)
@@ -362,6 +367,79 @@ func TestStreamBatchZipSanitizesAndReportsErrors(t *testing.T) {
 	rc.Close()
 	if !strings.Contains(string(report), "missing.txt") {
 		t.Errorf("error report = %q", report)
+	}
+}
+
+func TestStreamBatchZipFolderMarkers(t *testing.T) {
+	s3c := fakeS3(t, map[string]string{
+		"empty-dir/": "",
+		"not-a-dir/": "payload",
+	})
+	var buf bytes.Buffer
+	streamBatchZip(context.Background(), s3c, "b", []string{"empty-dir/", "not-a-dir/"}, &buf)
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("invalid zip: %v", err)
+	}
+	got := map[string]bool{}
+	for _, f := range zr.File {
+		got[f.Name] = true
+	}
+	if !got["empty-dir/"] || !got["not-a-dir"] || len(got) != 2 {
+		t.Errorf("entries = %v, want empty-dir/ as a directory and not-a-dir as a file", got)
+	}
+}
+
+func TestUploadPartSize(t *testing.T) {
+	if got := uploadPartSize(10 << 30); got != manager.MinUploadPartSize {
+		t.Errorf("10 GiB cap: part size %d, want the 5 MiB minimum", got)
+	}
+	if got := uploadPartSize(100 << 30); got <= manager.MinUploadPartSize || got > maxUploadPartSize {
+		t.Errorf("100 GiB cap: part size %d out of range", got)
+	}
+	if got := uploadPartSize(10 << 40); got != maxUploadPartSize {
+		t.Errorf("10 TiB cap: part size %d, want the 64 MiB cap", got)
+	}
+}
+
+// countingReader records how much of a request body the server consumed.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// TestUploadConflictDrainsBody checks that an early 409 is sent only after
+// the body has been read, so the connection is not reset under a browser
+// that is still uploading.
+func TestUploadConflictDrainsBody(t *testing.T) {
+	s3c := fakeS3(t, map[string]string{"exists.bin": "x"})
+	r := chi.NewRouter()
+	r.Post("/api/objects/{bucket}/upload", handleUploadObject(s3c))
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	body, ct := multipartBody(t, "", "exists.bin", bytes.Repeat([]byte("y"), 8<<20))
+	total := int64(body.Len())
+	cr := &countingReader{r: body}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/objects/b/upload?overwrite=false&key=exists.bin", cr)
+	req.Header.Set("Content-Type", ct)
+	req.ContentLength = total
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed (connection reset?): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if cr.n != total {
+		t.Errorf("server read %d of %d body bytes before answering", cr.n, total)
 	}
 }
 
@@ -655,7 +733,8 @@ func TestObjectBrowserIntegration(t *testing.T) {
 	}
 
 	// Over a real connection, overwrite=false with the key in the query is
-	// answered with 409 before the (large) body is consumed.
+	// answered with 409 (after the body is drained, without a reset) and
+	// nothing is written to S3.
 	t.Run("early conflict over http", func(t *testing.T) {
 		bucket := buckets["alias"]
 		key := fmt.Sprintf("i381-conflict-%d.bin", time.Now().UnixNano())

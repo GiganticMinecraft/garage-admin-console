@@ -315,8 +315,9 @@ func objectExists(ctx context.Context, s3Client *S3Client, bucket, key string) (
 //
 // The object key comes from the "key" query parameter, else a "key" form
 // field sent before the file part, else the file name. With overwrite=false
-// an existing key is rejected with 409 before any data is written; when the
-// key is in the query string that check happens before the body is read.
+// an existing key is rejected with 409 before any data is written to S3; when
+// the key is in the query string the check runs before the multipart body is
+// parsed, and the body is then only drained (see drainBeforeReply).
 func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bucket := chi.URLParam(r, "bucket")
@@ -326,11 +327,18 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 		limit := s3Client.uploadLimit()
 
 		if r.ContentLength > limit {
+			// Draining a body known to exceed the cap would mean reading up
+			// to the cap for nothing; close the connection instead.
+			w.Header().Set("Connection", "close")
 			writeJSONError(w, http.StatusRequestEntityTooLarge,
 				fmt.Sprintf("upload exceeds the limit of %d bytes", limit), "EntityTooLarge")
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		// Every answer (409, 400, S3 errors...) first drains the capped body,
+		// so the browser is not hit by a connection reset mid-upload, which
+		// XHR reports as a network error instead of the real status.
+		w = &drainBeforeReply{ResponseWriter: w, body: r.Body}
 
 		checkOverwrite := func(key string) bool {
 			if overwrite {
@@ -413,9 +421,8 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 					input.ContentType = aws.String(ct)
 				}
 				uploader := manager.NewUploader(s3Client.client, func(u *manager.Uploader) {
-					// Keep the configured cap within the 10,000-part limit;
-					// never go below the S3 minimum part size.
-					u.PartSize = max(limit/int64(manager.MaxUploadParts)+1, manager.MinUploadPartSize)
+					u.PartSize = uploadPartSize(limit)
+					u.Concurrency = uploadConcurrency
 				})
 				if _, err := uploader.Upload(r.Context(), input); err != nil {
 					slog.ErrorContext(r.Context(), "s3 upload failed", "bucket", bucket, "key", key, "error", err)
@@ -440,6 +447,49 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 			part.Close()
 		}
 	}
+}
+
+const (
+	// maxUploadPartSize caps the part size: the uploader buffers about
+	// PartSize * (Concurrency + 1) bytes per request, so raising
+	// GARAGE_MAX_UPLOAD_BYTES must not grow memory without bound. With
+	// 10,000 parts this still allows objects of ~640 GiB.
+	maxUploadPartSize int64 = 64 << 20
+	// uploadConcurrency is the number of parts sent in parallel per upload.
+	uploadConcurrency = 3
+)
+
+// uploadPartSize picks a part size that fits the configured cap into S3's
+// 10,000-part limit, clamped to [5 MiB, 64 MiB].
+func uploadPartSize(limit int64) int64 {
+	return min(max(limit/int64(manager.MaxUploadParts)+1, manager.MinUploadPartSize), maxUploadPartSize)
+}
+
+// drainBeforeReply discards the rest of the request body before the first
+// byte of the response is written. Go's HTTP/1.x server otherwise resets
+// connections whose body was left unread, and browsers surface that as a
+// network error rather than the 409/400 the handler answered.
+type drainBeforeReply struct {
+	http.ResponseWriter
+	body    io.Reader
+	drained bool
+}
+
+func (d *drainBeforeReply) drain() {
+	if !d.drained {
+		d.drained = true
+		_, _ = io.Copy(io.Discard, d.body)
+	}
+}
+
+func (d *drainBeforeReply) WriteHeader(code int) {
+	d.drain()
+	d.ResponseWriter.WriteHeader(code)
+}
+
+func (d *drainBeforeReply) Write(b []byte) (int, error) {
+	d.drain()
+	return d.ResponseWriter.Write(b)
 }
 
 // writeUploadReadError reports a failure reading the request body: 413 when
@@ -594,17 +644,6 @@ func streamBatchZip(ctx context.Context, s3Client *S3Client, bucket string, keys
 			return
 		}
 		name := sanitizeZipEntryName(key)
-		if strings.HasSuffix(name, "/") {
-			if namer.claimDir(name) {
-				if _, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store}); err != nil {
-					return
-				}
-			}
-			continue
-		}
-		if name == "" {
-			name = "unnamed"
-		}
 
 		output, err := s3Client.client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String(bucket),
@@ -617,6 +656,24 @@ func streamBatchZip(ctx context.Context, s3Client *S3Client, bucket string, keys
 			slog.ErrorContext(ctx, "s3 GetObject failed for batch download", "bucket", bucket, "key", key, "error", err)
 			failures = append(failures, fmt.Sprintf("%s\t%v", key, err))
 			continue
+		}
+
+		// A key ending in "/" is a folder marker only when it is empty; S3
+		// allows such keys to hold data, which is then kept as a file.
+		if strings.HasSuffix(name, "/") {
+			if aws.ToInt64(output.ContentLength) == 0 {
+				output.Body.Close()
+				if namer.claimDir(name) {
+					if _, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store}); err != nil {
+						return
+					}
+				}
+				continue
+			}
+			name = strings.TrimSuffix(name, "/")
+		}
+		if name == "" {
+			name = "unnamed"
 		}
 
 		hdr := &zip.FileHeader{Name: namer.unique(name), Method: zipMethodFor(name)}

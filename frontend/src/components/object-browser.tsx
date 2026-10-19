@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   MAX_BATCH_DOWNLOAD_KEYS,
@@ -24,35 +24,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { formatBytes, formatDateTime } from '@/lib/format'
 import { toast } from 'sonner'
 import { ArrowDown, ArrowUp, ArrowUpDown, Folder, FolderUp } from 'lucide-react'
 
 const MAX_CONCURRENT_UPLOADS = 3
 const PREFIX_DEBOUNCE_MS = 300
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
-
-const dateFormatter = new Intl.DateTimeFormat('ja-JP', {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-})
-
 function formatDate(value: string | undefined): string {
-  if (!value) return '-'
-  const d = new Date(value)
   // Go's zero time ("0001-01-01T00:00:00Z") means S3 sent no LastModified.
-  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() <= 1) return '-'
-  return dateFormatter.format(d)
+  if (!value || value.startsWith('0001-')) return '-'
+  return formatDateTime(value)
 }
 
 function errorMessage(error: unknown): string {
@@ -170,122 +152,21 @@ function parentPrefix(prefix: string): string {
   return segments.length > 0 ? segments.join('/') + '/' : ''
 }
 
-interface PrefixDeleteTarget extends PrefixSummary {
-  prefix: string
-}
-
-export function ObjectBrowser({
+/**
+ * Upload buttons, drop zone and the upload queue. Kept in its own component
+ * so that the frequent progress updates re-render only the queue, not the
+ * (possibly long) object table.
+ */
+function ObjectUploader({
   bucketId,
-  bucketName,
   prefix,
-  onPrefixChange,
+  onUploaded,
 }: {
-  /** Bucket ID used in API paths. */
   bucketId: string
-  /** Human-readable alias, used for the ZIP filename. */
-  bucketName?: string
   prefix: string
-  onPrefixChange: (prefix: string) => void
+  /** Called when the queue drains, to refresh the listing once. */
+  onUploaded: () => void
 }) {
-  const queryClient = useQueryClient()
-
-  // --- Prefix input (debounced) and selection -------------------------------
-  const [prefixInput, setPrefixInput] = useState(prefix)
-  const [syncedPrefix, setSyncedPrefix] = useState(prefix)
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-
-  // When the prefix changes (debounced commit, breadcrumb, back/forward),
-  // mirror it into the input and drop the selection: objects that are no
-  // longer visible must not ride along into a ZIP or a bulk delete.
-  if (prefix !== syncedPrefix) {
-    setSyncedPrefix(prefix)
-    setPrefixInput(prefix)
-    setSelectedKeys(new Set())
-  }
-
-  const goToPrefix = (next: string) => {
-    clearTimeout(debounceTimer.current)
-    setPrefixInput(next)
-    onPrefixChange(next)
-  }
-
-  const handlePrefixInput = (value: string) => {
-    setPrefixInput(value)
-    clearTimeout(debounceTimer.current)
-    debounceTimer.current = setTimeout(() => onPrefixChange(value), PREFIX_DEBOUNCE_MS)
-  }
-
-  // --- Listing and sorting ------------------------------------------------
-  const objects = useInfiniteQuery({
-    queryKey: ['objects', bucketId, prefix],
-    queryFn: ({ pageParam }) =>
-      listObjects(bucketId, prefix || undefined, pageParam || undefined),
-    initialPageParam: '' as string,
-    getNextPageParam: (lastPage) =>
-      lastPage.isTruncated ? lastPage.nextContinuationToken : undefined,
-  })
-
-  const allObjects = useMemo(
-    () => objects.data?.pages.flatMap((p) => p.objects ?? []) ?? [],
-    [objects.data],
-  )
-  const allPrefixes = [
-    ...new Set(objects.data?.pages.flatMap((p) => p.prefixes ?? []) ?? []),
-  ]
-
-  const [sortKey, setSortKey] = useState<SortKey>('name')
-  const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const handleSort = (column: SortKey) => {
-    if (column === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortKey(column)
-      // Newest / largest first is the more useful default for those columns.
-      setSortDir(column === 'name' ? 'asc' : 'desc')
-    }
-  }
-  const sortedObjects = useMemo(() => {
-    const sign = sortDir === 'asc' ? 1 : -1
-    return [...allObjects].sort((a, b) => {
-      let cmp: number
-      if (sortKey === 'size') cmp = a.size - b.size
-      else if (sortKey === 'lastModified')
-        cmp = (Date.parse(a.lastModified) || 0) - (Date.parse(b.lastModified) || 0)
-      else cmp = 0
-      if (cmp === 0) cmp = a.key < b.key ? -1 : a.key > b.key ? 1 : 0
-      return cmp * sign
-    })
-  }, [allObjects, sortKey, sortDir])
-
-  const invalidateObjects = () => {
-    queryClient.invalidateQueries({ queryKey: ['objects', bucketId] })
-    queryClient.invalidateQueries({ queryKey: ['bucket', bucketId] })
-  }
-
-  // --- Selection ----------------------------------------------------------
-  const toggleSelect = (key: string) => {
-    setSelectedKeys((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
-  const isAllSelected = allObjects.length > 0 && allObjects.every((obj) => selectedKeys.has(obj.key))
-  const toggleSelectAll = () => {
-    setSelectedKeys((prev) => {
-      const next = new Set(prev)
-      if (isAllSelected) {
-        for (const obj of allObjects) next.delete(obj.key)
-      } else {
-        for (const obj of allObjects) next.add(obj.key)
-      }
-      return next
-    })
-  }
-
-  // --- Upload queue -------------------------------------------------------
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const pendingUploads = useRef<UploadItem[]>([])
   const activeUploads = useRef(0)
@@ -305,12 +186,18 @@ export function ObjectBrowser({
       const item = pendingUploads.current.shift()!
       activeUploads.current++
       patchUpload(item.id, { status: 'uploading', loaded: 0, error: undefined })
+      let lastProgressAt = 0
       uploadObject(item.bucket, item.file, {
         key: item.key,
         overwrite: item.overwrite,
-        // XHR totals include the multipart framing; scale to the file size.
-        onProgress: (loaded, total) =>
-          patchUpload(item.id, { loaded: total > 0 ? Math.round((item.total * loaded) / total) : 0 }),
+        onProgress: (loaded, total) => {
+          // Throttle to ~5 updates/s per file; XHR fires far more often.
+          const now = Date.now()
+          if (now - lastProgressAt < 200 && loaded < total) return
+          lastProgressAt = now
+          // XHR totals include the multipart framing; scale to the file size.
+          patchUpload(item.id, { loaded: total > 0 ? Math.round((item.total * loaded) / total) : 0 })
+        },
       })
         .then(() => {
           patchUpload(item.id, { status: 'done', loaded: item.total })
@@ -328,38 +215,39 @@ export function ObjectBrowser({
           // Refresh the listing once the queue drains rather than per file,
           // so a folder of hundreds of files doesn't trigger hundreds of
           // list requests.
-          if (activeUploads.current === 0) invalidateObjects()
+          if (activeUploads.current === 0) onUploaded()
         })
     }
   }
 
-  const enqueue = (items: UploadItem[]) => {
-    if (items.length === 0) return
+  const enqueueFiles = (files: File[], useRelativePath: boolean) => {
+    if (files.length === 0) return
+    const items: UploadItem[] = files.map((file) => ({
+      id: nextUploadId.current++,
+      bucket: bucketId,
+      file,
+      // Folder uploads keep the path below the chosen folder.
+      key: keyFor(prefix, useRelativePath && file.webkitRelativePath ? file.webkitRelativePath : file.name),
+      overwrite: false,
+      loaded: 0,
+      total: file.size,
+      status: 'queued',
+    }))
     setUploads((prev) => [...prev, ...items])
     pendingUploads.current.push(...items)
     pumpUploads()
   }
 
-  const enqueueFiles = (files: File[], useRelativePath: boolean) => {
-    enqueue(
-      files.map((file) => ({
-        id: nextUploadId.current++,
-        bucket: bucketId,
-        file,
-        // Folder uploads keep the path below the chosen folder.
-        key: keyFor(prefix, useRelativePath && file.webkitRelativePath ? file.webkitRelativePath : file.name),
-        overwrite: false,
-        loaded: 0,
-        total: file.size,
-        status: 'queued' as const,
-      })),
-    )
-  }
-
   const requeue = (targets: UploadItem[], overwrite: boolean) => {
-    const retried = targets.map((u) => ({ ...u, overwrite, status: 'queued' as const, loaded: 0 }))
-    const ids = new Set(retried.map((u) => u.id))
-    setUploads((prev) => prev.map((u) => (ids.has(u.id) ? retried.find((r) => r.id === u.id)! : u)))
+    // Items already queued or in flight are skipped so a double click
+    // cannot start the same upload twice.
+    const pendingIds = new Set(pendingUploads.current.map((u) => u.id))
+    const retried = targets
+      .filter((u) => u.status !== 'queued' && u.status !== 'uploading' && !pendingIds.has(u.id))
+      .map((u) => ({ ...u, overwrite, status: 'queued' as const, loaded: 0 }))
+    if (retried.length === 0) return
+    const byId = new Map(retried.map((u) => [u.id, u]))
+    setUploads((prev) => prev.map((u) => byId.get(u.id) ?? u))
     pendingUploads.current.push(...retried)
     pumpUploads()
   }
@@ -381,123 +269,38 @@ export function ObjectBrowser({
     e.preventDefault()
     dragCounter.current = 0
     setIsDragging(false)
-    enqueueFiles(Array.from(e.dataTransfer.files), false)
+    // A dropped folder shows up as a File with no content; uploading it
+    // would create an empty object. Skip folders and point to the button.
+    const files: File[] = []
+    let skippedFolders = 0
+    for (const item of Array.from(e.dataTransfer.items)) {
+      if (item.kind !== 'file') continue
+      if (item.webkitGetAsEntry()?.isDirectory) {
+        skippedFolders++
+        continue
+      }
+      const file = item.getAsFile()
+      if (file) files.push(file)
+    }
+    if (skippedFolders > 0) {
+      toast.warning('フォルダはドラッグ＆ドロップできません。「フォルダをアップロード」ボタンを使ってください')
+    }
+    enqueueFiles(files, false)
   }
 
   const conflicts = uploads.filter((u) => u.status === 'conflict')
   const activeCount = uploads.filter((u) => u.status === 'uploading' || u.status === 'queued').length
   const finishedCount = uploads.filter((u) => u.status === 'done').length
 
-  // --- Single, bulk and prefix delete --------------------------------------
-  const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
-  const deleteMutation = useMutation({
-    mutationFn: (key: string) => deleteObject(bucketId, key),
-    onSuccess: (_data, key) => {
-      invalidateObjects()
-      setSelectedKeys((prev) => {
-        const next = new Set(prev)
-        next.delete(key)
-        return next
-      })
-      toast.success('オブジェクトを削除しました')
-    },
-    onError: (error) => {
-      toast.error(`オブジェクトの削除に失敗しました: ${error.message}`)
-    },
-  })
-
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
-  const bulkDeleteMutation = useMutation({
-    mutationFn: (keys: string[]) => deleteObjects(bucketId, keys),
-    onSuccess: (result) => {
-      invalidateObjects()
-      const errors = result.errors ?? []
-      // Keep only the keys that failed selected so they can be retried.
-      setSelectedKeys(new Set(errors.map((e) => e.key)))
-      if (errors.length > 0) {
-        toast.error(
-          `${result.deleted}件を削除し、${errors.length}件の削除に失敗しました: ${errors[0].key}: ${errors[0].message}`,
-        )
-      } else {
-        toast.success(`${result.deleted}件のオブジェクトを削除しました`)
-      }
-    },
-    onError: (error) => {
-      toast.error(`一括削除に失敗しました: ${error.message}`)
-    },
-  })
-
-  const [prefixDeleteTarget, setPrefixDeleteTarget] = useState<PrefixDeleteTarget | null>(null)
-  const summaryMutation = useMutation({
-    mutationFn: (target: string) => getPrefixSummary(bucketId, target),
-    onSuccess: (summary, target) => setPrefixDeleteTarget({ ...summary, prefix: target }),
-    onError: (error) => {
-      toast.error(`オブジェクト数の取得に失敗しました: ${error.message}`)
-    },
-  })
-  const prefixDeleteMutation = useMutation({
-    mutationFn: (target: string) => deletePrefix(bucketId, target),
-    onSuccess: (result, target) => {
-      invalidateObjects()
-      const errors = result.errors ?? []
-      if (errors.length > 0) {
-        toast.error(
-          `${result.deleted}件を削除し、${errors.length}件の削除に失敗しました: ${errors[0].key}: ${errors[0].message}`,
-        )
-      } else if (result.truncated) {
-        toast.warning(`${result.deleted}件を削除しました。上限に達したため残りがあります。もう一度実行してください`)
-      } else {
-        toast.success(`「${target}」以下の${result.deleted}件を削除しました`)
-        if (target === prefix && target.endsWith('/')) goToPrefix(parentPrefix(target))
-      }
-    },
-    onError: (error) => {
-      toast.error(`プレフィックスの削除に失敗しました: ${error.message}`)
-    },
-  })
-
-  // --- Batch download -----------------------------------------------------
-  const batchDownloadMutation = useMutation({
-    mutationFn: (keys: string[]) => downloadObjectsZip(bucketId, keys, bucketName),
-    onSuccess: () => {
-      setSelectedKeys(new Set())
-      toast.success('ダウンロードを開始しました')
-    },
-    onError: (error: Error) => {
-      toast.error(`一括ダウンロードに失敗しました: ${error.message}`)
-    },
-  })
-  const tooManyForZip = selectedKeys.size > MAX_BATCH_DOWNLOAD_KEYS
-
   return (
-    <div className="space-y-2">
-      <h2 className="text-lg font-semibold">オブジェクト</h2>
-      <PrefixBreadcrumb prefix={prefix} onNavigate={goToPrefix} />
+    <>
       <div className="flex flex-wrap gap-2">
-        <Input
-          value={prefixInput}
-          onChange={(e) => handlePrefixInput(e.target.value)}
-          placeholder="プレフィックスで絞り込み"
-          className="min-w-48 flex-1"
-          aria-label="プレフィックス"
-        />
         <Button size="sm" onClick={() => fileInputRef.current?.click()}>
           アップロード
         </Button>
         <Button size="sm" variant="outline" onClick={() => folderInputRef.current?.click()}>
           フォルダをアップロード
         </Button>
-        {prefix && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-destructive"
-            onClick={() => summaryMutation.mutate(prefix)}
-            disabled={summaryMutation.isPending}
-          >
-            {summaryMutation.isPending ? '件数を確認中...' : 'このプレフィックス以下を削除'}
-          </Button>
-        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -537,7 +340,6 @@ export function ObjectBrowser({
         ここにファイルをドラッグ＆ドロップしてアップロード
       </div>
 
-      {/* Upload queue */}
       {uploads.length > 0 && (
         <div className="space-y-2 rounded-lg border p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -642,6 +444,239 @@ export function ObjectBrowser({
           </ul>
         </div>
       )}
+    </>
+  )
+}
+
+interface PrefixDeleteTarget extends PrefixSummary {
+  prefix: string
+}
+
+/**
+ * Object browser for one bucket. Render it with `key={bucketId}` so that
+ * switching buckets starts with a fresh selection and upload queue.
+ */
+export function ObjectBrowser({
+  bucketId,
+  bucketName,
+  prefix,
+  onPrefixChange,
+}: {
+  /** Bucket ID used in API paths. */
+  bucketId: string
+  /** Human-readable alias, used for the ZIP filename. */
+  bucketName?: string
+  prefix: string
+  onPrefixChange: (prefix: string) => void
+}) {
+  const queryClient = useQueryClient()
+
+  // --- Prefix input (debounced) and selection -------------------------------
+  const [prefixInput, setPrefixInput] = useState(prefix)
+  const [syncedPrefix, setSyncedPrefix] = useState(prefix)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  // A pending debounce must not navigate after the user has left the page.
+  useEffect(() => () => clearTimeout(debounceTimer.current), [])
+
+  // When the prefix changes (debounced commit, breadcrumb, back/forward),
+  // mirror it into the input and drop the selection: objects that are no
+  // longer visible must not ride along into a ZIP or a bulk delete.
+  if (prefix !== syncedPrefix) {
+    setSyncedPrefix(prefix)
+    setPrefixInput(prefix)
+    setSelectedKeys(new Set())
+  }
+
+  const goToPrefix = (next: string) => {
+    clearTimeout(debounceTimer.current)
+    setPrefixInput(next)
+    onPrefixChange(next)
+  }
+
+  const handlePrefixInput = (value: string) => {
+    setPrefixInput(value)
+    clearTimeout(debounceTimer.current)
+    debounceTimer.current = setTimeout(() => onPrefixChange(value), PREFIX_DEBOUNCE_MS)
+  }
+
+  // --- Listing and sorting ------------------------------------------------
+  const objects = useInfiniteQuery({
+    queryKey: ['objects', bucketId, prefix],
+    queryFn: ({ pageParam }) =>
+      listObjects(bucketId, prefix || undefined, pageParam || undefined),
+    initialPageParam: '' as string,
+    getNextPageParam: (lastPage) =>
+      lastPage.isTruncated ? lastPage.nextContinuationToken : undefined,
+  })
+
+  const allObjects = useMemo(
+    () => objects.data?.pages.flatMap((p) => p.objects ?? []) ?? [],
+    [objects.data],
+  )
+  const allPrefixes = [
+    ...new Set(objects.data?.pages.flatMap((p) => p.prefixes ?? []) ?? []),
+  ]
+
+  const [sortKey, setSortKey] = useState<SortKey>('name')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const handleSort = (column: SortKey) => {
+    if (column === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(column)
+      // Newest / largest first is the more useful default for those columns.
+      setSortDir(column === 'name' ? 'asc' : 'desc')
+    }
+  }
+  const sortedObjects = useMemo(() => {
+    const sign = sortDir === 'asc' ? 1 : -1
+    return [...allObjects].sort((a, b) => {
+      let cmp: number
+      if (sortKey === 'size') cmp = a.size - b.size
+      else if (sortKey === 'lastModified')
+        cmp = (Date.parse(a.lastModified) || 0) - (Date.parse(b.lastModified) || 0)
+      else cmp = 0
+      if (cmp === 0) cmp = a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+      return cmp * sign
+    })
+  }, [allObjects, sortKey, sortDir])
+
+  const invalidateObjects = () => {
+    queryClient.invalidateQueries({ queryKey: ['objects', bucketId] })
+    queryClient.invalidateQueries({ queryKey: ['bucket', bucketId] })
+  }
+
+  // --- Selection ----------------------------------------------------------
+  const toggleSelect = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+  const isAllSelected = allObjects.length > 0 && allObjects.every((obj) => selectedKeys.has(obj.key))
+  const toggleSelectAll = () => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      if (isAllSelected) {
+        for (const obj of allObjects) next.delete(obj.key)
+      } else {
+        for (const obj of allObjects) next.add(obj.key)
+      }
+      return next
+    })
+  }
+
+  // --- Single, bulk and prefix delete --------------------------------------
+  const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
+  const deleteMutation = useMutation({
+    mutationFn: (key: string) => deleteObject(bucketId, key),
+    onSuccess: (_data, key) => {
+      invalidateObjects()
+      setSelectedKeys((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+      toast.success('オブジェクトを削除しました')
+    },
+    onError: (error) => {
+      toast.error(`オブジェクトの削除に失敗しました: ${error.message}`)
+    },
+  })
+
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (keys: string[]) => deleteObjects(bucketId, keys),
+    onSuccess: (result) => {
+      invalidateObjects()
+      const errors = result.errors ?? []
+      // Keep only the keys that failed selected so they can be retried.
+      setSelectedKeys(new Set(errors.map((e) => e.key)))
+      if (errors.length > 0) {
+        toast.error(
+          `${result.deleted}件を削除し、${errors.length}件の削除に失敗しました: ${errors[0].key}: ${errors[0].message}`,
+        )
+      } else {
+        toast.success(`${result.deleted}件のオブジェクトを削除しました`)
+      }
+    },
+    onError: (error) => {
+      toast.error(`一括削除に失敗しました: ${error.message}`)
+    },
+  })
+
+  const [prefixDeleteTarget, setPrefixDeleteTarget] = useState<PrefixDeleteTarget | null>(null)
+  const summaryMutation = useMutation({
+    mutationFn: (target: string) => getPrefixSummary(bucketId, target),
+    onSuccess: (summary, target) => setPrefixDeleteTarget({ ...summary, prefix: target }),
+    onError: (error) => {
+      toast.error(`オブジェクト数の取得に失敗しました: ${error.message}`)
+    },
+  })
+  const prefixDeleteMutation = useMutation({
+    mutationFn: (target: string) => deletePrefix(bucketId, target),
+    onSuccess: (result, target) => {
+      invalidateObjects()
+      const errors = result.errors ?? []
+      if (errors.length > 0) {
+        toast.error(
+          `${result.deleted}件を削除し、${errors.length}件の削除に失敗しました: ${errors[0].key}: ${errors[0].message}`,
+        )
+      } else if (result.truncated) {
+        toast.warning(`${result.deleted}件を削除しました。上限に達したため残りがあります。もう一度実行してください`)
+      } else {
+        toast.success(`「${target}」以下の${result.deleted}件を削除しました`)
+        if (target === prefix && target.endsWith('/')) goToPrefix(parentPrefix(target))
+      }
+    },
+    onError: (error) => {
+      toast.error(`プレフィックスの削除に失敗しました: ${error.message}`)
+    },
+  })
+
+  // --- Batch download -----------------------------------------------------
+  const batchDownloadMutation = useMutation({
+    mutationFn: (keys: string[]) => downloadObjectsZip(bucketId, keys, bucketName),
+    onSuccess: () => {
+      setSelectedKeys(new Set())
+      toast.success('ダウンロードを開始しました')
+    },
+    onError: (error: Error) => {
+      toast.error(`一括ダウンロードに失敗しました: ${error.message}`)
+    },
+  })
+  const tooManyForZip = selectedKeys.size > MAX_BATCH_DOWNLOAD_KEYS
+
+  return (
+    <div className="space-y-2">
+      <h2 className="text-lg font-semibold">オブジェクト</h2>
+      <PrefixBreadcrumb prefix={prefix} onNavigate={goToPrefix} />
+      <div className="flex flex-wrap gap-2">
+        <Input
+          value={prefixInput}
+          onChange={(e) => handlePrefixInput(e.target.value)}
+          placeholder="プレフィックスで絞り込み"
+          className="min-w-48 flex-1"
+          aria-label="プレフィックス"
+        />
+        {prefix && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-destructive"
+            onClick={() => summaryMutation.mutate(prefix)}
+            disabled={summaryMutation.isPending}
+          >
+            {summaryMutation.isPending ? '件数を確認中...' : 'このプレフィックス以下を削除'}
+          </Button>
+        )}
+      </div>
+
+      <ObjectUploader bucketId={bucketId} prefix={prefix} onUploaded={invalidateObjects} />
 
       {/* Batch action bar */}
       {selectedKeys.size > 0 && (

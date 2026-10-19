@@ -477,6 +477,29 @@ export async function downloadObjectsZip(bucket: string, keys: string[], name?: 
   document.body.removeChild(a)
 }
 
+/** Same parsing as errorFromResponse, for a status and body read off an XHR. */
+function apiErrorFromText(status: number, text: string): ApiError {
+  let message = ''
+  let code: string | undefined
+  if (text) {
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (parsed && typeof parsed === 'object') {
+        const body = parsed as { code?: unknown; message?: unknown; error?: unknown }
+        if (typeof body.message === 'string') message = body.message
+        else if (typeof body.error === 'string') message = body.error
+        if (typeof body.code === 'string') code = body.code
+      } else {
+        message = text.trim()
+      }
+    } catch {
+      message = text.trim()
+    }
+  }
+  if (!message) message = `API error: ${status}`
+  return new ApiError(status, message, code)
+}
+
 export interface UploadObjectOptions {
   /** Full object key. */
   key: string
@@ -508,14 +531,27 @@ export function uploadObject(
       }
     }
     xhr.onload = () => {
-      const res = new Response(xhr.responseText, {
-        status: xhr.status,
-        headers: { 'Content-Type': xhr.getResponseHeader('Content-Type') ?? '' },
-      })
-      assertOk(res).then(
-        () => res.json().then(resolve, () => resolve({ key })),
-        reject,
-      )
+      // Built straight from the XHR fields: a Response object cannot carry
+      // statuses like 204 with a body (it throws), which would leave this
+      // promise pending forever.
+      try {
+        if (xhr.status === 401) {
+          window.location.href = `${BASE}/auth/login`
+          reject(new Error('Unauthorized'))
+          return
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText) as { key: string })
+          } catch {
+            resolve({ key })
+          }
+          return
+        }
+        reject(apiErrorFromText(xhr.status, xhr.responseText))
+      } catch (e) {
+        reject(e instanceof Error ? e : new ApiError(xhr.status, String(e)))
+      }
     }
     xhr.onerror = () => reject(new ApiError(0, 'ネットワークエラーによりアップロードが中断されました'))
     xhr.onabort = () => reject(new ApiError(0, 'アップロードが中断されました'))
