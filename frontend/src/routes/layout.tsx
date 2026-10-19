@@ -30,6 +30,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { LayoutPreview } from '@/components/layout-preview'
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
+import { formatBytes } from '@/lib/format'
+import { nodeDisplayName } from '@/lib/nodes'
 
 export const Route = createFileRoute('/layout')({
   component: LayoutPage,
@@ -37,24 +39,13 @@ export const Route = createFileRoute('/layout')({
 
 const GIB = 1024 ** 3
 
-function formatBytes(bytes: number | null): string {
-  if (bytes == null) return '-'
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
-  let i = 0
-  let value = bytes
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024
-    i++
-  }
-  return `${value.toFixed(1)} ${units[i]}`
+/** formatBytes for nullable fields (gateway roles have no capacity). */
+function formatSize(bytes: number | null): string {
+  return bytes == null ? '-' : formatBytes(bytes)
 }
 
 function formatRedundancy(z: ZoneRedundancy): string {
   return z === 'maximum' ? 'maximum' : `atLeast ${z.atLeast}`
-}
-
-function shortId(id: string): string {
-  return `${id.slice(0, 16)}…`
 }
 
 /** The editable fields of a row, as strings so "unchanged" can be detected exactly. */
@@ -120,7 +111,7 @@ function parseTags(s: string): string[] {
  * re-derived from a rounded GiB value, so untouched rows never re-stage.
  */
 function draftToChange(d: RoleDraft): NodeRoleChange | null | Error {
-  const name = d.hostname ?? shortId(d.id)
+  const name = nodeDisplayName(d)
   const wasRemoved = d.effective == null && d.applied != null
   if (d.remove) {
     if (wasRemoved) return null // already staged for removal
@@ -166,7 +157,7 @@ function LayoutPage() {
     for (const n of status.data?.nodes ?? []) if (n.hostname) m.set(n.id, n.hostname)
     return m
   }, [status.data])
-  const nameOf = (id: string) => hostnames.get(id) ?? shortId(id)
+  const nameOf = (id: string) => nodeDisplayName({ id, hostname: hostnames.get(id) ?? null })
 
   const previewMutation = useMutation({
     mutationFn: previewLayout,
@@ -184,6 +175,8 @@ function LayoutPage() {
     mutationFn: stageLayout,
     onSuccess: () => {
       invalidate()
+      // A new staged set supersedes the result of the previous apply.
+      applyMutation.reset()
       setEditing(false)
       toast.success('変更をステージしました。プレビューで確認してから適用してください。')
     },
@@ -203,6 +196,7 @@ function LayoutPage() {
     mutationFn: revertLayout,
     onSuccess: () => {
       invalidate()
+      applyMutation.reset()
       toast.success('ステージ中の変更を取り消しました')
     },
     onError: (error) => toast.error(`取り消しに失敗しました: ${error.message}`),
@@ -311,7 +305,7 @@ function LayoutPage() {
               </div>
               <div>
                 <p className="text-muted-foreground">パーティションサイズ</p>
-                <p className="font-medium">{formatBytes(data.partitionSize)}</p>
+                <p className="font-medium">{formatSize(data.partitionSize)}</p>
               </div>
               <div>
                 <p className="text-muted-foreground">保留中の変更</p>
@@ -324,7 +318,7 @@ function LayoutPage() {
             </div>
           </div>
 
-          <LayoutUpdateTracker />
+          <LayoutUpdateTracker roles={data.roles} />
 
           {applied && !editing && (
             <div className="space-y-3 rounded-lg border p-4">
@@ -334,7 +328,7 @@ function LayoutPage() {
                   閉じる
                 </Button>
               </div>
-              <LayoutPreview statistics={applied.statistics} message={applied.message ?? []} nameOf={nameOf} />
+              <LayoutPreview result={applied} nameOf={nameOf} />
             </div>
           )}
 
@@ -346,7 +340,10 @@ function LayoutPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => previewMutation.mutate()}
+                    onClick={() => {
+                      applyMutation.reset()
+                      previewMutation.mutate()
+                    }}
                     disabled={previewMutation.isPending}
                   >
                     {previewMutation.isPending ? '計算中...' : 'プレビュー'}
@@ -365,7 +362,7 @@ function LayoutPage() {
                   return (
                     <li key={c.id} className="flex flex-wrap items-baseline gap-2">
                       <span className="font-medium">{nameOf(c.id)}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{shortId(c.id)}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{nodeDisplayName({ id: c.id, hostname: null })}</span>
                       {'remove' in c ? (
                         <Badge variant="destructive">削除</Badge>
                       ) : (
@@ -373,7 +370,7 @@ function LayoutPage() {
                           <Badge variant={before ? 'secondary' : 'default'}>{before ? '変更' : '追加'}</Badge>
                           <span>
                             zone {before && before.zone !== c.zone ? <s className="text-muted-foreground">{before.zone}</s> : null} {c.zone}
-                            {' / '}容量 {before && before.capacity !== c.capacity ? <s className="text-muted-foreground">{formatBytes(before.capacity)}</s> : null} {c.capacity == null ? 'gateway' : formatBytes(c.capacity)}
+                            {' / '}容量 {before && before.capacity !== c.capacity ? <s className="text-muted-foreground">{formatSize(before.capacity)}</s> : null} {c.capacity == null ? 'gateway' : formatSize(c.capacity)}
                             {' / '}tags [{c.tags.join(', ')}]
                           </span>
                         </>
@@ -386,7 +383,7 @@ function LayoutPage() {
                 )}
               </ul>
               {preview && (
-                <LayoutPreview statistics={preview.statistics} message={preview.message ?? []} nameOf={nameOf} />
+                <LayoutPreview result={preview} nameOf={nameOf} />
               )}
             </div>
           )}
@@ -415,8 +412,8 @@ function LayoutPage() {
                           <div className="flex items-center gap-2">
                             <span className={`inline-block h-2 w-2 rounded-full ${d.isUp ? 'bg-green-500' : 'bg-red-500'}`} />
                             <div>
-                              <div className="font-medium">{d.hostname ?? shortId(d.id)}</div>
-                              <div className="font-mono text-xs text-muted-foreground">{shortId(d.id)}</div>
+                              <div className="font-medium">{nodeDisplayName(d)}</div>
+                              <div className="font-mono text-xs text-muted-foreground">{nodeDisplayName({ id: d.id, hostname: null })}</div>
                               {!d.applied && !d.effective && <Badge variant="outline" className="mt-1">ロール未割当</Badge>}
                               {d.applied && d.effective == null && !d.remove && <Badge variant="destructive" className="mt-1">削除をステージ中</Badge>}
                               {d.effective && d.applied && d.effective !== d.applied && <Badge variant="secondary" className="mt-1">変更をステージ中</Badge>}
@@ -526,13 +523,13 @@ function LayoutPage() {
                         <TableRow key={role.id}>
                           <TableCell>
                             <div className="font-medium">{nameOf(role.id)}</div>
-                            <div className="font-mono text-xs text-muted-foreground">{shortId(role.id)}</div>
+                            <div className="font-mono text-xs text-muted-foreground">{nodeDisplayName({ id: role.id, hostname: null })}</div>
                           </TableCell>
                           <TableCell>{role.zone}</TableCell>
                           <TableCell className="text-right">
-                            {role.capacity == null ? <Badge variant="outline">gateway</Badge> : formatBytes(role.capacity)}
+                            {role.capacity == null ? <Badge variant="outline">gateway</Badge> : formatSize(role.capacity)}
                           </TableCell>
-                          <TableCell className="text-right">{formatBytes(role.usableCapacity)}</TableCell>
+                          <TableCell className="text-right">{formatSize(role.usableCapacity)}</TableCell>
                           <TableCell className="text-right">{role.storedPartitions ?? '-'}</TableCell>
                           <TableCell>
                             {role.tags.length > 0

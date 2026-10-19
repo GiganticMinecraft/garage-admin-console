@@ -210,12 +210,22 @@ export interface LayoutStatistics {
   zones: LayoutStatZone[]
 }
 
-export interface LayoutPreview {
-  message: string[]
-  statistics?: LayoutStatistics | null
-  newLayout: ClusterLayout
-}
+/**
+ * Garage PreviewClusterLayoutChangesResponse is an untagged enum: HTTP 200 with
+ * either {"error": "..."} (the layout cannot be computed) or the computation result.
+ */
+export type LayoutPreview =
+  | { error: string }
+  | {
+      message: string[]
+      statistics?: LayoutStatistics | null
+      newLayout?: ClusterLayout
+    }
 
+/**
+ * ApplyClusterLayoutResponse is a plain struct; computation failures come
+ * back as a non-2xx Garage error and surface as ApiError.
+ */
 export interface LayoutApplyResult {
   message: string[]
   statistics?: LayoutStatistics | null
@@ -289,13 +299,13 @@ export async function stageLayout(body: {
 
 /** Compute what the staged changes would produce, without applying them. */
 export async function previewLayout(): Promise<LayoutPreview> {
-  const res = await fetchJSON<LayoutPreview | { error: string }>('/cluster/layout/preview', {
+  const res = await fetchJSON<LayoutPreview>('/cluster/layout/preview', {
     method: 'POST',
     body: '{}',
   })
-  // Garage returns 200 with {"error": "..."} when the layout cannot be computed.
+  // Garage returns 200 with {"error": "..."} when the layout cannot be computed;
+  // that variant is returned as-is so the page can show it next to the staged changes.
   if (!res || typeof res !== 'object') throw new ApiError(200, 'プレビュー結果が空でした')
-  if ('error' in res) throw new ApiError(200, res.error)
   return res
 }
 

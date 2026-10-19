@@ -2,7 +2,13 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, Hourglass, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { getLayoutHistory, skipDeadNodes, type LayoutHistory, type LayoutVersionInfo } from '@/api'
+import {
+  getLayoutHistory,
+  skipDeadNodes,
+  type LayoutHistory,
+  type LayoutNodeRole,
+  type LayoutVersionInfo,
+} from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -16,17 +22,11 @@ import {
 } from '@/components/ui/dialog'
 
 /**
- * A layout update is in flight while Garage still keeps an older version live
- * (update trackers are only returned when more than one version is live) or
- * some node has not acknowledged the current version yet.
+ * A layout update is in flight while more than one layout version is live;
+ * Garage only returns update trackers in that case.
  */
 function isUpdateInFlight(h: LayoutHistory | undefined): boolean {
-  if (!h) return false
-  return (
-    h.updateTrackers != null ||
-    h.minAck < h.currentVersion ||
-    h.versions.some((v) => v.status === 'Draining')
-  )
+  return h?.updateTrackers != null
 }
 
 type StepState = 'completed' | 'inprogress' | 'waiting'
@@ -35,31 +35,48 @@ interface Step {
   name: string
   hint: string
   progress: number
+  total: number
   state: StepState
 }
 
 /**
  * ack: the node knows the new version; sync: it finished copying metadata for
- * it; syncAck: it has seen every node sync, so it reads from the new layout.
- * A step is only "in progress" once the previous one has completed on all nodes.
+ * it; syncAck: it has seen the sync complete, so it reads from the new layout.
+ * The populations follow Garage (src/rpc/layout/helper.rs, history.rs):
+ * ack waits for every node, sync only for storage (non-gateway) nodes, and
+ * syncAck for the nodes that have a role in the current layout. Storage nodes
+ * and current-layout nodes come from GetClusterLayout's roles, so a node that
+ * only had a role in an older live version is counted for ack only.
+ * A step is only "in progress" once the previous one has completed.
  */
-function computeSteps(h: LayoutHistory): { steps: Step[]; total: number } {
-  const trackers = Object.values(h.updateTrackers ?? {})
-  const total = trackers.length
-  const count = (k: 'ack' | 'sync' | 'syncAck') => trackers.filter((t) => t[k] >= h.currentVersion).length
+function computeSteps(h: LayoutHistory, roles: LayoutNodeRole[]): Step[] {
+  const trackers = Object.entries(h.updateTrackers ?? {})
+  const storage = new Set(roles.filter((r) => r.capacity != null).map((r) => r.id))
+  const current = new Set(roles.map((r) => r.id))
+  const tally = (k: 'ack' | 'sync' | 'syncAck', among: (id: string) => boolean) => {
+    const nodes = trackers.filter(([id]) => among(id))
+    return { progress: nodes.filter(([, t]) => t[k] >= h.currentVersion).length, total: nodes.length }
+  }
   const defs = [
-    { name: 'レイアウトの伝播', hint: '全ノードが新しいバージョンを受け取る (ack)', progress: count('ack') },
-    { name: 'メタデータ同期', hint: '各ノードが新レイアウトでのメタデータを同期する (sync)', progress: count('sync') },
-    { name: '新レイアウトへ切替', hint: '全ノードの同期完了を確認し新レイアウトで読み書きする (syncAck)', progress: count('syncAck') },
+    { name: 'レイアウトの伝播', hint: '全ノードが新しいバージョンを受け取る (ack)', ...tally('ack', () => true) },
+    {
+      name: 'メタデータ同期',
+      hint: 'ストレージノードが新レイアウトでのメタデータを同期する (sync、gateway は対象外)',
+      ...tally('sync', (id) => storage.has(id)),
+    },
+    {
+      name: '新レイアウトへ切替',
+      hint: '同期完了を確認し新レイアウトで読み書きする (syncAck、現レイアウトのノード)',
+      ...tally('syncAck', (id) => current.has(id)),
+    },
   ]
   let prevDone = true
-  const steps = defs.map((d) => {
-    const done = total > 0 && d.progress === total
+  return defs.map((d) => {
+    const done = d.progress === d.total
     const state: StepState = done ? 'completed' : prevDone ? 'inprogress' : 'waiting'
     prevDone = done
     return { ...d, state }
   })
-  return { steps, total }
 }
 
 /** Live (non-historical) versions, newest first. */
@@ -68,8 +85,8 @@ function liveVersions(h: LayoutHistory): LayoutVersionInfo[] {
 }
 
 /**
- * Versions ClusterLayoutSkipDeadNodes accepts: newer than the oldest live
- * version (Garage's min_stored) and at most the current one.
+ * Versions ClusterLayoutSkipDeadNodes accepts, newest first: newer than the
+ * oldest live version (Garage's min_stored) and at most the current one.
  */
 function skipTargets(h: LayoutHistory): number[] {
   const live = liveVersions(h)
@@ -105,7 +122,7 @@ function StepBadge({ state }: { state: StepState }) {
  * the "force update" escape hatch (ClusterLayoutSkipDeadNodes). Polls every
  * 5 s while an update is in flight and the tab is visible.
  */
-export function LayoutUpdateTracker() {
+export function LayoutUpdateTracker({ roles }: { roles: LayoutNodeRole[] }) {
   const history = useQuery({
     queryKey: ['cluster', 'layout', 'history'],
     queryFn: getLayoutHistory,
@@ -134,7 +151,7 @@ export function LayoutUpdateTracker() {
     )
   }
 
-  const { steps, total } = computeSteps(h)
+  const steps = computeSteps(h, roles)
   const live = liveVersions(h)
 
   return (
@@ -154,7 +171,7 @@ export function LayoutUpdateTracker() {
               <StepBadge state={s.state} />
             </div>
             <p className="text-sm">
-              {total > 0 ? `${s.progress}/${total} ノード` : 'ノード情報なし'}
+              {s.progress}/{s.total} ノード
             </p>
             <p className="text-xs text-muted-foreground">{s.hint}</p>
           </li>
@@ -203,17 +220,21 @@ function ForceUpdateDialog({
 }) {
   const queryClient = useQueryClient()
   const targets = skipTargets(history)
-  const [version, setVersion] = useState<number>(targets[0] ?? history.currentVersion)
+  const [selected, setSelected] = useState<number | null>(null)
+  // The targets can change under the open dialog (history polls every 5 s),
+  // so the shown and submitted version is clamped to the current targets.
+  const version: number | undefined =
+    selected != null && targets.includes(selected) ? selected : targets[0]
   const [allowMissingData, setAllowMissingData] = useState(false)
 
   const mutation = useMutation({
     mutationFn: skipDeadNodes,
-    onSuccess: (res) => {
+    onSuccess: (res, vars) => {
       queryClient.invalidateQueries({ queryKey: ['cluster', 'layout'] })
       const acked = res.ackUpdated?.length ?? 0
       const synced = res.syncUpdated?.length ?? 0
       toast.success(
-        `v${version} への更新を強制しました (ack 更新 ${acked} ノード${allowMissingData ? ` / sync 更新 ${synced} ノード` : ''})`,
+        `v${vars.version} への更新を強制しました (ack 更新 ${acked} ノード${vars.allowMissingData ? ` / sync 更新 ${synced} ノード` : ''})`,
       )
       onOpenChange(false)
     },
@@ -240,11 +261,12 @@ function ForceUpdateDialog({
           <label className="block space-y-1">
             <span className="font-medium">最新とみなすバージョン</span>
             <select
-              value={version}
-              onChange={(e) => setVersion(Number(e.target.value))}
-              disabled={mutation.isPending}
+              value={version ?? ''}
+              onChange={(e) => setSelected(Number(e.target.value))}
+              disabled={mutation.isPending || targets.length === 0}
               className="block w-full rounded-md border bg-background px-2 py-1"
             >
+              {targets.length === 0 && <option value="">対象バージョンなし (更新は完了しています)</option>}
               {targets.map((v) => (
                 <option key={v} value={v}>
                   v{v}{v === history.currentVersion ? ' (current)' : ''}
@@ -287,8 +309,10 @@ function ForceUpdateDialog({
           </Button>
           <Button
             variant={allowMissingData ? 'destructive' : 'default'}
-            onClick={() => mutation.mutate({ version, allowMissingData })}
-            disabled={mutation.isPending || targets.length === 0}
+            onClick={() => {
+              if (version != null) mutation.mutate({ version, allowMissingData })
+            }}
+            disabled={mutation.isPending || version == null}
           >
             {mutation.isPending ? '実行中...' : allowMissingData ? 'データ欠損を許容して強制' : '強制更新'}
           </Button>

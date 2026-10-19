@@ -1,5 +1,5 @@
 import { AlertTriangle } from 'lucide-react'
-import type { LayoutStatistics } from '@/api'
+import type { LayoutApplyResult, LayoutPreview as LayoutPreviewResult } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -9,18 +9,8 @@ import {
   TableHead,
   TableCell,
 } from '@/components/ui/table'
-
-function formatBytes(bytes: number | null | undefined): string {
-  if (bytes == null) return '-'
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
-  let i = 0
-  let value = bytes
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024
-    i++
-  }
-  return `${value.toFixed(1)} ${units[i]}`
-}
+import { formatBytes } from '@/lib/format'
+import { nodeDisplayName } from '@/lib/nodes'
 
 function percent(part: number, total: number): string {
   if (!total) return '-'
@@ -28,19 +18,32 @@ function percent(part: number, total: number): string {
 }
 
 interface LayoutPreviewProps {
-  statistics?: LayoutStatistics | null
-  /** Garage's plain-text report; shown when statistics are absent (Garage < v2.4.0). */
-  message: string[]
+  /** A PreviewClusterLayoutChanges or ApplyClusterLayout response. */
+  result: LayoutPreviewResult | LayoutApplyResult
   /** Resolves a node ID to a display name (hostname when known). */
   nameOf: (id: string) => string
 }
 
 /**
  * Structured view of a layout computation (PreviewClusterLayoutChanges /
- * ApplyClusterLayout). Falls back to Garage's raw text when the server does
- * not return `statistics`.
+ * ApplyClusterLayout). Shows Garage's computation error when the staged
+ * layout cannot be computed, and falls back to Garage's raw text when the
+ * server does not return `statistics` (Garage < v2.4.0).
  */
-export function LayoutPreview({ statistics: s, message, nameOf }: LayoutPreviewProps) {
+export function LayoutPreview({ result, nameOf }: LayoutPreviewProps) {
+  if ('error' in result) {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <div>
+          <p className="font-medium">このステージ内容ではレイアウトを計算できません</p>
+          <p className="whitespace-pre-wrap">{result.error}</p>
+        </div>
+      </div>
+    )
+  }
+  const message = result.message ?? []
+  const s = result.statistics
   if (!s) {
     return (
       <pre className="max-h-80 overflow-auto rounded bg-muted p-3 text-xs whitespace-pre-wrap">
@@ -162,7 +165,7 @@ export function LayoutPreview({ statistics: s, message, nameOf }: LayoutPreviewP
                 <TableRow key={n.id}>
                   <TableCell>
                     <div className="font-medium">{nameOf(n.id)}</div>
-                    <div className="font-mono text-xs text-muted-foreground">{n.id.slice(0, 16)}…</div>
+                    <div className="font-mono text-xs text-muted-foreground">{nodeDisplayName({ id: n.id, hostname: null })}</div>
                   </TableCell>
                   <TableCell>{z.name}</TableCell>
                   <TableCell>
