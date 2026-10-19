@@ -61,3 +61,13 @@ export function sameExpiration(a: ExpirationValue, b: ExpirationValue): boolean 
   if (a.neverExpires || b.neverExpires) return a.neverExpires === b.neverExpires
   return a.date === b.date && a.time === b.time
 }
+
+/**
+ * The expiration part of a Garage CreateKey / UpdateKey / CreateAdminToken /
+ * UpdateAdminToken body. Garage rejects `expiration` together with
+ * `neverExpires`, so exactly one of them is set.
+ */
+export function expirationBody(v: ExpirationValue): { expiration: string } | { neverExpires: true } {
+  const iso = expirationIso(v)
+  return iso ? { expiration: iso } : { neverExpires: true }
+}

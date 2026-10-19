@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { expirationFromIso, expirationIso, expirationValid, sameExpiration } from '@/lib/expiration'
+import { expirationBody, expirationFromIso, expirationValid, sameExpiration } from '@/lib/expiration'
 import type { ExpirationValue } from '@/lib/expiration'
 
 interface KeySettingsDialogProps {
@@ -90,11 +90,7 @@ function KeySettingsForm({
 
   const body: KeySettingsRequest = {}
   if (name.trim() !== keyDetail.name) body.name = name.trim()
-  if (!sameExpiration(expiration, initialExpiration)) {
-    const iso = expirationIso(expiration)
-    if (iso) body.expiration = iso
-    else body.neverExpires = true
-  }
+  if (!sameExpiration(expiration, initialExpiration)) Object.assign(body, expirationBody(expiration))
   if (createBucket !== keyDetail.permissions.createBucket) {
     if (createBucket) body.allow = { createBucket: true }
     else body.deny = { createBucket: true }

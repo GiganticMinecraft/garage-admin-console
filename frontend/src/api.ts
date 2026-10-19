@@ -1051,3 +1051,64 @@ export interface S3Connection {
 export async function getS3Connection(): Promise<S3Connection> {
   return fetchJSON('/s3/connection')
 }
+
+// Admin API tokens
+/**
+ * Garage GetAdminTokenInfoResponse. Tokens from the daemon configuration
+ * (admin_token / metrics_token) have id and created null and cannot be
+ * edited or deleted through the API.
+ */
+export interface AdminToken {
+  id: string | null
+  created: string | null
+  name: string
+  expiration: string | null
+  expired: boolean
+  /** Admin endpoint names, or ["*"] for every endpoint. */
+  scope: string[]
+}
+
+/** CreateAdminToken answer: the token info plus the secret, returned only once. */
+export interface CreatedAdminToken extends AdminToken {
+  secretToken: string
+}
+
+/** Body for create / update. Garage rejects expiration together with neverExpires. */
+export interface AdminTokenBody {
+  name?: string
+  expiration?: string
+  neverExpires?: boolean
+  scope?: string[]
+}
+
+export async function listAdminTokens(): Promise<AdminToken[]> {
+  return fetchJSON('/admin-tokens')
+}
+
+/** The token this console itself authenticates to Garage with. */
+export async function getCurrentAdminToken(): Promise<AdminToken> {
+  return fetchJSON('/admin-tokens/current')
+}
+
+export async function getAdminToken(id: string): Promise<AdminToken> {
+  return fetchJSON(`/admin-tokens/${encodeURIComponent(id)}`)
+}
+
+export async function createAdminToken(body: AdminTokenBody): Promise<CreatedAdminToken> {
+  return fetchJSON('/admin-tokens', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  })
+}
+
+export async function updateAdminToken(id: string, body: AdminTokenBody): Promise<AdminToken> {
+  return fetchJSON(`/admin-tokens/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteAdminToken(id: string): Promise<void> {
+  await fetchJSON(`/admin-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}

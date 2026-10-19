@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { expirationFromIso, expirationIso, expirationValid } from '@/lib/expiration'
+import { expirationBody, expirationFromIso, expirationValid } from '@/lib/expiration'
 import type { ExpirationValue } from '@/lib/expiration'
 
 interface CreateKeyDialogProps {
@@ -82,10 +82,7 @@ function CreateKeyForm({
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!valid || pending) return
-    const body: KeySettingsRequest = { name: name.trim() }
-    const iso = expirationIso(expiration)
-    if (iso) body.expiration = iso
-    else body.neverExpires = true
+    const body: KeySettingsRequest = { name: name.trim(), ...expirationBody(expiration) }
     if (createBucket) body.allow = { createBucket: true }
     onSubmit(body)
   }

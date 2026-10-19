@@ -83,6 +83,15 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 
 		r.Get("/api/workers", handleListWorkers(garageAdmin))
 
+		r.Route("/api/admin-tokens", func(r chi.Router) {
+			r.Get("/", handleListAdminTokens(garageAdmin))
+			r.Post("/", handleCreateAdminToken(garageAdmin))
+			r.Get("/current", handleGetCurrentAdminToken(garageAdmin))
+			r.Get("/{id}", handleGetAdminToken(garageAdmin))
+			r.Put("/{id}", handleUpdateAdminToken(garageAdmin))
+			r.Delete("/{id}", handleDeleteAdminToken(garageAdmin))
+		})
+
 		r.Route("/api/blocks", func(r chi.Router) {
 			r.Get("/errors", handleListBlockErrors(garageAdmin))
 			r.Post("/info", handleGetBlockInfo(garageAdmin))
