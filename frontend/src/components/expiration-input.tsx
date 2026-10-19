@@ -79,7 +79,7 @@ export function ExpirationInput({ value, onChange, disabled }: ExpirationInputPr
           {!date && <p className="text-xs text-destructive">日付を入力してください</p>}
           {inPast && (
             <p className="text-xs text-destructive">
-              過去の日時です。保存するとキーはすぐに期限切れになります
+              有効期限が過去の日時のため、作成・保存した直後から無効になります
             </p>
           )}
         </>

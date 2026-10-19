@@ -14,6 +14,8 @@ import { Route as BlocksRouteImport } from './routes/blocks'
 import { Route as LayoutRouteImport } from './routes/layout'
 import { Route as RepairRouteImport } from './routes/repair'
 import { Route as WorkersRouteImport } from './routes/workers'
+import { Route as AdminTokensIndexRouteImport } from './routes/admin-tokens.index'
+import { Route as AdminTokensIdRouteImport } from './routes/admin-tokens.$id'
 import { Route as BucketsIndexRouteImport } from './routes/buckets.index'
 import { Route as BucketsIdRouteImport } from './routes/buckets.$id'
 import { Route as KeysIndexRouteImport } from './routes/keys.index'
@@ -43,6 +45,16 @@ const RepairRoute = RepairRouteImport.update({
 const WorkersRoute = WorkersRouteImport.update({
   id: '/workers',
   path: '/workers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminTokensIndexRoute = AdminTokensIndexRouteImport.update({
+  id: '/admin-tokens/',
+  path: '/admin-tokens/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminTokensIdRoute = AdminTokensIdRouteImport.update({
+  id: '/admin-tokens/$id',
+  path: '/admin-tokens/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BucketsIndexRoute = BucketsIndexRouteImport.update({
@@ -77,9 +89,11 @@ export interface FileRoutesByFullPath {
   '/layout': typeof LayoutRoute
   '/repair': typeof RepairRoute
   '/workers': typeof WorkersRoute
+  '/admin-tokens/$id': typeof AdminTokensIdRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
   '/nodes/$id': typeof NodesIdRoute
+  '/admin-tokens/': typeof AdminTokensIndexRoute
   '/buckets/': typeof BucketsIndexRoute
   '/keys/': typeof KeysIndexRoute
 }
@@ -89,9 +103,11 @@ export interface FileRoutesByTo {
   '/layout': typeof LayoutRoute
   '/repair': typeof RepairRoute
   '/workers': typeof WorkersRoute
+  '/admin-tokens/$id': typeof AdminTokensIdRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
   '/nodes/$id': typeof NodesIdRoute
+  '/admin-tokens': typeof AdminTokensIndexRoute
   '/buckets': typeof BucketsIndexRoute
   '/keys': typeof KeysIndexRoute
 }
@@ -102,9 +118,11 @@ export interface FileRoutesById {
   '/layout': typeof LayoutRoute
   '/repair': typeof RepairRoute
   '/workers': typeof WorkersRoute
+  '/admin-tokens/$id': typeof AdminTokensIdRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
   '/nodes/$id': typeof NodesIdRoute
+  '/admin-tokens/': typeof AdminTokensIndexRoute
   '/buckets/': typeof BucketsIndexRoute
   '/keys/': typeof KeysIndexRoute
 }
@@ -116,9 +134,11 @@ export interface FileRouteTypes {
     | '/layout'
     | '/repair'
     | '/workers'
+    | '/admin-tokens/$id'
     | '/buckets/$id'
     | '/keys/$id'
     | '/nodes/$id'
+    | '/admin-tokens/'
     | '/buckets/'
     | '/keys/'
   fileRoutesByTo: FileRoutesByTo
@@ -128,9 +148,11 @@ export interface FileRouteTypes {
     | '/layout'
     | '/repair'
     | '/workers'
+    | '/admin-tokens/$id'
     | '/buckets/$id'
     | '/keys/$id'
     | '/nodes/$id'
+    | '/admin-tokens'
     | '/buckets'
     | '/keys'
   id:
@@ -140,9 +162,11 @@ export interface FileRouteTypes {
     | '/layout'
     | '/repair'
     | '/workers'
+    | '/admin-tokens/$id'
     | '/buckets/$id'
     | '/keys/$id'
     | '/nodes/$id'
+    | '/admin-tokens/'
     | '/buckets/'
     | '/keys/'
   fileRoutesById: FileRoutesById
@@ -153,9 +177,11 @@ export interface RootRouteChildren {
   LayoutRoute: typeof LayoutRoute
   RepairRoute: typeof RepairRoute
   WorkersRoute: typeof WorkersRoute
+  AdminTokensIdRoute: typeof AdminTokensIdRoute
   BucketsIdRoute: typeof BucketsIdRoute
   KeysIdRoute: typeof KeysIdRoute
   NodesIdRoute: typeof NodesIdRoute
+  AdminTokensIndexRoute: typeof AdminTokensIndexRoute
   BucketsIndexRoute: typeof BucketsIndexRoute
   KeysIndexRoute: typeof KeysIndexRoute
 }
@@ -195,6 +221,20 @@ declare module '@tanstack/react-router' {
       path: '/workers'
       fullPath: '/workers'
       preLoaderRoute: typeof WorkersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin-tokens/': {
+      id: '/admin-tokens/'
+      path: '/admin-tokens'
+      fullPath: '/admin-tokens/'
+      preLoaderRoute: typeof AdminTokensIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin-tokens/$id': {
+      id: '/admin-tokens/$id'
+      path: '/admin-tokens/$id'
+      fullPath: '/admin-tokens/$id'
+      preLoaderRoute: typeof AdminTokensIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/buckets/': {
@@ -241,9 +281,11 @@ const rootRouteChildren: RootRouteChildren = {
   LayoutRoute: LayoutRoute,
   RepairRoute: RepairRoute,
   WorkersRoute: WorkersRoute,
+  AdminTokensIdRoute: AdminTokensIdRoute,
   BucketsIdRoute: BucketsIdRoute,
   KeysIdRoute: KeysIdRoute,
   NodesIdRoute: NodesIdRoute,
+  AdminTokensIndexRoute: AdminTokensIndexRoute,
   BucketsIndexRoute: BucketsIndexRoute,
   KeysIndexRoute: KeysIndexRoute,
 }

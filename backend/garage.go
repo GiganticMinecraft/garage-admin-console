@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -28,7 +29,9 @@ func newGarageAdminClient() *GarageAdminClient {
 	if baseURL == "" {
 		baseURL = "http://garage.garage.svc.cluster.local:3903"
 	}
-	token := os.Getenv("GARAGE_ADMIN_TOKEN")
+	// Trim stray whitespace (e.g. a trailing newline from a mounted secret):
+	// Garage v2.5+ no longer trims the bearer value, so it would be rejected.
+	token := strings.TrimSpace(os.Getenv("GARAGE_ADMIN_TOKEN"))
 	if token == "" {
 		slog.Error("GARAGE_ADMIN_TOKEN is required")
 		os.Exit(1)

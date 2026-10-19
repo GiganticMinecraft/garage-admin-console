@@ -6,6 +6,7 @@ import {
   Cog,
   HardDrive,
   Wrench,
+  ShieldCheck,
 } from "lucide-react"
 import { Link, useRouterState } from "@tanstack/react-router"
 
@@ -27,6 +28,7 @@ const navItems = [
   { title: "ダッシュボード", url: "/", icon: LayoutDashboard },
   { title: "バケット", url: "/buckets", icon: Database },
   { title: "キー", url: "/keys", icon: KeyRound },
+  { title: "管理トークン", url: "/admin-tokens", icon: ShieldCheck },
   { title: "レイアウト", url: "/layout", icon: Server },
   { title: "ブロック", url: "/blocks", icon: HardDrive },
   { title: "メンテナンス", url: "/repair", icon: Wrench },
