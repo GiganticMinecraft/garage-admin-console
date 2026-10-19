@@ -16,7 +16,6 @@ import {
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { KeySecretDialog } from '@/components/key-secret-dialog'
 import { toast } from 'sonner'
-import { toast } from 'sonner'
 
 export const Route = createFileRoute('/keys/')({
   component: KeysPage,
