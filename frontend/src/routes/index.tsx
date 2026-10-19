@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import {
   getClusterHealth,
@@ -175,7 +175,9 @@ function NodeCard({ node }: { node: ClusterNode }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <NodeStatusDot node={node} />
-          <span className="font-medium">{nodeDisplayName(node)}</span>
+          <Link to="/nodes/$id" params={{ id: node.id }} className="font-medium hover:underline">
+            {nodeDisplayName(node)}
+          </Link>
         </div>
         <div className="flex gap-2">
           <Badge variant="outline">{node.garageVersion ?? '不明'}</Badge>
@@ -194,7 +196,9 @@ function NodeTableRow({ node }: { node: ClusterNode }) {
       <TableCell>
         <div className="flex items-center gap-2">
           <NodeStatusDot node={node} />
-          <span className="font-medium">{nodeDisplayName(node)}</span>
+          <Link to="/nodes/$id" params={{ id: node.id }} className="font-medium hover:underline">
+            {nodeDisplayName(node)}
+          </Link>
         </div>
       </TableCell>
       <TableCell className="text-muted-foreground">{node.garageVersion ?? '不明'}</TableCell>

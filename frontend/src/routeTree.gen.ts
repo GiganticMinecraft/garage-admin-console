@@ -9,29 +9,20 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WorkersRouteImport } from './routes/workers'
-import { Route as RepairRouteImport } from './routes/repair'
-import { Route as LayoutRouteImport } from './routes/layout'
-import { Route as BlocksRouteImport } from './routes/blocks'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as KeysIndexRouteImport } from './routes/keys.index'
+import { Route as BlocksRouteImport } from './routes/blocks'
+import { Route as LayoutRouteImport } from './routes/layout'
+import { Route as RepairRouteImport } from './routes/repair'
+import { Route as WorkersRouteImport } from './routes/workers'
 import { Route as BucketsIndexRouteImport } from './routes/buckets.index'
-import { Route as KeysIdRouteImport } from './routes/keys.$id'
 import { Route as BucketsIdRouteImport } from './routes/buckets.$id'
+import { Route as KeysIndexRouteImport } from './routes/keys.index'
+import { Route as KeysIdRouteImport } from './routes/keys.$id'
+import { Route as NodesIdRouteImport } from './routes/nodes.$id'
 
-const WorkersRoute = WorkersRouteImport.update({
-  id: '/workers',
-  path: '/workers',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RepairRoute = RepairRouteImport.update({
-  id: '/repair',
-  path: '/repair',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LayoutRoute = LayoutRouteImport.update({
-  id: '/layout',
-  path: '/layout',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BlocksRoute = BlocksRouteImport.update({
@@ -39,14 +30,19 @@ const BlocksRoute = BlocksRouteImport.update({
   path: '/blocks',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const LayoutRoute = LayoutRouteImport.update({
+  id: '/layout',
+  path: '/layout',
   getParentRoute: () => rootRouteImport,
 } as any)
-const KeysIndexRoute = KeysIndexRouteImport.update({
-  id: '/keys/',
-  path: '/keys/',
+const RepairRoute = RepairRouteImport.update({
+  id: '/repair',
+  path: '/repair',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkersRoute = WorkersRouteImport.update({
+  id: '/workers',
+  path: '/workers',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BucketsIndexRoute = BucketsIndexRouteImport.update({
@@ -54,14 +50,24 @@ const BucketsIndexRoute = BucketsIndexRouteImport.update({
   path: '/buckets/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BucketsIdRoute = BucketsIdRouteImport.update({
+  id: '/buckets/$id',
+  path: '/buckets/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KeysIndexRoute = KeysIndexRouteImport.update({
+  id: '/keys/',
+  path: '/keys/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KeysIdRoute = KeysIdRouteImport.update({
   id: '/keys/$id',
   path: '/keys/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const BucketsIdRoute = BucketsIdRouteImport.update({
-  id: '/buckets/$id',
-  path: '/buckets/$id',
+const NodesIdRoute = NodesIdRouteImport.update({
+  id: '/nodes/$id',
+  path: '/nodes/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -73,6 +79,7 @@ export interface FileRoutesByFullPath {
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
+  '/nodes/$id': typeof NodesIdRoute
   '/buckets/': typeof BucketsIndexRoute
   '/keys/': typeof KeysIndexRoute
 }
@@ -84,6 +91,7 @@ export interface FileRoutesByTo {
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
+  '/nodes/$id': typeof NodesIdRoute
   '/buckets': typeof BucketsIndexRoute
   '/keys': typeof KeysIndexRoute
 }
@@ -96,6 +104,7 @@ export interface FileRoutesById {
   '/workers': typeof WorkersRoute
   '/buckets/$id': typeof BucketsIdRoute
   '/keys/$id': typeof KeysIdRoute
+  '/nodes/$id': typeof NodesIdRoute
   '/buckets/': typeof BucketsIndexRoute
   '/keys/': typeof KeysIndexRoute
 }
@@ -109,6 +118,7 @@ export interface FileRouteTypes {
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
+    | '/nodes/$id'
     | '/buckets/'
     | '/keys/'
   fileRoutesByTo: FileRoutesByTo
@@ -120,6 +130,7 @@ export interface FileRouteTypes {
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
+    | '/nodes/$id'
     | '/buckets'
     | '/keys'
   id:
@@ -131,6 +142,7 @@ export interface FileRouteTypes {
     | '/workers'
     | '/buckets/$id'
     | '/keys/$id'
+    | '/nodes/$id'
     | '/buckets/'
     | '/keys/'
   fileRoutesById: FileRoutesById
@@ -143,31 +155,18 @@ export interface RootRouteChildren {
   WorkersRoute: typeof WorkersRoute
   BucketsIdRoute: typeof BucketsIdRoute
   KeysIdRoute: typeof KeysIdRoute
+  NodesIdRoute: typeof NodesIdRoute
   BucketsIndexRoute: typeof BucketsIndexRoute
   KeysIndexRoute: typeof KeysIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/workers': {
-      id: '/workers'
-      path: '/workers'
-      fullPath: '/workers'
-      preLoaderRoute: typeof WorkersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/repair': {
-      id: '/repair'
-      path: '/repair'
-      fullPath: '/repair'
-      preLoaderRoute: typeof RepairRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/layout': {
-      id: '/layout'
-      path: '/layout'
-      fullPath: '/layout'
-      preLoaderRoute: typeof LayoutRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/blocks': {
@@ -177,18 +176,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BlocksRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/layout': {
+      id: '/layout'
+      path: '/layout'
+      fullPath: '/layout'
+      preLoaderRoute: typeof LayoutRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/keys/': {
-      id: '/keys/'
-      path: '/keys'
-      fullPath: '/keys/'
-      preLoaderRoute: typeof KeysIndexRouteImport
+    '/repair': {
+      id: '/repair'
+      path: '/repair'
+      fullPath: '/repair'
+      preLoaderRoute: typeof RepairRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workers': {
+      id: '/workers'
+      path: '/workers'
+      fullPath: '/workers'
+      preLoaderRoute: typeof WorkersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/buckets/': {
@@ -198,6 +204,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BucketsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/buckets/$id': {
+      id: '/buckets/$id'
+      path: '/buckets/$id'
+      fullPath: '/buckets/$id'
+      preLoaderRoute: typeof BucketsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/keys/': {
+      id: '/keys/'
+      path: '/keys'
+      fullPath: '/keys/'
+      preLoaderRoute: typeof KeysIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/keys/$id': {
       id: '/keys/$id'
       path: '/keys/$id'
@@ -205,11 +225,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KeysIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/buckets/$id': {
-      id: '/buckets/$id'
-      path: '/buckets/$id'
-      fullPath: '/buckets/$id'
-      preLoaderRoute: typeof BucketsIdRouteImport
+    '/nodes/$id': {
+      id: '/nodes/$id'
+      path: '/nodes/$id'
+      fullPath: '/nodes/$id'
+      preLoaderRoute: typeof NodesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -223,6 +243,7 @@ const rootRouteChildren: RootRouteChildren = {
   WorkersRoute: WorkersRoute,
   BucketsIdRoute: BucketsIdRoute,
   KeysIdRoute: KeysIdRoute,
+  NodesIdRoute: NodesIdRoute,
   BucketsIndexRoute: BucketsIndexRoute,
   KeysIndexRoute: KeysIndexRoute,
 }
