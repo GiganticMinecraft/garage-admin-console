@@ -176,6 +176,7 @@ func handleUploadObject(s3Client *S3Client) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf(`{"error":"failed to upload object: %s"}`, err.Error()), http.StatusBadGateway)
 			return
 		}
+		invalidateListCaches() // object count / usage changed
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -367,6 +368,7 @@ func handleDeleteObject(s3Client *S3Client) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf(`{"error":"failed to delete object: %s"}`, err.Error()), http.StatusBadGateway)
 			return
 		}
+		invalidateListCaches() // object count / usage changed
 
 		w.WriteHeader(http.StatusNoContent)
 	}

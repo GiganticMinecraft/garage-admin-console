@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 )
@@ -111,7 +112,7 @@ func handleListBuckets(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			writeListJSON(w, items, truncated)
 			return
 		}
-		if !isUnknownEndpoint(err) {
+		if !errors.Is(err, errInfoUnsupported) {
 			writeListError(w, r, err)
 			return
 		}
@@ -195,7 +196,7 @@ func handleListKeys(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			writeListJSON(w, items, truncated)
 			return
 		}
-		if !isUnknownEndpoint(err) {
+		if !errors.Is(err, errInfoUnsupported) {
 			writeListError(w, r, err)
 			return
 		}

@@ -152,6 +152,7 @@ func TestListBucketsInfoTruncatedAtMaxPages(t *testing.T) {
 // GetBucketInfo per bucket.
 type legacyBucketServer struct {
 	*httptest.Server
+	infoCalls   atomic.Int32
 	perItem     atomic.Int32
 	inFlight    atomic.Int32
 	maxInFlight atomic.Int32
@@ -161,6 +162,7 @@ func newLegacyBucketServer(t *testing.T, ids []string, missing string) *legacyBu
 	s := &legacyBucketServer{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/ListBucketsInfo", func(w http.ResponseWriter, r *http.Request) {
+		s.infoCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"code":"InvalidRequest","message":"Bad request: Unknown API endpoint: GET /v2/ListBucketsInfo"}`))
@@ -244,6 +246,9 @@ func TestListBucketsFallsBackToLegacyAPI(t *testing.T) {
 	if got := gs.maxInFlight.Load(); got < 2 {
 		t.Errorf("expected GetBucketInfo calls to run concurrently, max in flight %d", got)
 	}
+	if got := gs.infoCalls.Load(); got != 1 {
+		t.Errorf("expected exactly 1 ListBucketsInfo probe, got %d", got)
+	}
 	first := gs.perItem.Load()
 	if first != int32(len(ids)) {
 		t.Errorf("expected %d GetBucketInfo calls, got %d", len(ids), first)
@@ -262,6 +267,70 @@ func TestListBucketsFallsBackToLegacyAPI(t *testing.T) {
 	decodeList[bucketListItem](t, get(h, "/api/buckets"))
 	if got := gs.perItem.Load() - before; got != int32(len(ids)) {
 		t.Errorf("expected cache to be invalidated after create, got %d calls", got)
+	}
+	// The "no *Info endpoint" verdict is remembered: no further probes.
+	if got := gs.infoCalls.Load(); got != 1 {
+		t.Errorf("expected ListBucketsInfo to be probed once across requests, got %d", got)
+	}
+}
+
+func TestListBucketsInfoLaterPage400IsError(t *testing.T) {
+	setListVar(t, &infoPageLimit, 2)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/ListBucketsInfo", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("offset") != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"code":"InvalidRequest","message":"Bad request: invalid bucket id"}`))
+			return
+		}
+		w.Write([]byte(`[{"id":"b1"},{"id":"b2"}]`))
+	})
+	mux.HandleFunc("/v2/ListBuckets", func(w http.ResponseWriter, r *http.Request) { t.Error("must not fall back on a later-page 400") })
+	gs := httptest.NewServer(mux)
+	defer gs.Close()
+
+	rr := get(handleListBuckets(newListTestClient(gs.URL)), "/api/buckets")
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "invalid bucket id") {
+		t.Errorf("expected the later-page 400 to be forwarded, got %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestListBucketsInfoUndecodableFallsBack(t *testing.T) {
+	gs := newLegacyBucketServer(t, []string{"a"}, "")
+	// Wrap the legacy fake so ListBucketsInfo answers 200 with a non-array body.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/ListBucketsInfo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html>not garage</html>`))
+	})
+	mux.Handle("/", gs.Config.Handler)
+	front := httptest.NewServer(mux)
+	defer front.Close()
+
+	res := decodeList[bucketListItem](t, get(handleListBuckets(newListTestClient(front.URL)), "/api/buckets"))
+	if len(res.Items) != 1 || res.Items[0].Objects == nil {
+		t.Errorf("expected fallback rows, got %+v", res.Items)
+	}
+}
+
+func TestListBucketsInfoStopsWithoutProgress(t *testing.T) {
+	setListVar(t, &infoPageLimit, 2)
+	var calls atomic.Int32
+	mux := http.NewServeMux()
+	// A broken upstream that ignores offset and always returns the first page.
+	mux.HandleFunc("/v2/ListBucketsInfo", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Write([]byte(`[{"id":"b1"},{"id":"b2"}]`))
+	})
+	gs := httptest.NewServer(mux)
+	defer gs.Close()
+
+	res := decodeList[bucketListItem](t, get(handleListBuckets(newListTestClient(gs.URL)), "/api/buckets"))
+	if !res.Truncated || len(res.Items) != 2 {
+		t.Errorf("expected 2 unique items and truncated=true, got %+v", res)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("expected pagination to stop after the repeated page, got %d calls", got)
 	}
 }
 

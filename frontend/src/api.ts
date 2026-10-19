@@ -244,11 +244,6 @@ export interface ListResult<T> {
   truncated: boolean
 }
 
-/** All buckets (items only); see listBucketsResult for the truncation flag. */
-export async function listBuckets(): Promise<BucketListItem[]> {
-  return (await listBucketsResult()).items
-}
-
 export async function getBucket(id: string): Promise<Record<string, unknown>> {
   return fetchJSON(`/buckets/${id}`)
 }
@@ -294,11 +289,6 @@ export interface KeyListItem {
   expiration: string | null
   expired: boolean
   bucketCount: number | null
-}
-
-/** All keys (items only); see listKeysResult for the truncation flag. */
-export async function listKeys(): Promise<KeyListItem[]> {
-  return (await listKeysResult()).items
 }
 
 export interface KeyDetail {
@@ -551,10 +541,19 @@ export async function getMaintenanceMetrics(): Promise<MaintenanceMetrics> {
 }
 
 // Enriched bucket / key lists (#380)
-export async function listBucketsResult(): Promise<ListResult<BucketListItem>> {
+/**
+ * All buckets with usage stats. Returns `{ items, truncated }`, NOT a bare
+ * array (changed in #380): read `.items` for the rows; `truncated` is true when
+ * Garage's list limit was hit and some buckets may be missing.
+ */
+export async function listBuckets(): Promise<ListResult<BucketListItem>> {
   return fetchJSON('/buckets')
 }
 
-export async function listKeysResult(): Promise<ListResult<KeyListItem>> {
+/**
+ * All access keys with expiration and bucket counts. Returns
+ * `{ items, truncated }`, NOT a bare array (changed in #380): read `.items`.
+ */
+export async function listKeys(): Promise<ListResult<KeyListItem>> {
   return fetchJSON('/keys')
 }

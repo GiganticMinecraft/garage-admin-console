@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { listKeysResult, createKey, deleteKey } from '@/api'
+import { listKeys, createKey, deleteKey } from '@/api'
 import type { KeyListItem, KeyDetail } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -42,8 +42,9 @@ function keySortValue(k: KeyListItem, key: KeySortKey): SortValue {
     case 'created':
       return timeValue(k.created)
     case 'expiration':
-      // No expiration = never expires: sort it after every dated key.
-      return timeValue(k.expiration) ?? Number.MAX_SAFE_INTEGER
+      // No expiration (never expires) is null, which compareSortValues keeps
+      // at the end in both directions.
+      return timeValue(k.expiration)
   }
 }
 
@@ -58,22 +59,23 @@ function KeysPage() {
   const [deleteTarget, setDeleteTarget] = useState<KeyListItem | null>(null)
   const [createdKey, setCreatedKey] = useState<KeyDetail | null>(null)
   const [search, setSearch] = useState('')
-  const debouncedSearch = useDebouncedValue(search.trim().toLowerCase())
+  const debouncedSearch = useDebouncedValue(search.trim())
+  const query = debouncedSearch.toLowerCase()
   const { sort, toggle } = useSort<KeySortKey>({ key: 'name', direction: 'asc' })
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['keys'],
-    queryFn: listKeysResult,
+    queryFn: listKeys,
   })
 
   const allKeys = data?.items
   const rows = useMemo(() => {
     if (!allKeys) return []
-    const filtered = debouncedSearch
-      ? allKeys.filter((k) => matchesKey(k, debouncedSearch))
+    const filtered = query
+      ? allKeys.filter((k) => matchesKey(k, query))
       : allKeys
     return sortRows(filtered, sort, keySortValue)
-  }, [allKeys, debouncedSearch, sort])
+  }, [allKeys, query, sort])
 
   const createMutation = useMutation({
     mutationFn: (name: string) => createKey({ name }),
@@ -236,7 +238,7 @@ function KeysPage() {
                 {total > 0 && rows.length === 0 && (
                   <ListEmptyRow
                     colSpan={colSpan}
-                    message={`「${search.trim()}」に一致するキーはありません`}
+                    message={`「${debouncedSearch}」に一致するキーはありません`}
                     actionLabel="検索をクリア"
                     onAction={() => setSearch('')}
                   />

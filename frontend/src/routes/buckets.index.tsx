@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { listBucketsResult, createBucket, deleteBucket } from '@/api'
+import { listBuckets, createBucket, deleteBucket } from '@/api'
 import type { BucketListItem } from '@/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
@@ -66,22 +66,23 @@ function BucketsPage() {
   const [newBucketAlias, setNewBucketAlias] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<BucketListItem | null>(null)
   const [search, setSearch] = useState('')
-  const debouncedSearch = useDebouncedValue(search.trim().toLowerCase())
+  const debouncedSearch = useDebouncedValue(search.trim())
+  const query = debouncedSearch.toLowerCase()
   const { sort, toggle } = useSort<BucketSortKey>({ key: 'alias', direction: 'asc' })
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['buckets'],
-    queryFn: listBucketsResult,
+    queryFn: listBuckets,
   })
 
   const allBuckets = data?.items
   const rows = useMemo(() => {
     if (!allBuckets) return []
-    const filtered = debouncedSearch
-      ? allBuckets.filter((b) => matchesBucket(b, debouncedSearch))
+    const filtered = query
+      ? allBuckets.filter((b) => matchesBucket(b, query))
       : allBuckets
     return sortRows(filtered, sort, bucketSortValue)
-  }, [allBuckets, debouncedSearch, sort])
+  }, [allBuckets, query, sort])
 
   const createMutation = useMutation({
     mutationFn: (alias: string) =>
@@ -242,7 +243,7 @@ function BucketsPage() {
                 {total > 0 && rows.length === 0 && (
                   <ListEmptyRow
                     colSpan={colSpan}
-                    message={`「${search.trim()}」に一致するバケットはありません`}
+                    message={`「${debouncedSearch}」に一致するバケットはありません`}
                     actionLabel="検索をクリア"
                     onAction={() => setSearch('')}
                   />
