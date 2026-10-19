@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import {
   getClusterHealth,
@@ -169,13 +169,27 @@ function ZoneBadge({ node }: { node: ClusterNode }) {
   return <Badge variant="secondary">{node.role.zone}</Badge>
 }
 
+/**
+ * Node name, linked to the node detail page. Nodes without a layout role are
+ * not linked: Garage resolves `node=<id>` against the layout, so every
+ * per-node request for them fails.
+ */
+function NodeName({ node }: { node: ClusterNode }) {
+  if (!node.role) return <span className="font-medium">{nodeDisplayName(node)}</span>
+  return (
+    <Link to="/nodes/$id" params={{ id: node.id }} className="font-medium hover:underline">
+      {nodeDisplayName(node)}
+    </Link>
+  )
+}
+
 function NodeCard({ node }: { node: ClusterNode }) {
   return (
     <div className="rounded-lg border p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <NodeStatusDot node={node} />
-          <span className="font-medium">{nodeDisplayName(node)}</span>
+          <NodeName node={node} />
         </div>
         <div className="flex gap-2">
           <Badge variant="outline">{node.garageVersion ?? '不明'}</Badge>
@@ -194,7 +208,7 @@ function NodeTableRow({ node }: { node: ClusterNode }) {
       <TableCell>
         <div className="flex items-center gap-2">
           <NodeStatusDot node={node} />
-          <span className="font-medium">{nodeDisplayName(node)}</span>
+          <NodeName node={node} />
         </div>
       </TableCell>
       <TableCell className="text-muted-foreground">{node.garageVersion ?? '不明'}</TableCell>

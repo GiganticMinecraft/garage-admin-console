@@ -68,36 +68,40 @@ func flattenWorkers(success map[string][]json.RawMessage, errors map[string]stri
 // The Garage response is { "success": { "nodeId": [...workers] }, "error": { "nodeId": "msg" } }.
 func handleListWorkers(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		const garagePath = "/v2/ListWorkers?node=*"
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, strings.NewReader("{}"))
-		if err != nil {
-			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-			w.WriteHeader(resp.StatusCode)
-			json.NewEncoder(w).Encode(map[string]string{"error": "upstream error"})
-			return
-		}
-
-		var multiResp struct {
-			Success map[string][]json.RawMessage `json:"success"`
-			Error   map[string]string            `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&multiResp); err != nil {
-			slog.ErrorContext(r.Context(), "failed to decode ListWorkers response", "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		for nodeID, msg := range multiResp.Error {
-			slog.WarnContext(r.Context(), "ListWorkers failed on node", "node", nodeID, "error", msg)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(flattenWorkers(multiResp.Success, multiResp.Error))
+		serveWorkers(w, r, garageAdmin, "/v2/ListWorkers?node=*")
 	}
+}
+
+// serveWorkers calls Garage ListWorkers at garagePath (which carries the
+// `node` parameter) and writes the flattened workersResponse. A non-200
+// answer from Garage is forwarded as-is so its error message reaches the UI.
+func serveWorkers(w http.ResponseWriter, r *http.Request, garageAdmin *GarageAdminClient, garagePath string) {
+	resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, strings.NewReader("{}"))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		forwardResponse(w, r, resp, garagePath)
+		return
+	}
+
+	var multiResp struct {
+		Success map[string][]json.RawMessage `json:"success"`
+		Error   map[string]string            `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&multiResp); err != nil {
+		slog.ErrorContext(r.Context(), "failed to decode ListWorkers response", "error", err)
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+	for nodeID, msg := range multiResp.Error {
+		slog.WarnContext(r.Context(), "ListWorkers failed on node", "node", nodeID, "error", msg)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(flattenWorkers(multiResp.Success, multiResp.Error))
 }

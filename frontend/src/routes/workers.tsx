@@ -1,7 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
-import { getClusterStatus, listWorkers, type Worker, type WorkerState } from '@/api'
+import { getClusterStatus, listWorkers, type Worker } from '@/api'
+import { describeState, formatSecsAgo } from '@/lib/workers'
 import {
   Table,
   TableHeader,
@@ -15,24 +16,6 @@ import { Badge } from '@/components/ui/badge'
 export const Route = createFileRoute('/workers')({
   component: WorkersPage,
 })
-
-function formatSecsAgo(secs: number): string {
-  if (secs < 60) return `${Math.floor(secs)}秒前`
-  if (secs < 3600) return `${Math.floor(secs / 60)}分前`
-  if (secs < 86400) return `${Math.floor(secs / 3600)}時間前`
-  return `${Math.floor(secs / 86400)}日前`
-}
-
-type StateKind = 'idle' | 'busy' | 'throttled' | 'other'
-
-function describeState(state: WorkerState): { label: string; kind: StateKind } {
-  if (typeof state === 'object' && state !== null && 'throttled' in state) {
-    return { label: `throttled (${state.throttled})`, kind: 'throttled' }
-  }
-  if (state === 'idle') return { label: 'idle', kind: 'idle' }
-  if (state === 'busy') return { label: 'busy', kind: 'busy' }
-  return { label: typeof state === 'string' && state.length > 0 ? state : 'unknown', kind: 'other' }
-}
 
 interface NodeGroup {
   nodeId: string

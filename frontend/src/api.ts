@@ -498,8 +498,9 @@ export async function deleteObject(bucket: string, key: string): Promise<void> {
 
 // Workers
 // Garage's worker state serializes as a string ("idle" / "busy" / "done") for
-// simple variants, but throttled is an object: { throttled: "<duration>" }.
-export type WorkerState = string | { throttled: string }
+// simple variants, but throttled is an object (Garage WorkerStateResp::Throttled
+// { duration_secs: f32 }): { throttled: { durationSecs: number } }.
+export type WorkerState = string | { throttled: { durationSecs: number } }
 
 export interface Worker {
   /** ID of the node this worker runs on (worker ids are per-node counters). */
@@ -658,4 +659,104 @@ export async function listBuckets(): Promise<ListResult<BucketListItem>> {
  */
 export async function listKeys(): Promise<ListResult<KeyListItem>> {
   return fetchJSON('/keys')
+}
+
+// Nodes (per-node detail page). The backend unwraps Garage's MultiResponse for
+// the read endpoints; mutating endpoints return it as-is because they can
+// also target every node (allNodes).
+//
+// GetNodeInfo: hostname/addr/isUp/role/draining/partitions need Garage >= v2.4.0
+// and are omitted (undefined) by older nodes, so they are all optional.
+export interface NodeInfo {
+  nodeId: string
+  hostname?: string | null
+  garageVersion: string
+  garageFeatures: string[] | null
+  rustVersion: string
+  dbEngine: string
+  addr?: string | null
+  isUp?: boolean | null
+  role?: {
+    zone: string
+    tags: string[]
+    capacity: number | null
+  } | null
+  draining?: boolean | null
+  dataPartition?: PartitionUsage | null
+  metadataPartition?: PartitionUsage | null
+}
+
+export interface NodeTableStats {
+  tableName: string
+  items: number
+  merkleItems: number
+  merkleQueueLen: number
+  insertQueueLen: number
+  gcQueueLen: number
+}
+
+export interface NodeBlockManagerStats {
+  rcEntries: number
+  resyncQueueLen: number
+  resyncErrors: number
+}
+
+/** tableStats / blockManagerStats need Garage >= v2.3.0; freeform is always present. */
+export interface NodeStatistics {
+  freeform: string
+  tableStats?: NodeTableStats[] | null
+  blockManagerStats?: NodeBlockManagerStats | null
+}
+
+/** Background variables of one node; all values are strings (e.g. "2", "never"). */
+export type WorkerVariables = Record<string, string>
+
+function nodePath(id: string, suffix = ''): string {
+  return `/nodes/${encodeURIComponent(id)}${suffix}`
+}
+
+export async function getNode(id: string): Promise<NodeInfo> {
+  return fetchJSON(nodePath(id))
+}
+
+export async function getNodeStats(id: string): Promise<NodeStatistics> {
+  return fetchJSON(nodePath(id, '/stats'))
+}
+
+export async function getNodeWorkerVariables(id: string): Promise<WorkerVariables> {
+  return fetchJSON(nodePath(id, '/worker-variables'))
+}
+
+export async function setNodeWorkerVariable(
+  id: string,
+  body: { variable: string; value: string; allNodes?: boolean },
+): Promise<MultiResponse<{ variable: string; value: string }>> {
+  return fetchJSON(nodePath(id, '/worker-variables'), {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function launchNodeRepair(
+  id: string,
+  repairType: RepairType,
+): Promise<MultiResponse<null>> {
+  return fetchJSON(nodePath(id, '/repair'), {
+    method: 'POST',
+    body: JSON.stringify({ repairType }),
+  })
+}
+
+export async function createMetadataSnapshot(
+  id: string,
+  allNodes = false,
+): Promise<MultiResponse<null>> {
+  return fetchJSON(nodePath(id, '/snapshot'), {
+    method: 'POST',
+    body: JSON.stringify({ allNodes }),
+  })
+}
+
+export async function listNodeWorkers(id: string): Promise<WorkersResponse> {
+  return fetchJSON(nodePath(id, '/workers'))
 }

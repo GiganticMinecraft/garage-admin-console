@@ -85,6 +85,16 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 
 		r.Post("/api/repair", handleLaunchRepair(garageAdmin))
 
+		r.Route("/api/nodes/{id}", func(r chi.Router) {
+			r.Get("/", handleGetNode(garageAdmin))
+			r.Get("/stats", handleGetNodeStats(garageAdmin))
+			r.Get("/worker-variables", handleGetNodeWorkerVariables(garageAdmin))
+			r.Post("/worker-variables", handleSetNodeWorkerVariable(garageAdmin))
+			r.Post("/repair", handleLaunchNodeRepair(garageAdmin))
+			r.Post("/snapshot", handleCreateNodeSnapshot(garageAdmin))
+			r.Get("/workers", handleListNodeWorkers(garageAdmin))
+		})
+
 		r.Get("/api/metrics", handleMaintenanceMetrics(garageAdmin))
 	})
 
