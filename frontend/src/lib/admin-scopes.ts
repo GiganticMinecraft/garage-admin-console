@@ -1,13 +1,11 @@
 /**
  * Garage admin API v2 endpoint names that can appear in an admin token's
  * scope, grouped for the scope editor. Taken from Garage's
- * `src/api/admin/router_v2.rs` (v2.4.x). Garage stores the scope as a plain
- * list of endpoint names, or the special value `*` for every endpoint.
+ * `src/api/admin/router_v2.rs` on main-v2 (post v2.4.1): everything listed
+ * exists in v2.4.1 except the entries marked "v2.5+", which a v2.4.1 cluster
+ * simply never matches. Garage stores the scope as a plain list of endpoint
+ * names, or the special value `*` for every endpoint.
  */
-import type { AdminTokenBody } from '@/api'
-import { expirationIso } from '@/lib/expiration'
-import type { ExpirationValue } from '@/lib/expiration'
-
 export interface AdminScopeCategory {
   label: string
   endpoints: readonly string[]
@@ -37,7 +35,7 @@ export const ADMIN_SCOPE_CATEGORIES: readonly AdminScopeCategory[] = [
     label: 'Buckets',
     endpoints: [
       'ListBuckets',
-      'ListBucketsInfo',
+      'ListBucketsInfo', // v2.5+
       'GetBucketInfo',
       'CreateBucket',
       'UpdateBucket',
@@ -52,7 +50,15 @@ export const ADMIN_SCOPE_CATEGORIES: readonly AdminScopeCategory[] = [
   },
   {
     label: 'Keys',
-    endpoints: ['ListKeys', 'ListKeysInfo', 'GetKeyInfo', 'CreateKey', 'ImportKey', 'UpdateKey', 'DeleteKey'],
+    endpoints: [
+      'ListKeys',
+      'ListKeysInfo', // v2.5+
+      'GetKeyInfo',
+      'CreateKey',
+      'ImportKey',
+      'UpdateKey',
+      'DeleteKey',
+    ],
   },
   {
     label: 'Admin tokens',
@@ -86,6 +92,12 @@ export const ADMIN_SCOPE_CATEGORIES: readonly AdminScopeCategory[] = [
 
 export const ALL_ADMIN_ENDPOINTS: readonly string[] = ADMIN_SCOPE_CATEGORIES.flatMap((c) => c.endpoints)
 
+/** Endpoints that do not exist on Garage v2.4.1 (the production version), with the version that added them. */
+export const ENDPOINT_MIN_VERSION: Readonly<Record<string, string>> = {
+  ListBucketsInfo: 'v2.5+',
+  ListKeysInfo: 'v2.5+',
+}
+
 /**
  * Endpoints that let a token mint or widen tokens; Garage documents that
  * granting them is functionally equivalent to `*`.
@@ -96,10 +108,15 @@ export function isFullScope(scope: readonly string[]): boolean {
   return scope.includes(ALL_SCOPE)
 }
 
+/** How many of the endpoints this console knows are in an explicit scope. */
+export function knownScopeCount(scope: readonly string[]): number {
+  return ALL_ADMIN_ENDPOINTS.filter((e) => scope.includes(e)).length
+}
+
 /** 「すべて」 for `*`, otherwise "x/N" over the known endpoints. */
 export function scopeLabel(scope: readonly string[]): string {
   if (isFullScope(scope)) return 'すべて'
-  return `${scope.length}/${ALL_ADMIN_ENDPOINTS.length}`
+  return `${knownScopeCount(scope)}/${ALL_ADMIN_ENDPOINTS.length}`
 }
 
 /** Sort key: `*` ranks above every explicit list. */
@@ -120,8 +137,3 @@ export function sameScope(a: readonly string[], b: readonly string[]): boolean {
   return b.every((s) => set.has(s))
 }
 
-/** Builds the create / update body; Garage rejects expiration with neverExpires. */
-export function expirationBody(v: ExpirationValue): Pick<AdminTokenBody, 'expiration' | 'neverExpires'> {
-  const iso = expirationIso(v)
-  return v.neverExpires || !iso ? { neverExpires: true } : { expiration: iso }
-}

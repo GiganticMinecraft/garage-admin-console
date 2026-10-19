@@ -1,11 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/url"
-	"regexp"
-
-	"github.com/go-chi/chi/v5"
 )
 
 // Admin API token management under /api/admin-tokens, proxied to Garage's
@@ -15,22 +13,13 @@ import (
 // id == null and cannot be fetched, updated or deleted by ID. Responses are
 // passed through unchanged.
 
-// adminTokenIDPattern matches a Garage admin token ID: the hex prefix of the
-// bearer token (24 hex characters today). The bound keeps junk out of the
-// query string Garage receives.
-var adminTokenIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{1,64}$`)
-
 // maxAdminTokenRequestBody bounds the small JSON bodies of create / update.
 const maxAdminTokenRequestBody = 64 << 10
 
-// adminTokenIDParam validates the {id} URL parameter and writes a 400 on failure.
+// adminTokenIDParam validates the {id} URL parameter: a Garage admin token ID
+// is the hex prefix of the bearer token (24 hex characters today).
 func adminTokenIDParam(w http.ResponseWriter, r *http.Request) (string, bool) {
-	id := chi.URLParam(r, "id")
-	if !adminTokenIDPattern.MatchString(id) {
-		writeJSONError(w, http.StatusBadRequest, "invalid admin token id: must be hex")
-		return "", false
-	}
-	return id, true
+	return hexIDParam(w, r, "admin token")
 }
 
 // handleListAdminTokens proxies GET /api/admin-tokens to Garage GET /v2/ListAdminTokens.
@@ -65,8 +54,13 @@ func handleGetAdminToken(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleCreateAdminToken(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		body := http.MaxBytesReader(w, r.Body, maxAdminTokenRequestBody)
-		proxyGarageRequest(w, r, garageAdmin, http.MethodPost, "/v2/CreateAdminToken", body)
+		// Read the whole (bounded) body first so an oversized request gets a
+		// clean 413 instead of reaching Garage truncated.
+		body, ok := readRequestBody(w, r, maxAdminTokenRequestBody)
+		if !ok {
+			return
+		}
+		proxyGarageRequest(w, r, garageAdmin, http.MethodPost, "/v2/CreateAdminToken", bytes.NewReader(body))
 	}
 }
 
@@ -79,8 +73,11 @@ func handleUpdateAdminToken(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		body := http.MaxBytesReader(w, r.Body, maxAdminTokenRequestBody)
-		proxyGarageRequest(w, r, garageAdmin, http.MethodPost, "/v2/UpdateAdminToken?id="+url.QueryEscape(id), body)
+		body, ok := readRequestBody(w, r, maxAdminTokenRequestBody)
+		if !ok {
+			return
+		}
+		proxyGarageRequest(w, r, garageAdmin, http.MethodPost, "/v2/UpdateAdminToken?id="+url.QueryEscape(id), bytes.NewReader(body))
 	}
 }
 

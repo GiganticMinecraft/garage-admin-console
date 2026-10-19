@@ -176,6 +176,30 @@ func TestAdminTokenGarageErrorsPassThrough(t *testing.T) {
 	}
 }
 
+func TestAdminTokenOversizedBodyIs413(t *testing.T) {
+	garage, calls := newFakeAdminTokenGarage(t)
+	c := newNodeTestClient(t, garage.URL)
+
+	big := `{"name":"` + strings.Repeat("a", maxAdminTokenRequestBody) + `"}`
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/api/admin-tokens"},
+		{http.MethodPut, "/api/admin-tokens/" + testAdminTokenID},
+	} {
+		rec := c.do(tc.method, tc.path, big)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("%s %s: status = %d, want 413", tc.method, tc.path, rec.Code)
+			continue
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || !strings.Contains(body["error"], "too large") {
+			t.Errorf("%s %s: body = %s", tc.method, tc.path, rec.Body.String())
+		}
+	}
+	if got := calls(); len(got) != 0 {
+		t.Errorf("oversized bodies reached Garage: %d calls", len(got))
+	}
+}
+
 // TestAdminTokenLifecycleAgainstGarage creates, reads, updates, lists and
 // deletes a token against a real Garage when GARAGE_TEST_ADMIN_ENDPOINT and
 // GARAGE_TEST_ADMIN_TOKEN are set.

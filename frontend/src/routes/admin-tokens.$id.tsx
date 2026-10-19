@@ -14,8 +14,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { expirationBody, sameScope } from '@/lib/admin-scopes'
-import { expirationFromIso, expirationValid, sameExpiration } from '@/lib/expiration'
+import { sameScope } from '@/lib/admin-scopes'
+import { expirationBody, expirationFromIso, expirationValid, sameExpiration } from '@/lib/expiration'
 import { formatDateTime } from '@/lib/format'
 
 export const Route = createFileRoute('/admin-tokens/$id')({
@@ -36,15 +36,20 @@ function AdminTokenDetailPage() {
     queryKey: ['admin-tokens', 'current'],
     queryFn: getCurrentAdminToken,
   })
+  // A config-file token (id null) can never be the token shown on this page.
   const isCurrent = current.data?.id != null && current.data.id === id
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteAdminToken(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-tokens'] })
-      queryClient.removeQueries({ queryKey: ['admin-token', id] })
+      queryClient.invalidateQueries({ queryKey: ['admin-tokens'], exact: true })
+      if (isCurrent) queryClient.invalidateQueries({ queryKey: ['admin-tokens', 'current'] })
       toast.success('管理トークンを削除しました')
-      navigate({ to: '/admin-tokens' })
+      // Drop the cached detail only once this page has unmounted; removing it
+      // while mounted triggers a refetch that briefly shows a 404.
+      void navigate({ to: '/admin-tokens' }).then(() => {
+        queryClient.removeQueries({ queryKey: ['admin-token', id] })
+      })
     },
     onError: (err) => {
       toast.error(`管理トークンの削除に失敗しました: ${err.message}`)
@@ -158,7 +163,7 @@ function EditAdminTokenForm({
   const [expiration, setExpiration] = useState(initialExpiration)
   const [scope, setScope] = useState<string[]>(token.scope)
 
-  const nameDirty = name.trim() !== token.name
+  const nameDirty = name.trim() !== token.name.trim()
   const expirationDirty = !sameExpiration(expiration, initialExpiration)
   const scopeDirty = !sameScope(scope, token.scope)
   const dirty = nameDirty || expirationDirty || scopeDirty
@@ -174,7 +179,8 @@ function EditAdminTokenForm({
     },
     onSuccess: (updated) => {
       queryClient.setQueryData(['admin-token', id], updated)
-      queryClient.invalidateQueries({ queryKey: ['admin-tokens'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-tokens'], exact: true })
+      if (isCurrent) queryClient.invalidateQueries({ queryKey: ['admin-tokens', 'current'] })
       toast.success('管理トークンを更新しました')
     },
   })

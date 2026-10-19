@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,11 +29,6 @@ import (
 // endpoints (repair, snapshot, set worker variable) return the MultiResponse
 // as-is, like /api/repair, because they can also target every node at once.
 
-// nodeIDPattern accepts what Garage's `node` parameter accepts for a single
-// node: "self" or a (prefix of a) hex node ID. "*" is deliberately not
-// accepted in the path; fan-out is opt-in via allNodes in the request body.
-var nodeIDPattern = regexp.MustCompile(`^(self|[0-9a-fA-F]{1,64})$`)
-
 // maxNodeRequestBody bounds the small JSON bodies of the mutating endpoints.
 const maxNodeRequestBody = 64 << 10
 
@@ -41,14 +37,48 @@ const maxNodeRequestBody = 64 << 10
 // admin client's default 10s timeout.
 const snapshotTimeout = 10 * time.Minute
 
-// nodeIDParam validates the {id} URL parameter and writes a 400 on failure.
+// nodeIDParam validates the {id} URL parameter as what Garage's `node`
+// parameter accepts for a single node: "self" or a (prefix of a) hex node ID.
+// "*" is deliberately not accepted in the path; fan-out is opt-in via
+// allNodes in the request body.
 func nodeIDParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	return hexIDParam(w, r, "node", "self")
+}
+
+// hexIDPattern matches a (prefix of a) hex ID as used by Garage for node IDs
+// and admin token IDs. The bound keeps junk out of the query strings sent to
+// Garage.
+var hexIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{1,64}$`)
+
+// hexIDParam validates the {id} URL parameter as 1-64 hex characters (or one
+// of the literal values in also) and writes a JSON 400 on failure.
+func hexIDParam(w http.ResponseWriter, r *http.Request, what string, also ...string) (string, bool) {
 	id := chi.URLParam(r, "id")
-	if !nodeIDPattern.MatchString(id) {
-		writeJSONError(w, http.StatusBadRequest, "invalid node id: must be hex or \"self\"")
-		return "", false
+	if hexIDPattern.MatchString(id) || slices.Contains(also, id) {
+		return id, true
 	}
-	return id, true
+	msg := "invalid " + what + " id: must be hex"
+	for _, a := range also {
+		msg += ` or "` + a + `"`
+	}
+	writeJSONError(w, http.StatusBadRequest, msg)
+	return "", false
+}
+
+// readRequestBody reads a request body bounded to limit bytes. It writes a
+// JSON 413 when the body is too large (400 when unreadable) and returns false.
+func readRequestBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body too large (limit %d bytes)", limit))
+		} else {
+			writeJSONError(w, http.StatusBadRequest, "request body unreadable")
+		}
+		return nil, false
+	}
+	return data, true
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {

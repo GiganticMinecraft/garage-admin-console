@@ -6,8 +6,10 @@ import {
   ADMIN_SCOPE_CATEGORIES,
   ALL_ADMIN_ENDPOINTS,
   ALL_SCOPE,
+  ENDPOINT_MIN_VERSION,
   PRIVILEGE_ESCALATION_ENDPOINTS,
   isFullScope,
+  knownScopeCount,
   unknownScopeEntries,
 } from '@/lib/admin-scopes'
 import type { AdminScopeCategory } from '@/lib/admin-scopes'
@@ -30,7 +32,7 @@ export function AdminScopeEditor({ value, onChange, disabled }: AdminScopeEditor
   const full = isFullScope(value)
   const selected = new Set(value)
   const unknown = unknownScopeEntries(value)
-  const knownCount = ALL_ADMIN_ENDPOINTS.filter((e) => selected.has(e)).length
+  const knownCount = knownScopeCount(value)
   const escalation = !full && PRIVILEGE_ESCALATION_ENDPOINTS.some((e) => selected.has(e))
 
   const setEndpoints = (endpoints: readonly string[], on: boolean) => {
@@ -168,6 +170,11 @@ function ScopeCategory({
               <label htmlFor={`${id}-${endpoint}`} className="font-mono text-xs">
                 {endpoint}
               </label>
+              {ENDPOINT_MIN_VERSION[endpoint] && (
+                <span className="text-[10px] text-muted-foreground" title="Garage v2.4.1 にはないエンドポイントです">
+                  {ENDPOINT_MIN_VERSION[endpoint]}
+                </span>
+              )}
               {PRIVILEGE_ESCALATION_ENDPOINTS.includes(endpoint) && (
                 <TriangleAlert
                   className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400"

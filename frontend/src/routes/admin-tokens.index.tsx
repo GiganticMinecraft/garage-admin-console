@@ -39,8 +39,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ALL_SCOPE, expirationBody, isFullScope, scopeScore } from '@/lib/admin-scopes'
-import { expirationFromIso, expirationValid } from '@/lib/expiration'
+import { ALL_SCOPE, isFullScope, scopeScore } from '@/lib/admin-scopes'
+import { expirationBody, expirationFromIso, expirationValid } from '@/lib/expiration'
 import type { ExpirationValue } from '@/lib/expiration'
 import { formatDateTime } from '@/lib/format'
 import { sortRows, timeValue, useSort } from '@/lib/sort'
@@ -89,7 +89,12 @@ function AdminTokensPage() {
     queryKey: ['admin-tokens', 'current'],
     queryFn: getCurrentAdminToken,
   })
-  const currentId = current.data?.id ?? null
+  const currentToken = current.data
+  // Config-file tokens have no id, so the console's own static token is
+  // recognised by name (Garage names them "admin_token (from daemon configuration)").
+  const isCurrentToken = (t: AdminToken) =>
+    currentToken !== undefined &&
+    (currentToken.id === null ? t.id === null && t.name === currentToken.name : t.id === currentToken.id)
 
   const rows = useMemo(() => {
     if (!data) return []
@@ -100,7 +105,7 @@ function AdminTokensPage() {
   const deleteMutation = useMutation({
     mutationFn: deleteAdminToken,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-tokens'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-tokens'], exact: true })
       toast.success('管理トークンを削除しました')
     },
     onError: (err) => {
@@ -149,7 +154,7 @@ function AdminTokensPage() {
               </TableHeader>
               <TableBody>
                 {rows.map((token) => {
-                  const isCurrent = token.id !== null && token.id === currentId
+                  const isCurrent = isCurrentToken(token)
                   return (
                     <TableRow key={token.id ?? `static:${token.name}`}>
                       <TableCell className="px-4">
@@ -228,7 +233,7 @@ function AdminTokensPage() {
         open={showCreate}
         onOpenChange={setShowCreate}
         onCreated={(created) => {
-          queryClient.invalidateQueries({ queryKey: ['admin-tokens'] })
+          queryClient.invalidateQueries({ queryKey: ['admin-tokens'], exact: true })
           setShowCreate(false)
           setCreatedToken(created)
         }}
@@ -239,7 +244,7 @@ function AdminTokensPage() {
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         title="管理トークンの削除"
         description={
-          deleteTarget && deleteTarget.id === currentId
+          deleteTarget && isCurrentToken(deleteTarget)
             ? `「${deleteTarget.name}」はこのコンソール自身が使っているトークンです。削除するとコンソールが Garage を操作できなくなります。本当に削除しますか？`
             : `管理トークン「${deleteTarget?.name || deleteTarget?.id}」を削除しますか？このトークンを使っているクライアントは直ちに認証できなくなります。この操作は取り消せません。`
         }
@@ -339,10 +344,20 @@ function CreateAdminTokenDialog({
   const mutation = useMutation({
     mutationFn: () =>
       createAdminToken({ name: name.trim(), scope, ...expirationBody(expiration) }),
+    // The result carries the one-time secretToken: never keep a finished
+    // mutation in the MutationCache.
+    gcTime: 0,
     onSuccess: (created) => {
       reset()
-      mutation.reset()
       onCreated(created)
+    },
+    onSettled: (created) => {
+      // TanStack Query stores the result in mutation.data only after
+      // onSuccess / onSettled return (a reset inside them is a no-op), so
+      // reset on the next macrotask, after the success dispatch. With
+      // gcTime 0 the mutation then leaves the cache, and the secret lives
+      // only in the page's one-time dialog state. Errors stay visible.
+      if (created) setTimeout(() => mutation.reset(), 0)
     },
   })
 
