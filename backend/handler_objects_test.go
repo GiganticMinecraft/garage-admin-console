@@ -654,6 +654,31 @@ func TestObjectBrowserIntegration(t *testing.T) {
 		})
 	}
 
+	// Over a real connection, overwrite=false with the key in the query is
+	// answered with 409 before the (large) body is consumed.
+	t.Run("early conflict over http", func(t *testing.T) {
+		bucket := buckets["alias"]
+		key := fmt.Sprintf("i381-conflict-%d.bin", time.Now().UnixNano())
+		if _, err := s3c.client.PutObject(context.Background(), &s3.PutObjectInput{
+			Bucket: aws.String(bucket), Key: aws.String(key), Body: strings.NewReader("x"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewServer(h)
+		defer srv.Close()
+		body, ct := multipartBody(t, "", "c.bin", bytes.Repeat([]byte("y"), 20<<20))
+		start := time.Now()
+		resp, err := http.Post(srv.URL+"/api/objects/"+bucket+"/upload?overwrite=false&key="+url.QueryEscape(key), ct, body)
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		t.Logf("409 after %v", time.Since(start))
+	})
+
 	// Unknown bucket maps to 404.
 	rec := doJSON(t, h, http.MethodGet, "/api/objects/i381-no-such-bucket/list", nil)
 	if rec.Code != http.StatusNotFound {
