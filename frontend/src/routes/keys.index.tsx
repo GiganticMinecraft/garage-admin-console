@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { listKeys, createKey, deleteKey } from '@/api'
-import type { KeyListItem } from '@/api'
+import type { KeyListItem, KeyDetail } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -14,6 +14,7 @@ import {
   TableCell,
 } from '@/components/ui/table'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { KeySecretDialog } from '@/components/key-secret-dialog'
 
 export const Route = createFileRoute('/keys/')({
   component: KeysPage,
@@ -24,6 +25,7 @@ function KeysPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<KeyListItem | null>(null)
+  const [createdKey, setCreatedKey] = useState<KeyDetail | null>(null)
 
   const { data: keys, isLoading } = useQuery({
     queryKey: ['keys'],
@@ -32,10 +34,12 @@ function KeysPage() {
 
   const createMutation = useMutation({
     mutationFn: (name: string) => createKey({ name }),
-    onSuccess: () => {
+    onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ['keys'] })
       setShowCreate(false)
       setNewKeyName('')
+      // The secret is only returned here; show it once so the operator can copy it.
+      setCreatedKey(created)
     },
   })
 
@@ -149,6 +153,8 @@ function KeysPage() {
         }}
         isPending={deleteMutation.isPending}
       />
+
+      <KeySecretDialog created={createdKey} onClose={() => setCreatedKey(null)} />
     </div>
   )
 }

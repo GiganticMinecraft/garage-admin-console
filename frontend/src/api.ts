@@ -144,11 +144,29 @@ export async function listKeys(): Promise<KeyListItem[]> {
   return fetchJSON('/keys')
 }
 
-export async function getKey(id: string): Promise<Record<string, unknown>> {
-  return fetchJSON(`/keys/${id}`)
+export interface KeyDetail {
+  accessKeyId: string
+  name: string
+  created: string
+  expiration: string | null
+  expired: boolean
+  /** Only present when requested with showSecretKey (or right after creation). */
+  secretAccessKey?: string
+  permissions: { createBucket: boolean }
+  buckets: {
+    id: string
+    globalAliases: string[]
+    localAliases: string[]
+    permissions: { read: boolean; write: boolean; owner: boolean }
+  }[]
 }
 
-export async function createKey(body: unknown): Promise<Record<string, unknown>> {
+export async function getKey(id: string, opts?: { showSecretKey?: boolean }): Promise<KeyDetail> {
+  const qs = opts?.showSecretKey ? '?showSecretKey=true' : ''
+  return fetchJSON(`/keys/${id}${qs}`)
+}
+
+export async function createKey(body: { name: string }): Promise<KeyDetail> {
   return fetchJSON('/keys', {
     method: 'POST',
     body: JSON.stringify(body),
