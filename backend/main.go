@@ -45,6 +45,8 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 			r.Post("/layout/revert", handleRevertLayout(garageAdmin))
 			r.Get("/layout/history", handleLayoutHistory(garageAdmin))
 			r.Post("/layout/skip-dead-nodes", handleSkipDeadNodes(garageAdmin))
+			r.Get("/statistics", handleClusterStatistics(garageAdmin))
+			r.Get("/storage-health", handleStorageHealth(garageAdmin))
 		})
 
 		r.Route("/api/buckets", func(r chi.Router) {

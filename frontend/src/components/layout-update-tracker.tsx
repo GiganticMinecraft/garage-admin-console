@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { CheckCircle2, Hourglass, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -29,6 +30,13 @@ function isUpdateInFlight(h: LayoutHistory | undefined): boolean {
   return h?.updateTrackers != null
 }
 
+/**
+ * The tracker only needs each current-layout node's ID and whether it stores
+ * data (capacity != null), so callers can pass GetClusterLayout's roles or
+ * derive them from GetClusterStatus nodes (whose role is the current one).
+ */
+export type TrackerRole = Pick<LayoutNodeRole, 'id' | 'capacity'>
+
 type StepState = 'completed' | 'inprogress' | 'waiting'
 
 interface Step {
@@ -49,7 +57,7 @@ interface Step {
  * only had a role in an older live version is counted for ack only.
  * A step is only "in progress" once the previous one has completed.
  */
-function computeSteps(h: LayoutHistory, roles: LayoutNodeRole[]): Step[] {
+function computeSteps(h: LayoutHistory, roles: TrackerRole[]): Step[] {
   const trackers = Object.entries(h.updateTrackers ?? {})
   const storage = new Set(roles.filter((r) => r.capacity != null).map((r) => r.id))
   const current = new Set(roles.map((r) => r.id))
@@ -121,17 +129,36 @@ function StepBadge({ state }: { state: StepState }) {
  * Shows the progress of a layout update (GetClusterLayoutHistory) and offers
  * the "force update" escape hatch (ClusterLayoutSkipDeadNodes). Polls every
  * 5 s while an update is in flight and the tab is visible.
+ *
+ * `compact` (dashboard) renders nothing unless an update is in flight, and
+ * then a single-row banner of the steps linking to /layout, without the
+ * force-update controls.
  */
-export function LayoutUpdateTracker({ roles }: { roles: LayoutNodeRole[] }) {
+export function LayoutUpdateTracker({ roles, compact = false }: { roles: TrackerRole[]; compact?: boolean }) {
   const history = useQuery({
     queryKey: ['cluster', 'layout', 'history'],
     queryFn: getLayoutHistory,
-    refetchInterval: (query) => (isUpdateInFlight(query.state.data) ? 5000 : false),
+    // The dashboard (compact) also polls slowly while idle so that an update
+    // started elsewhere shows up without a reload.
+    refetchInterval: (query) => (isUpdateInFlight(query.state.data) ? 5000 : compact ? 30_000 : false),
     refetchIntervalInBackground: false,
   })
   const [showForce, setShowForce] = useState(false)
 
   if (history.isLoading) return null
+  if (compact) {
+    // On failure, say so instead of showing possibly stale "in progress" data.
+    if (history.isError) {
+      return (
+        <p className="text-xs text-destructive">
+          レイアウト更新状況を取得できませんでした: {history.error.message}
+        </p>
+      )
+    }
+    const ch = history.data
+    if (!ch || !isUpdateInFlight(ch)) return null
+    return <CompactTracker history={ch} roles={roles} />
+  }
   if (history.isError) {
     return (
       <p className="text-sm text-destructive">
@@ -205,6 +232,24 @@ export function LayoutUpdateTracker({ roles }: { roles: LayoutNodeRole[] }) {
       {showForce && (
         <ForceUpdateDialog history={h} open={showForce} onOpenChange={setShowForce} />
       )}
+    </div>
+  )
+}
+
+function CompactTracker({ history: h, roles }: { history: LayoutHistory; roles: TrackerRole[] }) {
+  const steps = computeSteps(h, roles)
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-amber-300 bg-amber-50/50 px-4 py-3 text-sm dark:bg-amber-950/20">
+      <span className="font-semibold">レイアウト更新中 (v{h.currentVersion})</span>
+      {steps.map((s, i) => (
+        <span key={s.name} className="flex items-center gap-1" title={s.hint}>
+          {i + 1}. {s.name} {s.progress}/{s.total}
+          <StepBadge state={s.state} />
+        </span>
+      ))}
+      <Link to="/layout" className="ml-auto text-primary underline underline-offset-4">
+        詳細・Force update
+      </Link>
     </div>
   )
 }

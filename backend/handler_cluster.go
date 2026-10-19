@@ -100,3 +100,12 @@ func handleLayoutHistory(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleSkipDeadNodes(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return proxyGaragePOST(garageAdmin, "/v2/ClusterLayoutSkipDeadNodes")
 }
+
+// handleClusterStatistics proxies GET /api/cluster/statistics to Garage GET
+// /v2/GetClusterStatistics. Since Garage v2.3.0 the answer is structured:
+// dataAvail, metadataAvail, incompleteAvailInfo, bucketCount and, unless the
+// cluster has more than 1000 buckets, totalObjectCount / totalObjectBytes,
+// plus the freeform text. It is returned as-is.
+func handleClusterStatistics(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return proxyGarageGET(garageAdmin, "/v2/GetClusterStatistics")
+}

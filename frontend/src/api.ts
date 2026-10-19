@@ -938,3 +938,55 @@ export async function deletePrefix(bucket: string, prefix: string): Promise<Batc
     method: 'DELETE',
   })
 }
+
+// Dashboard (#379)
+/**
+ * GET /api/cluster/statistics (Garage GetClusterStatistics, structured since
+ * v2.3.0). totalObjectCount / totalObjectBytes are omitted when the cluster
+ * has more than 1000 buckets. incompleteAvailInfo is true when some storage
+ * nodes did not report their free space, so dataAvail / metadataAvail are
+ * lower bounds.
+ */
+export interface ClusterStatistics {
+  freeform: string
+  dataAvail?: number | null
+  metadataAvail?: number | null
+  incompleteAvailInfo?: boolean
+  bucketCount?: number | null
+  totalObjectCount?: number | null
+  totalObjectBytes?: number | null
+}
+
+export async function getClusterStatistics(): Promise<ClusterStatistics> {
+  return fetchJSON('/cluster/statistics')
+}
+
+/**
+ * Per-node block health from GET /api/cluster/storage-health. Metrics are
+ * null when the node did not answer (then `error` says why) or its Garage
+ * does not report them. scrubLastCompleted is Garage's string ("never" or an
+ * RFC 3339 timestamp).
+ */
+export interface NodeStorageHealth {
+  resyncQueueLen: number | null
+  resyncErrors: number | null
+  scrubCorruptions: number | null
+  scrubLastCompleted: string | null
+  error?: string
+}
+
+/**
+ * GET /api/cluster/storage-health. `nodes` is keyed by full node ID (join it
+ * with GetClusterStatus); statsError / varsError are set when a whole
+ * fan-out (GetNodeStatistics / GetWorkerVariable) failed. Cached ~10 s
+ * server-side.
+ */
+export interface StorageHealth {
+  nodes: Record<string, NodeStorageHealth>
+  statsError?: string
+  varsError?: string
+}
+
+export async function getStorageHealth(): Promise<StorageHealth> {
+  return fetchJSON('/cluster/storage-health')
+}
