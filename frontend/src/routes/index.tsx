@@ -22,6 +22,7 @@ import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
 import { formatBytes, formatCount, formatDateTime, formatUsage, usagePercent } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 import { describeState } from '@/lib/workers'
+import { pollEvery } from '@/lib/polling'
 import { RefreshIndicator } from '@/components/refresh-indicator'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { Badge } from '@/components/ui/badge'
@@ -654,7 +655,7 @@ function StorageHealthSection({
 
 function DashboardPage() {
   useDocumentTitle('ダッシュボード')
-  const polling = { refetchInterval: STATUS_REFETCH_MS, refetchIntervalInBackground: false }
+  const polling = pollEvery(STATUS_REFETCH_MS)
 
   const health = useQuery({
     queryKey: ['cluster', 'health'],
@@ -680,8 +681,7 @@ function DashboardPage() {
   const statistics = useQuery({
     queryKey: ['cluster', 'statistics'],
     queryFn: getClusterStatistics,
-    refetchInterval: STATISTICS_REFETCH_MS,
-    refetchIntervalInBackground: false,
+    ...pollEvery(STATISTICS_REFETCH_MS),
   })
 
   // The key list fans out per key on the backend, so it is not polled; the

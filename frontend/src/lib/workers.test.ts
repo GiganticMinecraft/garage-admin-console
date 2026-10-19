@@ -53,9 +53,14 @@ describe('describeState', () => {
 })
 
 describe('isDisabledWorker', () => {
-  it('detects the disabled freeform line', () => {
+  it('detects the exact disabled freeform line', () => {
     expect(isDisabledWorker(disabledResync)).toBe(true)
     expect(isDisabledWorker(worker())).toBe(false)
+  })
+
+  it('does not hide workers whose other lines merely mention "disabled" (fail open)', () => {
+    expect(isDisabledWorker(worker({ freeform: ['Scrub is disabled by tranquility'] }))).toBe(false)
+    expect(isDisabledWorker(worker({ freeform: ['This worker is currently disabled for now'] }))).toBe(false)
   })
 })
 
@@ -66,8 +71,7 @@ describe('isNoteworthyWorker', () => {
   })
 
   it.each<[string, Partial<Worker>]>([
-    ['past errors', { errors: 1 }],
-    ['a last error', { lastError: { message: 'x', secsAgo: 1 } }],
+    ['consecutive errors', { errors: 2, consecutiveErrors: 2 }],
     ['persistent errors', { persistentErrors: 3 }],
     ['busy', { state: 'busy' }],
     ['throttled', { state: { throttled: { durationSecs: 2 } } }],
@@ -77,20 +81,40 @@ describe('isNoteworthyWorker', () => {
     expect(isNoteworthyWorker(worker(o))).toBe(true)
   })
 
-  it('ignores an empty queue, zero persistent errors and done', () => {
-    expect(isNoteworthyWorker(worker({ queueLength: 0, persistentErrors: 0, state: 'done' }))).toBe(false)
+  it('ignores recovered (cumulative) errors, which Garage never resets', () => {
+    const recovered = worker({ errors: 50, lastError: { message: 'old', secsAgo: 86400 } })
+    expect(isNoteworthyWorker(recovered)).toBe(false)
+  })
+
+  it('ignores an empty queue, zero persistent errors, empty progress and done', () => {
+    expect(
+      isNoteworthyWorker(worker({ queueLength: 0, persistentErrors: 0, progress: '', state: 'done' })),
+    ).toBe(false)
   })
 })
 
 describe('matchesWorkerSearch', () => {
-  it('matches name, exact worker ID, node ID prefix and last error, case-insensitively', () => {
+  const hostnames = new Map([['aaaa1111', 'garage-1']])
+
+  it('matches name, node ID prefix and last error, case-insensitively', () => {
     expect(matchesWorkerSearch(scrubWithErrors, 'SCRUB')).toBe(true)
-    expect(matchesWorkerSearch(scrubWithErrors, '30')).toBe(true)
-    expect(matchesWorkerSearch(scrubWithErrors, '3')).toBe(false)
     expect(matchesWorkerSearch(scrubWithErrors, 'AAAA')).toBe(true)
     expect(matchesWorkerSearch(scrubWithErrors, 'not found')).toBe(true)
     expect(matchesWorkerSearch(scrubWithErrors, 'merkle')).toBe(false)
     expect(matchesWorkerSearch(scrubWithErrors, '  ')).toBe(true)
+  })
+
+  it('matches the worker ID exactly, with or without the displayed "#"', () => {
+    expect(matchesWorkerSearch(scrubWithErrors, '30')).toBe(true)
+    expect(matchesWorkerSearch(scrubWithErrors, '#30')).toBe(true)
+    expect(matchesWorkerSearch(scrubWithErrors, '3')).toBe(false)
+    expect(matchesWorkerSearch(scrubWithErrors, '#3')).toBe(false)
+  })
+
+  it('matches the node hostname when known', () => {
+    expect(matchesWorkerSearch(scrubWithErrors, 'Garage-1', hostnames)).toBe(true)
+    expect(matchesWorkerSearch(scrubWithErrors, 'garage-2', hostnames)).toBe(false)
+    expect(matchesWorkerSearch(scrubWithErrors, 'garage-1')).toBe(false)
   })
 })
 
@@ -117,6 +141,13 @@ describe('filterAndSortWorkers', () => {
     expect(filterAndSortWorkers(all, { ...DEFAULT_WORKER_FILTER, nodeId: 'bbbb2222' })).toEqual([otherNode])
   })
 
+  it('searches by hostname', () => {
+    const hostnames = new Map([['bbbb2222', 'garage-2']])
+    expect(filterAndSortWorkers(all, { ...DEFAULT_WORKER_FILTER, search: 'garage-2' }, hostnames)).toEqual([
+      otherNode,
+    ])
+  })
+
   it('combines search with the other filters', () => {
     const f = { ...DEFAULT_WORKER_FILTER, search: 'resync' }
     expect(filterAndSortWorkers(all, f)).toEqual([])
@@ -131,20 +162,22 @@ describe('filterAndSortWorkers', () => {
 })
 
 describe('compareWorkersByState', () => {
-  it('orders busy > throttled > idle > done > unknown, then errors desc, then name', () => {
+  it('orders by state, then consecutive errors, then cumulative errors, then name', () => {
     const rows = [
       worker({ name: 'z unknown', state: 'weird' }),
       worker({ name: 'done', state: 'done' }),
       worker({ name: 'b idle' }),
       worker({ name: 'a idle' }),
-      worker({ name: 'c idle errors', errors: 7 }),
+      worker({ name: 'c idle recovered 50', errors: 50 }),
+      worker({ name: 'd idle failing now', errors: 2, consecutiveErrors: 2 }),
       worker({ name: 'throttled', state: { throttled: { durationSecs: 1 } } }),
       worker({ name: 'busy', state: 'busy' }),
     ]
     expect(rows.sort(compareWorkersByState).map((w) => w.name)).toEqual([
       'busy',
       'throttled',
-      'c idle errors',
+      'd idle failing now',
+      'c idle recovered 50',
       'a idle',
       'b idle',
       'done',

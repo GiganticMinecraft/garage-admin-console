@@ -10,6 +10,8 @@ import {
   type WorkerFilter,
 } from '@/lib/workers'
 import { PAGE_POLLING } from '@/lib/polling'
+import { nodeDisplayName } from '@/lib/nodes'
+import { shortId } from '@/lib/format'
 import { RefreshIndicator } from '@/components/refresh-indicator'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import {
@@ -65,26 +67,30 @@ function WorkersPage() {
     return m
   }, [status.data])
 
-  // Nodes in the backend's order (sorted by node ID).
-  const nodeIds = useMemo(() => [...new Set((data?.workers ?? []).map((w) => w.nodeId))], [data])
-
-  const groups = useMemo<NodeGroup[]>(() => {
+  // One group per node in the backend's order (sorted by node ID), holding
+  // that node's total and its filtered, sorted workers.
+  const allGroups = useMemo<NodeGroup[]>(() => {
     if (!data) return []
-    const visible = filterAndSortWorkers(data.workers, filter)
-    return nodeIds
-      .map((nodeId) => ({
-        nodeId,
-        hostname: names.get(nodeId) ?? null,
-        workers: visible.filter((w) => w.nodeId === nodeId),
-        total: data.workers.filter((w) => w.nodeId === nodeId).length,
-      }))
-      .filter((g) => g.workers.length > 0)
-  }, [data, filter, nodeIds, names])
+    const byNode = new Map<string, NodeGroup>()
+    for (const w of data.workers) {
+      const g = byNode.get(w.nodeId)
+      if (g) g.total++
+      else byNode.set(w.nodeId, { nodeId: w.nodeId, hostname: names.get(w.nodeId) ?? null, workers: [], total: 1 })
+    }
+    for (const w of filterAndSortWorkers(data.workers, filter, names)) byNode.get(w.nodeId)!.workers.push(w)
+    return [...byNode.values()]
+  }, [data, filter, names])
+  const groups = allGroups.filter((g) => g.workers.length > 0)
 
   const totalCount = data?.workers.length ?? 0
   const shownCount = groups.reduce((sum, g) => sum + g.workers.length, 0)
   const nodeErrors = Object.entries(data?.errors ?? {})
-  const nodeLabel = (id: string) => names.get(id) ?? `${id.slice(0, 16)}…`
+  const nodeLabel = (id: string) => nodeDisplayName({ id, hostname: names.get(id) ?? null })
+  // The selected node may stop answering ListWorkers on a later poll. Keep it
+  // in the select (marked, not selectable again) so the empty result is
+  // explained instead of the select silently showing 「すべてのノード」.
+  const selectedMissing =
+    filter.nodeId !== null && data !== undefined && !allGroups.some((g) => g.nodeId === filter.nodeId)
 
   return (
     <div className="space-y-4">
@@ -99,7 +105,7 @@ function WorkersPage() {
           <ul className="mt-1 space-y-0.5 text-muted-foreground">
             {nodeErrors.map(([nodeId, msg]) => (
               <li key={nodeId}>
-                <span className="font-mono text-xs">{nodeId.slice(0, 16)}…</span>: {msg}
+                <span className="font-mono text-xs">{shortId(nodeId)}</span>: {msg}
               </li>
             ))}
           </ul>
@@ -108,7 +114,7 @@ function WorkersPage() {
 
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         <Input
-          placeholder="名前・ID・エラーメッセージで検索"
+          placeholder="名前・#ID・ノード・エラーで検索"
           value={filter.search}
           onChange={(e) => update({ search: e.target.value })}
           className="sm:w-72"
@@ -121,11 +127,16 @@ function WorkersPage() {
           aria-label="ノードで絞り込み"
         >
           <option value="">すべてのノード</option>
-          {nodeIds.map((id) => (
-            <option key={id} value={id}>
-              {nodeLabel(id)}
+          {allGroups.map((g) => (
+            <option key={g.nodeId} value={g.nodeId}>
+              {nodeLabel(g.nodeId)}
             </option>
           ))}
+          {selectedMissing && (
+            <option value={filter.nodeId!} disabled>
+              {nodeLabel(filter.nodeId!)}(応答なし)
+            </option>
+          )}
         </select>
         <div className="flex items-center gap-2">
           <Checkbox
@@ -160,16 +171,20 @@ function WorkersPage() {
         <p className="text-destructive">ワーカーの読み込みに失敗しました</p>
       ) : totalCount === 0 ? (
         <p className="text-muted-foreground">ワーカーがありません</p>
+      ) : selectedMissing ? (
+        <p className="text-muted-foreground">
+          選択中のノード({nodeLabel(filter.nodeId!)})のワーカーを取得できませんでした。ノードの選択を変更してください
+        </p>
       ) : groups.length === 0 ? (
         <p className="text-muted-foreground">条件に一致するワーカーがありません</p>
       ) : (
         groups.map((group) => (
           <div key={group.nodeId} className="space-y-2">
             <h2 className="flex items-baseline gap-2 text-lg font-semibold">
-              {group.hostname ?? <span className="font-mono">{group.nodeId.slice(0, 16)}…</span>}
+              {group.hostname ?? <span className="font-mono">{shortId(group.nodeId)}</span>}
               {group.hostname && (
                 <span className="font-mono text-xs font-normal text-muted-foreground">
-                  {group.nodeId.slice(0, 16)}…
+                  {shortId(group.nodeId)}
                 </span>
               )}
               <span className="text-xs font-normal text-muted-foreground">
