@@ -77,6 +77,23 @@ func TestGrantConsoleAccessNoOpWhenAlreadyGranted(t *testing.T) {
 	}
 }
 
+func TestGrantConsoleAccessKeepsExistingOwner(t *testing.T) {
+	f := &fakePermGarage{perms: map[string]bucketKeyPerm{testConsoleKeyID: {Read: true, Owner: true}}}
+	c := newConsoleAccessClient(t, f.server(t).URL, testConsoleKeyID)
+
+	rec := c.do(http.MethodPost, consoleAccessPath(testBucketID), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := decodePermsResponse(t, rec); got.Permissions != (bucketKeyPerm{Read: true, Write: true, Owner: true}) || !got.Changed {
+		t.Errorf("response = %+v", got)
+	}
+	calls := f.mutations()
+	if len(calls) != 1 || calls[0].path != "/v2/AllowBucketKey" || !strings.Contains(calls[0].body, `"write":true`) || strings.Contains(calls[0].body, `"read":true`) {
+		t.Errorf("calls = %+v, want one AllowBucketKey for write only (no Deny)", calls)
+	}
+}
+
 func TestGrantConsoleAccessRejectsOtherKeyInBody(t *testing.T) {
 	f := &fakePermGarage{perms: map[string]bucketKeyPerm{}}
 	c := newConsoleAccessClient(t, f.server(t).URL, testConsoleKeyID)

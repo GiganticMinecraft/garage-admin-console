@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { listBuckets, createBucket, deleteBucket, grantConsoleAccess } from '@/api'
+import { listBuckets, createBucket, deleteBucket } from '@/api'
 import type { BucketListItem } from '@/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
@@ -27,7 +27,7 @@ import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
 import { useDebouncedValue } from '@/lib/use-debounce'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { refreshAfterConsoleAccess } from '@/hooks/use-console-access'
+import { useBucketKeyPermissionMutations } from '@/hooks/use-bucket-key-permissions'
 
 export const Route = createFileRoute('/buckets/')({
   component: BucketsPage,
@@ -94,33 +94,28 @@ function BucketsPage() {
   }, [allBuckets, query, sort])
 
   // Creating the bucket and granting the console's key are separate Garage
-  // calls. A failed grant does not undo the bucket: it is reported as a
-  // warning and can be retried from the bucket's object browser.
+  // calls. A failed grant does not undo the bucket: grantConsole reports it
+  // as a warning (afterCreate) and it can be retried from the object browser.
+  const { grantConsole: grantConsoleMutation } = useBucketKeyPermissionMutations()
+  const resetCreateForm = () => {
+    setShowCreate(false)
+    setNewBucketAlias('')
+    setGrantConsole(true)
+  }
   const createMutation = useMutation({
-    mutationFn: async (v: { alias: string; grantConsole: boolean }) => {
-      const created = await createBucket({ globalAlias: v.alias })
-      const bucketId = typeof created?.id === 'string' ? created.id : undefined
-      if (!v.grantConsole) return { bucketId, grantError: null }
-      if (!bucketId) {
-        return { bucketId, grantError: new Error('作成したバケットの ID を取得できませんでした') }
-      }
-      try {
-        const granted = await grantConsoleAccess(bucketId)
-        refreshAfterConsoleAccess(queryClient, bucketId, granted.accessKeyId)
-        return { bucketId, grantError: null }
-      } catch (e) {
-        return { bucketId, grantError: e instanceof Error ? e : new Error(String(e)) }
-      }
-    },
-    onSuccess: ({ grantError }) => {
+    mutationFn: (v: { alias: string; grantConsole: boolean }) =>
+      createBucket({ globalAlias: v.alias }),
+    onSuccess: (created, v) => {
       queryClient.invalidateQueries({ queryKey: ['buckets'] })
-      setShowCreate(false)
-      setNewBucketAlias('')
-      setGrantConsole(true)
+      resetCreateForm()
       toast.success('バケットを作成しました')
-      if (grantError) {
+      if (!v.grantConsole) return
+      const bucketId = typeof created?.id === 'string' ? created.id : undefined
+      if (bucketId) {
+        grantConsoleMutation.mutate({ bucketId, afterCreate: true })
+      } else {
         toast.warning(
-          `コンソールのキーへの権限付与に失敗しました: ${grantError.message}。バケット詳細のオブジェクト欄から再度付与できます`,
+          'コンソールのキーへの権限付与に失敗しました: 作成したバケットの ID を取得できませんでした。バケット詳細のオブジェクト欄から付与できます',
         )
       }
     },
@@ -171,7 +166,7 @@ function BucketsPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowCreate(false)}
+              onClick={resetCreateForm}
             >
               キャンセル
             </Button>

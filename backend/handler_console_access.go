@@ -1,11 +1,9 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
+	"bytes"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 
 	"github.com/go-chi/chi/v5"
@@ -18,15 +16,15 @@ func consoleKeyIDFromEnv() string {
 	return os.Getenv("GARAGE_S3_ACCESS_KEY")
 }
 
-// consoleAccessPerms is what POST /api/buckets/{id}/console-access grants:
-// enough for the object browser to list, download, upload and delete.
-// Owner is deliberately not included.
-var consoleAccessPerms = bucketKeyPerm{Read: true, Write: true}
+// maxConsoleAccessBodyBytes bounds the (empty) body of the console-access
+// endpoint. One byte over the limit is read so oversized bodies are rejected.
+const maxConsoleAccessBodyBytes = 1 << 10
 
 // handleGrantConsoleAccess handles POST /api/buckets/{id}/console-access:
-// grants read + write on the bucket to the console's own S3 key via Garage
-// AllowBucketKey. The key is fixed by the server configuration; the request
-// cannot name another key, so the body must be empty or "{}".
+// grants read + write on the bucket to the console's own S3 key, enough for
+// the object browser to list, download, upload and delete. Owner is left as
+// it is (never added). The key is fixed by the server configuration; the
+// request cannot name another key, so the body must be empty or "{}".
 //
 // The response has the same shape as PUT /api/buckets/{id}/keys/{kid};
 // changed is false when the key already had read and write.
@@ -36,64 +34,24 @@ func handleGrantConsoleAccess(garageAdmin *GarageAdminClient, consoleKeyID strin
 			writeJSONError(w, http.StatusServiceUnavailable, "the console's S3 key (GARAGE_S3_ACCESS_KEY) is not configured")
 			return
 		}
-		if r.ContentLength != 0 {
-			var empty struct{}
-			dec := json.NewDecoder(io.LimitReader(r.Body, 1<<10))
-			dec.DisallowUnknownFields()
-			if err := dec.Decode(&empty); err != nil && !errors.Is(err, io.EOF) {
-				writeJSONError(w, http.StatusBadRequest, "request body must be empty: the console's own key is always used")
-				return
-			}
-		}
-
-		bucketID := chi.URLParam(r, "id")
-		infoPath := "/v2/GetBucketInfo?id=" + url.QueryEscape(bucketID)
-		var info garageBucketKeys
-		if err := garageGetJSON(r.Context(), garageAdmin, infoPath, &info); err != nil {
-			writeGarageCallError(w, r, infoPath, err)
-			return
-		}
-		if info.ID != "" {
-			bucketID = info.ID
-		}
-		current := info.permsOf(consoleKeyID)
-		if current.Read && current.Write {
-			writeConsoleAccess(w, bucketKeyPermsResponse{
-				BucketID:    bucketID,
-				AccessKeyID: consoleKeyID,
-				Permissions: current,
-				Changed:     false,
-			})
-			return
-		}
-
-		const allowPath = "/v2/AllowBucketKey"
-		body, err := json.Marshal(map[string]any{
-			"bucketId":    bucketID,
-			"accessKeyId": consoleKeyID,
-			"permissions": consoleAccessPerms,
-		})
+		raw, err := io.ReadAll(io.LimitReader(r.Body, maxConsoleAccessBodyBytes+1))
 		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			writeJSONError(w, http.StatusBadRequest, "failed to read request body")
 			return
 		}
-		var after garageBucketKeys
-		if err := garageRequestJSON(r.Context(), garageAdmin, http.MethodPost, allowPath, body, &after); err != nil {
-			writeGarageCallError(w, r, allowPath, err)
+		if body := bytes.TrimSpace(raw); len(body) != 0 && string(body) != "{}" {
+			writeJSONError(w, http.StatusBadRequest, "request body must be empty: the console's own key is always used")
 			return
 		}
-		invalidateListCaches()
 
-		writeConsoleAccess(w, bucketKeyPermsResponse{
-			BucketID:    bucketID,
-			AccessKeyID: consoleKeyID,
-			Permissions: after.permsOf(consoleKeyID),
-			Changed:     true,
-		})
+		resp, path, err := setBucketKeyPermissions(r.Context(), garageAdmin, chi.URLParam(r, "id"), consoleKeyID,
+			func(current bucketKeyPerm) bucketKeyPerm {
+				return bucketKeyPerm{Read: true, Write: true, Owner: current.Owner}
+			})
+		if err != nil {
+			writeGarageCallError(w, r, path, err)
+			return
+		}
+		writeJSON(w, resp)
 	}
-}
-
-func writeConsoleAccess(w http.ResponseWriter, resp bucketKeyPermsResponse) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
 }

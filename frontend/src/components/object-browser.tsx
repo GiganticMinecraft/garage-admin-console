@@ -9,7 +9,6 @@ import {
   downloadObjectUrl,
   downloadObjectsZip,
   getPrefixSummary,
-  grantConsoleAccess,
   listObjects,
   uploadObject,
   type PrefixSummary,
@@ -25,9 +24,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { useConsoleKey, refreshAfterConsoleAccess } from '@/hooks/use-console-access'
+import { useBucketKeyPermissionMutations } from '@/hooks/use-bucket-key-permissions'
+import { useConsoleKey } from '@/hooks/use-console-access'
 import { formatBytes, formatDateTime } from '@/lib/format'
-import { emptyObjectsMessage, isConsoleKeyAccessDenied } from '@/lib/object-browser'
+import {
+  consoleAccessView,
+  emptyObjectsMessage,
+  shouldRetryObjectList,
+  type ConsoleGrantResult,
+} from '@/lib/object-browser'
 import { toast } from 'sonner'
 import { ArrowDown, ArrowUp, ArrowUpDown, Folder, FolderUp } from 'lucide-react'
 
@@ -512,6 +517,8 @@ export function ObjectBrowser({
     initialPageParam: '' as string,
     getNextPageParam: (lastPage) =>
       lastPage.isTruncated ? lastPage.nextContinuationToken : undefined,
+    // 4xx (e.g. the console's key has no access) is shown at once.
+    retry: (failureCount, error) => shouldRetryObjectList(failureCount, error),
   })
 
   const allObjects = useMemo(
@@ -655,24 +662,20 @@ export function ObjectBrowser({
   const tooManyForZip = selectedKeys.size > MAX_BATCH_DOWNLOAD_KEYS
 
   // --- Console key without access to this bucket ---------------------------
-  const accessDenied = objects.isError && isConsoleKeyAccessDenied(objects.error)
+  const { grantConsole } = useBucketKeyPermissionMutations()
+  const [lastConsoleGrant, setLastConsoleGrant] = useState<ConsoleGrantResult | null>(null)
+  const accessView = objects.isError
+    ? consoleAccessView(objects.error, objects.errorUpdatedAt, lastConsoleGrant)
+    : 'list'
+  // While S3 refuses the console's key, every object operation would fail
+  // the same way, so they are hidden or disabled.
+  const accessDenied = accessView !== 'list'
   const consoleKey = useConsoleKey(accessDenied)
   const [consoleAccessOpen, setConsoleAccessOpen] = useState(false)
-  const consoleAccessMutation = useMutation({
-    mutationFn: () => grantConsoleAccess(bucketId),
-    onSuccess: (result) => {
-      toast.success(
-        result.changed
-          ? 'コンソールのキーに read / write を付与しました'
-          : 'コンソールのキーには既に read / write があります',
-      )
-    },
-    onError: (error) => {
-      toast.error(`コンソールのキーへの権限付与に失敗しました: ${error.message}`)
-    },
-    onSettled: (result) =>
-      refreshAfterConsoleAccess(queryClient, bucketId, result?.accessKeyId ?? consoleKey.accessKeyId),
-  })
+  const grantConsoleAccess = () =>
+    grantConsole
+      .mutateAsync({ bucketId })
+      .then((result) => setLastConsoleGrant({ changed: result.changed, at: Date.now() }))
 
   return (
     <div className="space-y-2">
@@ -685,8 +688,9 @@ export function ObjectBrowser({
           placeholder="プレフィックスで絞り込み"
           className="min-w-48 flex-1"
           aria-label="プレフィックス"
+          disabled={accessDenied}
         />
-        {prefix && (
+        {prefix && !accessDenied && (
           <Button
             size="sm"
             variant="outline"
@@ -699,7 +703,9 @@ export function ObjectBrowser({
         )}
       </div>
 
-      <ObjectUploader bucketId={bucketId} prefix={prefix} onUploaded={invalidateObjects} />
+      {!accessDenied && (
+        <ObjectUploader bucketId={bucketId} prefix={prefix} onUploaded={invalidateObjects} />
+      )}
 
       {/* Batch action bar */}
       {selectedKeys.size > 0 && (
@@ -765,7 +771,7 @@ export function ObjectBrowser({
 
       {objects.isLoading ? (
         <p className="text-muted-foreground">オブジェクトを読み込み中...</p>
-      ) : accessDenied ? (
+      ) : accessView === 'grant' ? (
         <div className="space-y-2 rounded-lg border border-amber-500/50 bg-amber-500/5 p-4 text-sm">
           <p className="font-medium">
             コンソールのキー（<span className="break-all">{consoleKey.label}</span>）にこのバケットの権限がありません
@@ -776,10 +782,20 @@ export function ObjectBrowser({
           <Button
             size="sm"
             onClick={() => setConsoleAccessOpen(true)}
-            disabled={consoleAccessMutation.isPending}
+            disabled={grantConsole.isPending}
           >
             コンソールのキーに read/write を付与
           </Button>
+        </div>
+      ) : accessView === 'key-invalid' ? (
+        <div className="space-y-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+          <p className="font-medium text-destructive">
+            コンソールのキー（<span className="break-all">{consoleKey.label}</span>）にはこのバケットの read / write 権限がありますが、S3 へのアクセスが拒否されています
+          </p>
+          <p className="text-muted-foreground">
+            キー自体（認証情報）が無効になっている可能性があります。キーが削除されていないか、コンソールに設定されたシークレットキー（GARAGE_S3_SECRET_KEY）が正しいかを確認してください。権限を付与し直しても解決しません。
+          </p>
+          <p className="break-all text-xs text-muted-foreground">{objects.error?.message}</p>
         </div>
       ) : objects.isError ? (
         <p className="text-destructive">
@@ -887,8 +903,8 @@ export function ObjectBrowser({
         onOpenChange={setConsoleAccessOpen}
         title="コンソールのキーに権限を付与"
         description={`コンソールのキー（${consoleKey.label}）に「${bucketName ?? bucketId}」の read / write 権限を付与しますか？owner 権限は付与しません。権限は「キーの権限」からいつでも変更・取り消しできます。`}
-        onConfirm={() => consoleAccessMutation.mutateAsync()}
-        isPending={consoleAccessMutation.isPending}
+        onConfirm={grantConsoleAccess}
+        isPending={grantConsole.isPending}
         confirmLabel="付与"
         pendingLabel="付与中..."
         confirmVariant="default"

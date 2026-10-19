@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { grantBucketKey, revokeBucketKey, setBucketKeyPermissions } from '@/api'
+import { grantBucketKey, grantConsoleAccess, revokeBucketKey, setBucketKeyPermissions } from '@/api'
 import type { BucketKeyPermissions } from '@/api'
 
 interface Target {
@@ -17,6 +17,8 @@ type WithPermissions = Target & { permissions: BucketKeyPermissions }
  * - edit: set an existing grant to exactly the given flags → PUT, which the
  *   backend turns into AllowBucketKey + DenyBucketKey
  * - revoke: DELETE / DenyBucketKey for all three flags
+ * - grantConsole: read + write for the console's own S3 key
+ *   (POST /api/buckets/{id}/console-access); also refreshes the object list
  *
  * They are separate mutations so the grant form and the edit dialog have
  * their own pending state. Both sides are refreshed on settle, not only on
@@ -28,9 +30,9 @@ type WithPermissions = Target & { permissions: BucketKeyPermissions }
 export function useBucketKeyPermissionMutations() {
   const queryClient = useQueryClient()
 
-  const refresh = ({ bucketId, keyId }: Target) => {
+  const refresh = ({ bucketId, keyId }: { bucketId: string; keyId?: string }) => {
     queryClient.invalidateQueries({ queryKey: ['bucket', bucketId] })
-    queryClient.invalidateQueries({ queryKey: ['key', keyId], exact: true })
+    if (keyId) queryClient.invalidateQueries({ queryKey: ['key', keyId], exact: true })
     queryClient.invalidateQueries({ queryKey: ['buckets'] })
     queryClient.invalidateQueries({ queryKey: ['keys'] })
   }
@@ -59,5 +61,33 @@ export function useBucketKeyPermissionMutations() {
     onSettled: (_data, _error, v) => refresh(v),
   })
 
-  return { grant, edit, revoke }
+  // read + write for the console's own S3 key (the backend picks the key).
+  // `afterCreate` marks the call made right after creating a bucket: the
+  // bucket itself was created, so a failure is only a warning there.
+  const grantConsole = useMutation({
+    mutationFn: (v: { bucketId: string; afterCreate?: boolean }) => grantConsoleAccess(v.bucketId),
+    onSuccess: (result, v) => {
+      if (v.afterCreate) return
+      toast.success(
+        result.changed
+          ? 'コンソールのキーに read / write を付与しました'
+          : 'コンソールのキーには既に read / write があります',
+      )
+    },
+    onError: (error, v) => {
+      if (v.afterCreate) {
+        toast.warning(
+          `コンソールのキーへの権限付与に失敗しました: ${error.message}。バケット詳細のオブジェクト欄から再度付与できます`,
+        )
+      } else {
+        toast.error(`コンソールのキーへの権限付与に失敗しました: ${error.message}`)
+      }
+    },
+    onSettled: (result, _error, v) => {
+      refresh({ bucketId: v.bucketId, keyId: result?.accessKeyId })
+      queryClient.invalidateQueries({ queryKey: ['objects', v.bucketId] })
+    },
+  })
+
+  return { grant, edit, revoke, grantConsole }
 }

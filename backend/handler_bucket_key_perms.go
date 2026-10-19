@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -72,11 +73,8 @@ func writeGarageCallError(w http.ResponseWriter, r *http.Request, path string, e
 // body {"read":bool,"write":bool,"owner":bool}: the desired permission set of
 // one key on one bucket.
 //
-// Garage only offers AllowBucketKey (sets the given flags) and DenyBucketKey
-// (clears the given flags), so this reads the current permissions with
-// GetBucketInfo and sends AllowBucketKey for the flags being turned on and
-// DenyBucketKey for the flags being turned off, skipping a call that would be
-// a no-op. At least one flag must be true; revoking everything stays on
+// See setBucketKeyPermissions for how this maps onto Garage. At least one
+// flag must be true; revoking everything stays on
 // DELETE /api/buckets/{id}/keys/{kid}.
 func handleSetBucketKeyPermissions(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -95,72 +93,94 @@ func handleSetBucketKeyPermissions(garageAdmin *GarageAdminClient) http.HandlerF
 			return
 		}
 
-		infoPath := "/v2/GetBucketInfo?id=" + url.QueryEscape(bucketID)
-		var info garageBucketKeys
-		if err := garageGetJSON(r.Context(), garageAdmin, infoPath, &info); err != nil {
-			writeGarageCallError(w, r, infoPath, err)
+		resp, path, err := setBucketKeyPermissions(r.Context(), garageAdmin, bucketID, keyID,
+			func(bucketKeyPerm) bucketKeyPerm { return desired })
+		if err != nil {
+			writeGarageCallError(w, r, path, err)
 			return
 		}
-		if info.ID != "" {
-			bucketID = info.ID
-		}
-		current := info.permsOf(keyID)
-
-		allow := bucketKeyPerm{
-			Read:  desired.Read && !current.Read,
-			Write: desired.Write && !current.Write,
-			Owner: desired.Owner && !current.Owner,
-		}
-		deny := bucketKeyPerm{
-			Read:  !desired.Read && current.Read,
-			Write: !desired.Write && current.Write,
-			Owner: !desired.Owner && current.Owner,
-		}
-
-		result := current
-		changed := false
-		// Allow first: a failure midway then leaves the key with more of the
-		// requested access instead of locking it out.
-		for _, step := range []struct {
-			path  string
-			perms bucketKeyPerm
-		}{
-			{"/v2/AllowBucketKey", allow},
-			{"/v2/DenyBucketKey", deny},
-		} {
-			if !step.perms.any() {
-				continue
-			}
-			body, err := json.Marshal(map[string]any{
-				"bucketId":    bucketID,
-				"accessKeyId": keyID,
-				"permissions": step.perms,
-			})
-			if err != nil {
-				writeJSONError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			var after garageBucketKeys
-			if err := garageRequestJSON(r.Context(), garageAdmin, http.MethodPost, step.path, body, &after); err != nil {
-				if changed {
-					invalidateListCaches()
-				}
-				writeGarageCallError(w, r, step.path, err)
-				return
-			}
-			changed = true
-			result = after.permsOf(keyID)
-		}
-		if changed {
-			invalidateListCaches()
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(bucketKeyPermsResponse{
-			BucketID:    bucketID,
-			AccessKeyID: keyID,
-			Permissions: result,
-			Changed:     changed,
-		})
+		writeJSON(w, resp)
 	}
+}
+
+// writeJSON writes v as a 200 JSON response.
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+// setBucketKeyPermissions sets one key's permissions on one bucket to
+// desired(current), where current is read with GetBucketInfo first.
+//
+// Garage only offers AllowBucketKey (sets the given flags) and DenyBucketKey
+// (clears the given flags), so this sends AllowBucketKey for the flags being
+// turned on and DenyBucketKey for the flags being turned off, skipping a call
+// that would be a no-op. Allow goes first: a failure midway then leaves the
+// key with more of the requested access instead of locking it out.
+//
+// On failure it also returns the Garage path that failed, for
+// writeGarageCallError. The list caches are invalidated whenever Garage
+// accepted a change, including when a later step then failed.
+func setBucketKeyPermissions(ctx context.Context, garageAdmin *GarageAdminClient, bucketID, keyID string, desired func(current bucketKeyPerm) bucketKeyPerm) (bucketKeyPermsResponse, string, error) {
+	infoPath := "/v2/GetBucketInfo?id=" + url.QueryEscape(bucketID)
+	var info garageBucketKeys
+	if err := garageGetJSON(ctx, garageAdmin, infoPath, &info); err != nil {
+		return bucketKeyPermsResponse{}, infoPath, err
+	}
+	if info.ID != "" {
+		bucketID = info.ID
+	}
+	current := info.permsOf(keyID)
+	want := desired(current)
+
+	allow := bucketKeyPerm{
+		Read:  want.Read && !current.Read,
+		Write: want.Write && !current.Write,
+		Owner: want.Owner && !current.Owner,
+	}
+	deny := bucketKeyPerm{
+		Read:  !want.Read && current.Read,
+		Write: !want.Write && current.Write,
+		Owner: !want.Owner && current.Owner,
+	}
+
+	result := current
+	changed := false
+	for _, step := range []struct {
+		path  string
+		perms bucketKeyPerm
+	}{
+		{"/v2/AllowBucketKey", allow},
+		{"/v2/DenyBucketKey", deny},
+	} {
+		if !step.perms.any() {
+			continue
+		}
+		body, err := json.Marshal(map[string]any{
+			"bucketId":    bucketID,
+			"accessKeyId": keyID,
+			"permissions": step.perms,
+		})
+		if err != nil {
+			return bucketKeyPermsResponse{}, step.path, err
+		}
+		var after garageBucketKeys
+		if err := garageRequestJSON(ctx, garageAdmin, http.MethodPost, step.path, body, &after); err != nil {
+			if changed {
+				invalidateListCaches()
+			}
+			return bucketKeyPermsResponse{}, step.path, err
+		}
+		changed = true
+		result = after.permsOf(keyID)
+	}
+	if changed {
+		invalidateListCaches()
+	}
+	return bucketKeyPermsResponse{
+		BucketID:    bucketID,
+		AccessKeyID: keyID,
+		Permissions: result,
+		Changed:     changed,
+	}, "", nil
 }
