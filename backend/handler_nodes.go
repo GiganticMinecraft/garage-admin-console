@@ -138,36 +138,6 @@ func fetchSingleNode(w http.ResponseWriter, r *http.Request, garageAdmin *Garage
 	return nodeID, raw, true
 }
 
-// forwardResponse streams an upstream response (status, content type, body) to the client.
-func forwardResponse(w http.ResponseWriter, r *http.Request, resp *http.Response, garagePath string) {
-	ct := resp.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "application/json"
-	}
-	w.Header().Set("Content-Type", ct)
-	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
-	}
-}
-
-// proxyNodeRequest forwards one request to Garage and streams the response
-// back unchanged (used for the mutating endpoints, which return MultiResponse).
-func proxyNodeRequest(w http.ResponseWriter, r *http.Request, garageAdmin *GarageAdminClient, method, garagePath string, body []byte) {
-	var reader io.Reader
-	if body != nil {
-		reader = bytes.NewReader(body)
-	}
-	resp, err := garageAdmin.doRequest(r.Context(), method, garagePath, reader)
-	if err != nil {
-		slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	forwardResponse(w, r, resp, garagePath)
-}
-
 func writeRawJSON(w http.ResponseWriter, raw []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(raw)
@@ -254,6 +224,15 @@ func handleGetNodeWorkerVariables(garageAdmin *GarageAdminClient) http.HandlerFu
 	}
 }
 
+// settableWorkerVariables are the writable Garage background variables the
+// console exposes. Everything else (read-only scrub/lifecycle state, or
+// variables added by future Garage versions) is rejected before reaching Garage.
+var settableWorkerVariables = map[string]bool{
+	"resync-tranquility":  true,
+	"resync-worker-count": true,
+	"scrub-tranquility":   true,
+}
+
 // setWorkerVariableRequest is the body of POST /api/nodes/{id}/worker-variables.
 type setWorkerVariableRequest struct {
 	Variable string `json:"variable"`
@@ -263,7 +242,8 @@ type setWorkerVariableRequest struct {
 
 // handleSetNodeWorkerVariable proxies POST /api/nodes/{id}/worker-variables to
 // Garage POST /v2/SetWorkerVariable?node={id|*}. Body: {variable, value, allNodes?}.
-// Garage validates the variable name and value; its MultiResponse is returned as-is.
+// Only settableWorkerVariables are accepted; Garage validates the value.
+// Its MultiResponse is returned as-is.
 func handleSetNodeWorkerVariable(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := nodeIDParam(w, r)
@@ -274,12 +254,18 @@ func handleSetNodeWorkerVariable(garageAdmin *GarageAdminClient) http.HandlerFun
 		if !decodeNodeBody(w, r, &req) {
 			return
 		}
-		if strings.TrimSpace(req.Variable) == "" || strings.TrimSpace(req.Value) == "" {
+		variable := strings.TrimSpace(req.Variable)
+		value := strings.TrimSpace(req.Value)
+		if variable == "" || value == "" {
 			writeJSONError(w, http.StatusBadRequest, "variable and value are required")
 			return
 		}
-		body, _ := json.Marshal(map[string]string{"variable": req.Variable, "value": strings.TrimSpace(req.Value)})
-		proxyNodeRequest(w, r, garageAdmin, http.MethodPost, "/v2/SetWorkerVariable?node="+url.QueryEscape(nodeTarget(id, req.AllNodes)), body)
+		if !settableWorkerVariables[variable] {
+			writeJSONError(w, http.StatusBadRequest, "unsupported worker variable: "+variable)
+			return
+		}
+		body, _ := json.Marshal(map[string]string{"variable": variable, "value": value})
+		proxyGarageRequest(w, r, garageAdmin, http.MethodPost, "/v2/SetWorkerVariable?node="+url.QueryEscape(nodeTarget(id, req.AllNodes)), bytes.NewReader(body))
 	}
 }
 
@@ -297,7 +283,7 @@ func handleLaunchNodeRepair(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "request body too large or unreadable")
 			return
 		}
-		proxyNodeRequest(w, r, garageAdmin, http.MethodPost, "/v2/LaunchRepairOperation?node="+url.QueryEscape(id), body)
+		proxyGarageRequest(w, r, garageAdmin, http.MethodPost, "/v2/LaunchRepairOperation?node="+url.QueryEscape(id), bytes.NewReader(body))
 	}
 }
 
@@ -318,31 +304,20 @@ func handleCreateNodeSnapshot(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		if !decodeNodeBody(w, r, &req) {
 			return
 		}
-		proxyNodeRequest(w, r, slow, http.MethodPost, "/v2/CreateMetadataSnapshot?node="+url.QueryEscape(nodeTarget(id, req.AllNodes)), nil)
+		proxyGarageRequest(w, r, slow, http.MethodPost, "/v2/CreateMetadataSnapshot?node="+url.QueryEscape(nodeTarget(id, req.AllNodes)), nil)
 	}
 }
 
 // handleListNodeWorkers proxies GET /api/nodes/{id}/workers to Garage POST
 // /v2/ListWorkers?node={id} and returns the same shape as /api/workers
-// ({workers: [...with nodeId], errors: {}}) restricted to that node.
+// ({workers: [...with nodeId], errors: {nodeId: msg}}) restricted to that node.
 func handleListNodeWorkers(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := nodeIDParam(w, r)
 		if !ok {
 			return
 		}
-		nodeID, raw, ok := fetchSingleNode(w, r, garageAdmin, http.MethodPost, "/v2/ListWorkers?node="+url.QueryEscape(id), []byte(`{}`))
-		if !ok {
-			return
-		}
-		var workers []json.RawMessage
-		if err := json.Unmarshal(raw, &workers); err != nil {
-			slog.ErrorContext(r.Context(), "failed to decode ListWorkers payload", "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(flattenWorkers(map[string][]json.RawMessage{nodeID: workers}, nil))
+		serveWorkers(w, r, garageAdmin, "/v2/ListWorkers?node="+url.QueryEscape(id))
 	}
 }
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 )
@@ -84,22 +83,6 @@ func handleRetryBlockResync(garageAdmin *GarageAdminClient) http.HandlerFunc {
 // streams the response back to the client.
 func proxyGaragePOST(garageAdmin *GarageAdminClient, garagePath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		ct := resp.Header.Get("Content-Type")
-		if ct == "" {
-			ct = "application/json"
-		}
-		w.Header().Set("Content-Type", ct)
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
-		}
+		proxyGarageRequest(w, r, garageAdmin, http.MethodPost, garagePath, r.Body)
 	}
 }

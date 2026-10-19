@@ -296,15 +296,7 @@ func proxyGarageMutation(w http.ResponseWriter, r *http.Request, garageAdmin *Ga
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		invalidateListCaches()
 	}
-	ct := resp.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "application/json"
-	}
-	w.Header().Set("Content-Type", ct)
-	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
-	}
+	forwardResponse(w, r, resp, garagePath)
 }
 
 // fetchInfoConcurrently calls fetch for every id with at most enrichWorkers in

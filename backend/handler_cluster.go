@@ -10,23 +10,33 @@ import (
 // and streams the JSON response back to the client.
 func proxyGarageGET(garageAdmin *GarageAdminClient, garagePath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodGet, garagePath, nil)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
+		proxyGarageRequest(w, r, garageAdmin, http.MethodGet, garagePath, nil)
+	}
+}
 
-		ct := resp.Header.Get("Content-Type")
-		if ct == "" {
-			ct = "application/json"
-		}
-		w.Header().Set("Content-Type", ct)
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
-		}
+// proxyGarageRequest sends one request to the Garage Admin API and streams
+// the response back unchanged. A transport failure becomes a 502.
+func proxyGarageRequest(w http.ResponseWriter, r *http.Request, garageAdmin *GarageAdminClient, method, garagePath string, body io.Reader) {
+	resp, err := garageAdmin.doRequest(r.Context(), method, garagePath, body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	forwardResponse(w, r, resp, garagePath)
+}
+
+// forwardResponse streams an upstream response (status, content type, body) to the client.
+func forwardResponse(w http.ResponseWriter, r *http.Request, resp *http.Response, garagePath string) {
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "application/json"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
 	}
 }
 

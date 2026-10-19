@@ -17,10 +17,11 @@ import {
   type NodeStatistics,
   type PartitionUsage,
   type RepairType,
-  type Worker,
   type WorkerVariables,
 } from '@/api'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
+import { formatBytes } from '@/lib/format'
+import { describeState, formatSecsAgo, type StateKind } from '@/lib/workers'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -40,24 +41,6 @@ import { CopyButton } from '@/components/copy-button'
 export const Route = createFileRoute('/nodes/$id')({
   component: NodeDetailPage,
 })
-
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  let i = 0
-  let value = bytes
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024
-    i++
-  }
-  return `${value.toFixed(1)} ${units[i]}`
-}
-
-function formatSecsAgo(secs: number): string {
-  if (secs < 60) return `${Math.floor(secs)}秒前`
-  if (secs < 3600) return `${Math.floor(secs / 60)}分前`
-  if (secs < 86400) return `${Math.floor(secs / 3600)}時間前`
-  return `${Math.floor(secs / 86400)}日前`
-}
 
 /**
  * Turns a MultiResponse from a mutating node endpoint into a toast. When no
@@ -194,7 +177,7 @@ function StatsSection({ stats }: { stats: NodeStatistics }) {
           />
         </div>
       ) : null}
-      {tables && tables.length > 0 ? (
+      {tables ? (
         <div className="overflow-x-auto rounded-lg border">
           <Table>
             <TableHeader>
@@ -222,7 +205,7 @@ function StatsSection({ stats }: { stats: NodeStatistics }) {
           </Table>
         </div>
       ) : null}
-      {(!bm || !tables || tables.length === 0) && (
+      {!bm && !tables && (
         <div className="space-y-1">
           <p className="text-sm text-muted-foreground">
             このノードは構造化された統計を返しませんでした (Garage v2.3.0 未満)。生の出力を表示します。
@@ -602,19 +585,8 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
 // ---------------------------------------------------------------------------
 // Workers
 
-// Garage serializes WorkerStateResp as "busy" | "idle" | "done" or
-// { throttled: { durationSecs } }; older console code assumed a string payload.
-function describeState(state: Worker['state'] | { throttled: { durationSecs: number } }): { label: string; rank: number } {
-  if (typeof state === 'object' && state !== null && 'throttled' in state) {
-    const t = state.throttled as unknown
-    const secs = typeof t === 'object' && t !== null && 'durationSecs' in t ? Number((t as { durationSecs: number }).durationSecs) : NaN
-    return { label: Number.isFinite(secs) ? `throttled (${secs.toFixed(1)}s)` : `throttled (${String(t)})`, rank: 1 }
-  }
-  if (state === 'busy') return { label: 'busy', rank: 0 }
-  if (state === 'idle') return { label: 'idle', rank: 2 }
-  if (state === 'done') return { label: 'done', rank: 3 }
-  return { label: typeof state === 'string' && state ? state : 'unknown', rank: 4 }
-}
+// Sort order for the state column: active workers first.
+const STATE_RANK: Record<StateKind, number> = { busy: 0, throttled: 1, idle: 2, other: 3 }
 
 type SortKey = 'name' | 'state'
 
@@ -634,7 +606,10 @@ function WorkersSection({ nodeId }: { nodeId: string }) {
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase()
     const list = (workers.data?.workers ?? [])
-      .map((w) => ({ w, state: describeState(w.state) }))
+      .map((w) => {
+        const state = describeState(w.state)
+        return { w, state: { ...state, rank: STATE_RANK[state.kind] } }
+      })
       .filter(({ w, state }) => !q || w.name.toLowerCase().includes(q) || state.label.includes(q))
     list.sort((a, b) => {
       const c =
@@ -669,6 +644,10 @@ function WorkersSection({ nodeId }: { nodeId: string }) {
         <Skeleton className="h-40 w-full" />
       ) : workers.isError ? (
         <p className="text-destructive">ワーカーを読み込めませんでした: {workers.error.message}</p>
+      ) : Object.keys(workers.data?.errors ?? {}).length > 0 && rows.length === 0 ? (
+        <p className="text-destructive">
+          ワーカーを読み込めませんでした: {Object.values(workers.data?.errors ?? {}).join(' / ')}
+        </p>
       ) : rows.length === 0 ? (
         <p className="text-muted-foreground">{search ? '一致するワーカーがありません' : 'ワーカーがありません'}</p>
       ) : (
@@ -697,7 +676,7 @@ function WorkersSection({ nodeId }: { nodeId: string }) {
                     <TableCell className="font-medium">{w.name || '-'}</TableCell>
                     <TableCell>
                       <Badge
-                        variant={hasError ? 'destructive' : state.rank === 0 ? 'default' : state.rank === 2 ? 'secondary' : 'outline'}
+                        variant={hasError ? 'destructive' : state.kind === 'busy' ? 'default' : state.kind === 'idle' ? 'secondary' : 'outline'}
                       >
                         {state.label}
                       </Badge>
@@ -741,17 +720,25 @@ function WorkersSection({ nodeId }: { nodeId: string }) {
 function NodeDetailPage() {
   const { id } = Route.useParams()
 
-  const info = useQuery({ queryKey: ['node', id, 'info'], queryFn: () => getNode(id), retry: 1 })
-  const stats = useQuery({ queryKey: ['node', id, 'stats'], queryFn: () => getNodeStats(id), retry: 1 })
-  const vars = useQuery({
-    queryKey: ['node', id, 'worker-variables'],
-    queryFn: () => getNodeWorkerVariables(id),
-    retry: 1,
-  })
   // Cluster status still knows hostname / up state / last seen for nodes that
   // are down and therefore cannot answer GetNodeInfo themselves.
   const status = useQuery({ queryKey: ['cluster', 'status'], queryFn: getClusterStatus })
   const clusterNode = status.data?.nodes.find((n) => n.id === id || (id.length >= 8 && n.id.startsWith(id)))
+  // Garage resolves `node=<id>` against the cluster layout, so nodes without
+  // a role (not yet assigned in the layout) always answer 400 there. Wait for
+  // the cluster status, then skip the per-node queries for those nodes. If
+  // the status itself fails, still try the per-node queries.
+  const unassigned = clusterNode != null && clusterNode.role == null
+  const perNodeEnabled = !status.isPending && !unassigned
+
+  const info = useQuery({ queryKey: ['node', id, 'info'], queryFn: () => getNode(id), retry: 1, enabled: perNodeEnabled })
+  const stats = useQuery({ queryKey: ['node', id, 'stats'], queryFn: () => getNodeStats(id), retry: 1, enabled: perNodeEnabled })
+  const vars = useQuery({
+    queryKey: ['node', id, 'worker-variables'],
+    queryFn: () => getNodeWorkerVariables(id),
+    retry: 1,
+    enabled: perNodeEnabled,
+  })
 
   const hostname = info.data?.hostname ?? clusterNode?.hostname ?? null
   const fullId = info.data?.nodeId ?? clusterNode?.id ?? id
@@ -788,45 +775,63 @@ function NodeDetailPage() {
         </span>
       </div>
 
-      {info.isLoading ? (
+      {status.isPending ? (
         <Skeleton className="h-48 w-full" />
-      ) : info.isError ? (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
-          <p className="font-medium text-destructive">ノード情報を取得できませんでした</p>
-          <p className="text-muted-foreground">{info.error.message}</p>
-          {clusterNode && (
-            <p className="mt-2 text-muted-foreground">
-              クラスタステータス上のアドレス: <span className="font-mono">{clusterNode.addr ?? '不明'}</span>・バージョン:{' '}
-              {clusterNode.garageVersion ?? '不明'}
-            </p>
-          )}
+      ) : unassigned ? (
+        <div className="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+          <p className="font-medium">レイアウト未割当のためノード別情報は取得できません</p>
+          <p className="text-muted-foreground">
+            Garage はノード指定の API をクラスタレイアウト上のノードに対してのみ解決します。
+            <Link to="/layout" className="mx-1 text-primary underline underline-offset-4">レイアウト</Link>
+            でロールを割り当てて適用すると、統計・Worker 変数・メンテナンス操作が使えるようになります。
+          </p>
+          <p className="text-muted-foreground">
+            アドレス: <span className="font-mono">{clusterNode?.addr ?? '不明'}</span>・バージョン: {clusterNode?.garageVersion ?? '不明'}
+          </p>
         </div>
       ) : (
-        <NodeHeader info={info.data!} />
-      )}
-
-      <div className="space-y-3">
-        <h2 className="text-lg font-semibold">統計</h2>
-        {stats.isLoading ? (
-          <Skeleton className="h-40 w-full" />
-        ) : stats.isError ? (
-          <p className="text-destructive">統計を取得できませんでした: {stats.error.message}</p>
+        <>
+        {info.isLoading ? (
+          <Skeleton className="h-48 w-full" />
+        ) : info.isError ? (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
+            <p className="font-medium text-destructive">ノード情報を取得できませんでした</p>
+            <p className="text-muted-foreground">{info.error.message}</p>
+            {clusterNode && (
+              <p className="mt-2 text-muted-foreground">
+                クラスタステータス上のアドレス: <span className="font-mono">{clusterNode.addr ?? '不明'}</span>・バージョン:{' '}
+                {clusterNode.garageVersion ?? '不明'}
+              </p>
+            )}
+          </div>
         ) : (
-          <StatsSection stats={stats.data!} />
+          <NodeHeader info={info.data!} />
         )}
-      </div>
 
-      {vars.isLoading ? (
-        <Skeleton className="h-48 w-full" />
-      ) : vars.isError ? (
-        <p className="text-destructive">Worker 変数を取得できませんでした: {vars.error.message}</p>
-      ) : (
-        <WorkerVariablesCard nodeId={id} vars={vars.data!} />
+        <div className="space-y-3">
+          <h2 className="text-lg font-semibold">統計</h2>
+          {stats.isLoading ? (
+            <Skeleton className="h-40 w-full" />
+          ) : stats.isError ? (
+            <p className="text-destructive">統計を取得できませんでした: {stats.error.message}</p>
+          ) : (
+            <StatsSection stats={stats.data!} />
+          )}
+        </div>
+
+        {vars.isLoading ? (
+          <Skeleton className="h-48 w-full" />
+        ) : vars.isError ? (
+          <p className="text-destructive">Worker 変数を取得できませんでした: {vars.error.message}</p>
+        ) : (
+          <WorkerVariablesCard nodeId={id} vars={vars.data!} />
+        )}
+
+        <MaintenanceCard nodeId={id} nodeName={title} />
+
+        <WorkersSection nodeId={id} />
+        </>
       )}
-
-      <MaintenanceCard nodeId={id} nodeName={title} />
-
-      <WorkersSection nodeId={id} />
     </div>
   )
 }

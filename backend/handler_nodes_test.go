@@ -128,18 +128,32 @@ func TestNodeWorkersRoute(t *testing.T) {
 func TestNodeRoutesRejectInvalidID(t *testing.T) {
 	garage, calls := newFakeNodeGarage(t)
 	c := newNodeTestClient(t, garage.URL)
-	for _, path := range []string{
-		"/api/nodes/zz",
-		"/api/nodes/%2A/stats",
-		"/api/nodes/abc&node=x/workers",
-		"/api/nodes/" + strings.Repeat("a", 65),
+	// Each of these is a single path segment, so chi always routes it to a
+	// node handler and the ID validation must answer with a JSON 400.
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodGet, "/api/nodes/zz", ""},
+		{http.MethodGet, "/api/nodes/%2A/stats", ""},
+		{http.MethodGet, "/api/nodes/" + strings.Repeat("a", 65), ""},
+		{http.MethodGet, "/api/nodes/abc&node=x/workers", ""},
+		{http.MethodGet, "/api/nodes/zz/worker-variables", ""},
+		{http.MethodPost, "/api/nodes/nothex/snapshot", "{}"},
+		{http.MethodPost, "/api/nodes/zz/repair", `{"repairType":"tables"}`},
+		{http.MethodPost, "/api/nodes/zz/worker-variables", `{"variable":"resync-tranquility","value":"1"}`},
 	} {
-		if rec := c.do(http.MethodGet, path, ""); rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
-			t.Errorf("%s: status = %d, want 400/404", path, rec.Code)
+		rec := c.do(tc.method, tc.path, tc.body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s %s: status = %d, want 400", tc.method, tc.path, rec.Code)
+			continue
 		}
-	}
-	if rec := c.do(http.MethodPost, "/api/nodes/nothex/snapshot", "{}"); rec.Code != http.StatusBadRequest {
-		t.Errorf("snapshot with bad id: status = %d", rec.Code)
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || !strings.Contains(body.Error, "invalid node id") {
+			t.Errorf("%s %s: body = %q, want JSON {error: invalid node id...}", tc.method, tc.path, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("%s %s: Content-Type = %q", tc.method, tc.path, ct)
+		}
 	}
 	if n := len(calls()); n != 0 {
 		t.Errorf("invalid ids must not reach Garage, got %d calls", n)
@@ -189,7 +203,7 @@ func TestNodeMutatingRoutes(t *testing.T) {
 		path, body string
 		want       upstreamCall
 	}{
-		{"/api/nodes/abcd/worker-variables", `{"variable":"resync-tranquility","value":" 5 "}`,
+		{"/api/nodes/abcd/worker-variables", `{"variable":" resync-tranquility ","value":" 5 "}`,
 			upstreamCall{http.MethodPost, "/v2/SetWorkerVariable", "abcd", `{"value":"5","variable":"resync-tranquility"}`}},
 		{"/api/nodes/abcd/worker-variables", `{"variable":"scrub-tranquility","value":"3","allNodes":true}`,
 			upstreamCall{http.MethodPost, "/v2/SetWorkerVariable", "*", `{"value":"3","variable":"scrub-tranquility"}`}},
@@ -219,7 +233,8 @@ func TestNodeMutatingRoutes(t *testing.T) {
 func TestSetWorkerVariableValidation(t *testing.T) {
 	garage, calls := newFakeNodeGarage(t)
 	c := newNodeTestClient(t, garage.URL)
-	for _, body := range []string{`{}`, `{"variable":"resync-tranquility"}`, `{"variable":"","value":"1"}`, `not json`, `{"variable":"x","value":1}`} {
+	for _, body := range []string{`{}`, `{"variable":"resync-tranquility"}`, `{"variable":"","value":"1"}`, `not json`, `{"variable":"x","value":1}`,
+		`{"variable":"scrub-last-completed","value":"never"}`, `{"variable":"lifecycle-last-completed","value":"x"}`, `{"variable":"nope","value":"1"}`} {
 		if rec := c.do(http.MethodPost, "/api/nodes/self/worker-variables", body); rec.Code != http.StatusBadRequest {
 			t.Errorf("body %s: status = %d, want 400", body, rec.Code)
 		}
@@ -303,4 +318,20 @@ func TestNodeRoutesIntegration(t *testing.T) {
 type workersResponseDecoded struct {
 	Workers []map[string]any  `json:"workers"`
 	Errors  map[string]string `json:"errors"`
+}
+
+func TestNodeWorkersForwardsGarageError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/ListWorkers", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"code":"InvalidRequest","message":"Bad request: No nodes matching abcd"}`))
+	})
+	garage := httptest.NewServer(mux)
+	defer garage.Close()
+	c := newNodeTestClient(t, garage.URL)
+	rec := c.do(http.MethodGet, "/api/nodes/abcd/workers", "")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "No nodes matching") {
+		t.Errorf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
 }
