@@ -25,6 +25,7 @@ func TestAttachmentDisposition(t *testing.T) {
 		{"japanese", "ワールド.zip", `attachment; filename="____.zip"; filename*=UTF-8''%E3%83%AF%E3%83%BC%E3%83%AB%E3%83%89.zip`},
 		{"quote and backslash", `a"b\c.txt`, `attachment; filename="a_b_c.txt"; filename*=UTF-8''a%22b%5Cc.txt`},
 		{"control chars dropped", "a\r\nb.txt", `attachment; filename="ab.txt"; filename*=UTF-8''a%0D%0Ab.txt`},
+		{"rfc8187 non attr-chars", "backup=2026:10@host.zip", `attachment; filename="backup=2026:10@host.zip"; filename*=UTF-8''backup%3D2026%3A10%40host.zip`},
 		{"empty", "", `attachment; filename="download"; filename*=UTF-8''download`},
 	}
 	for _, c := range cases {
@@ -43,11 +44,18 @@ func TestZipFilename(t *testing.T) {
 	if got := zipFilename("611e4978", "mc-worlds"); got != "mc-worlds-files.zip" {
 		t.Errorf("alias preferred: got %q", got)
 	}
+	if got := zipFilename("611e4978", "../../evil"); got != "....evil-files.zip" {
+		t.Errorf("path separators stripped: got %q", got)
+	}
+	if got := zipFilename("611e4978", "/"); got != "611e4978-files.zip" {
+		t.Errorf("empty after sanitizing falls back to bucket: got %q", got)
+	}
 }
 
 // TestDownloadObjectIntegration runs against a real Garage when
 // GARAGE_TEST_S3_ENDPOINT / GARAGE_TEST_S3_ACCESS_KEY / GARAGE_TEST_S3_SECRET_KEY /
-// GARAGE_TEST_S3_BUCKET are set (see scratchpad/garage in the dev notes).
+// GARAGE_TEST_S3_BUCKET are set. Point it at a throwaway bucket; it writes
+// one object and deletes it again afterwards.
 func TestDownloadObjectIntegration(t *testing.T) {
 	endpoint := os.Getenv("GARAGE_TEST_S3_ENDPOINT")
 	if endpoint == "" {
@@ -64,6 +72,9 @@ func TestDownloadObjectIntegration(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
+	t.Cleanup(func() {
+		_, _ = client.DeleteObject(context.Background(), &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	})
 
 	r := chi.NewRouter()
 	r.Get("/api/objects/{bucket}/download", handleDownloadObject(s3c))

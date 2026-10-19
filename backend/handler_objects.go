@@ -8,8 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -55,7 +55,11 @@ func handleListObjects(s3Client *S3Client) http.HandlerFunc {
 			input.ContinuationToken = aws.String(continuationToken)
 		}
 
-		page, err := s3Client.client.ListObjectsV2(r.Context(), input)
+		// Non-streaming call: bound the whole exchange, since the client no
+		// longer carries a global timeout (see newS3SDKClient).
+		ctx, cancel := context.WithTimeout(r.Context(), nonStreamingS3Timeout)
+		defer cancel()
+		page, err := s3Client.client.ListObjectsV2(ctx, input)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "s3 ListObjectsV2 failed", "bucket", bucket, "error", err)
 			http.Error(w, fmt.Sprintf(`{"error":"failed to list objects: %s"}`, err.Error()), http.StatusBadGateway)
@@ -190,13 +194,49 @@ type batchDownloadRequest struct {
 	Name string `json:"name"`
 }
 
+// nonStreamingS3Timeout bounds S3 calls whose response is small and fully
+// buffered (list, delete). Streaming transfers are governed by the request
+// context instead.
+const nonStreamingS3Timeout = 30 * time.Second
+
 // zipFilename builds the download filename for a batch ZIP. The alias is
-// preferred over the 64-hex bucket ID when the client supplies one.
+// preferred over the 64-hex bucket ID when the client supplies one. The name
+// is caller-controlled, so path separators are stripped and it is capped.
 func zipFilename(bucket, name string) string {
-	if name == "" {
+	name = strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	if len(name) > 128 {
+		name = name[:128]
+	}
+	if name == "" || name == "." || name == ".." {
 		name = bucket
 	}
 	return name + "-files.zip"
+}
+
+// rfc8187Escape percent-encodes everything outside RFC 8187 attr-char, which
+// is stricter than url.PathEscape (that leaves '=', ':' and '@' alone).
+func rfc8187Escape(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '!', c == '#', c == '$', c == '&', c == '+', c == '-', c == '.',
+			c == '^', c == '_', c == '`', c == '|', c == '~':
+			b.WriteByte(c)
+		default:
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&0x0f])
+		}
+	}
+	return b.String()
 }
 
 // attachmentDisposition builds a Content-Disposition header that is safe for
@@ -224,7 +264,7 @@ func attachmentDisposition(name string) string {
 	if fallback == "" {
 		fallback = "download"
 	}
-	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, fallback, url.PathEscape(name))
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, fallback, rfc8187Escape(name))
 }
 
 // streamBatchZip writes a ZIP archive containing objects from S3 to the writer.
@@ -316,7 +356,9 @@ func handleDeleteObject(s3Client *S3Client) http.HandlerFunc {
 			return
 		}
 
-		_, err := s3Client.client.DeleteObject(r.Context(), &s3.DeleteObjectInput{
+		ctx, cancel := context.WithTimeout(r.Context(), nonStreamingS3Timeout)
+		defer cancel()
+		_, err := s3Client.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
 		})

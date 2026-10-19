@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,6 +29,11 @@ func TestS3ClientStreamsBodyLongerThanHeaderTimeout(t *testing.T) {
 		w.Header().Set("Content-Length", "6")
 		w.WriteHeader(http.StatusOK)
 		flusher, _ := w.(http.Flusher)
+		// Send the headers right away so the header timeout below is only
+		// exercised by the body trickle, independent of scheduling jitter.
+		if flusher != nil {
+			flusher.Flush()
+		}
 		for i := 0; i < chunks; i++ {
 			time.Sleep(chunkDelay)
 			io.WriteString(w, "x")
@@ -81,7 +88,8 @@ func TestS3ClientHeaderTimeoutStillApplies(t *testing.T) {
 	if ctx.Err() != nil || elapsed > 5*time.Second {
 		t.Fatalf("request did not time out via ResponseHeaderTimeout (took %s, err=%v)", elapsed, err)
 	}
-	if !strings.Contains(err.Error(), "timeout awaiting response headers") {
-		t.Fatalf("expected a response header timeout, got: %v", err)
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Fatalf("expected a timeout net.Error, got: %v", err)
 	}
 }
