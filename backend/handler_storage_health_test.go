@@ -6,29 +6,26 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
 const (
-	healthNodeA   = "aaaa000000000000000000000000000000000000000000000000000000000001"
-	healthNodeB   = "bbbb000000000000000000000000000000000000000000000000000000000002"
-	healthGateway = "cccc000000000000000000000000000000000000000000000000000000000003"
+	healthNodeA = "aaaa000000000000000000000000000000000000000000000000000000000001"
+	healthNodeB = "bbbb000000000000000000000000000000000000000000000000000000000002"
 )
 
-// fakeHealthGarage serves GetClusterStatus with two storage nodes and a
-// gateway, plus the two fan-out endpoints with the given bodies/statuses.
-func fakeHealthGarage(t *testing.T, statsStatus int, statsBody string, varsStatus int, varsBody string) *httptest.Server {
+// fakeHealthGarage serves the two fan-out endpoints with the given
+// bodies/statuses and counts the calls to each.
+func fakeHealthGarage(t *testing.T, statsStatus int, statsBody string, varsStatus int, varsBody string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	var calls atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/GetClusterStatus", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"layoutVersion":3,"nodes":[
-			{"id":"` + healthNodeB + `","hostname":"node-b","isUp":false,"role":{"zone":"z","tags":[],"capacity":100}},
-			{"id":"` + healthNodeA + `","hostname":"node-a","isUp":true,"role":{"zone":"z","tags":[],"capacity":100}},
-			{"id":"` + healthGateway + `","hostname":"gw","isUp":true,"role":{"zone":"z","tags":[],"capacity":null}}
-		]}`))
+		t.Errorf("storage-health must not call GetClusterStatus")
 	})
 	mux.HandleFunc("/v2/GetNodeStatistics", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		if r.Method != http.MethodGet || r.URL.Query().Get("node") != "*" {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -38,6 +35,7 @@ func fakeHealthGarage(t *testing.T, statsStatus int, statsBody string, varsStatu
 		w.Write([]byte(statsBody))
 	})
 	mux.HandleFunc("/v2/GetWorkerVariable", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		if r.Method != http.MethodPost || r.URL.Query().Get("node") != "*" {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -48,17 +46,17 @@ func fakeHealthGarage(t *testing.T, statsStatus int, statsBody string, varsStatu
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, &calls
 }
 
-func getStorageHealth(t *testing.T, garageURL string) []storageNodeHealth {
+func getStorageHealth(t *testing.T, garageURL string) storageHealthResponse {
 	t.Helper()
 	c := newNodeTestClient(t, garageURL)
 	rec := c.do(http.MethodGet, "/api/cluster/storage-health", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var got []storageNodeHealth
+	var got storageHealthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -66,25 +64,24 @@ func getStorageHealth(t *testing.T, garageURL string) []storageNodeHealth {
 }
 
 func TestStorageHealthMergesPerNodeData(t *testing.T) {
-	garage := fakeHealthGarage(t,
+	garage, _ := fakeHealthGarage(t,
 		http.StatusOK, `{"success":{"`+healthNodeA+`":{"freeform":"","blockManagerStats":{"rcEntries":1,"resyncQueueLen":7,"resyncErrors":2}}},"error":{"`+healthNodeB+`":"Could not reach node"}}`,
 		http.StatusOK, `{"success":{"`+healthNodeA+`":{"scrub-corruptions_detected":"3","scrub-last-completed":"2026-10-01T00:00:00Z"}},"error":{"`+healthNodeB+`":"timeout"}}`,
 	)
 	got := getStorageHealth(t, garage.URL)
 
-	if len(got) != 2 {
-		t.Fatalf("want 2 storage nodes (gateway excluded), got %+v", got)
+	if len(got.Nodes) != 2 || got.StatsError != "" || got.VarsError != "" {
+		t.Fatalf("got %+v", got)
 	}
-	a, b := got[0], got[1]
-	if a.ID != healthNodeA || b.ID != healthNodeB {
-		t.Fatalf("order = %s, %s; want sorted by hostname", a.ID, b.ID)
+	a, b := got.Nodes[healthNodeA], got.Nodes[healthNodeB]
+	if a == nil || b == nil {
+		t.Fatalf("nodes = %+v", got.Nodes)
 	}
 	if a.Error != "" || a.ResyncQueueLen == nil || *a.ResyncQueueLen != 7 || *a.ResyncErrors != 2 ||
-		a.ScrubCorruptions == nil || *a.ScrubCorruptions != 3 || derefString(a.ScrubLastCompleted) != "2026-10-01T00:00:00Z" ||
-		derefString(a.Hostname) != "node-a" || !a.IsUp {
+		a.ScrubCorruptions == nil || *a.ScrubCorruptions != 3 || a.ScrubLastCompleted == nil || *a.ScrubLastCompleted != "2026-10-01T00:00:00Z" {
 		t.Errorf("node a = %+v", a)
 	}
-	if b.ResyncQueueLen != nil || b.ScrubCorruptions != nil || b.IsUp {
+	if b.ResyncQueueLen != nil || b.ScrubCorruptions != nil {
 		t.Errorf("node b should have no metrics: %+v", b)
 	}
 	if !strings.Contains(b.Error, "Could not reach node") || !strings.Contains(b.Error, "timeout") {
@@ -93,52 +90,69 @@ func TestStorageHealthMergesPerNodeData(t *testing.T) {
 }
 
 func TestStorageHealthFanOutFailureStill200(t *testing.T) {
-	garage := fakeHealthGarage(t,
+	garage, _ := fakeHealthGarage(t,
 		http.StatusInternalServerError, `{"code":"InternalError","message":"boom"}`,
-		http.StatusOK, `{"success":{"`+healthNodeA+`":{"scrub-corruptions_detected":"0","scrub-last-completed":"never"},"`+healthNodeB+`":{"scrub-corruptions_detected":"0"}},"error":{}}`,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":{"scrub-corruptions_detected":"0","scrub-last-completed":"never"}},"error":{}}`,
 	)
 	got := getStorageHealth(t, garage.URL)
-	if len(got) != 2 {
-		t.Fatalf("got %+v", got)
+	if got.StatsError != statsUnavailableMsg+": boom" {
+		t.Errorf("statsError = %q", got.StatsError)
 	}
-	for _, n := range got {
-		if n.ResyncQueueLen != nil || !strings.Contains(n.Error, "boom") {
-			t.Errorf("node %s: want stats error, got %+v", n.ID, n)
-		}
-		if n.ScrubCorruptions == nil || *n.ScrubCorruptions != 0 {
-			t.Errorf("node %s: worker variables should still be filled: %+v", n.ID, n)
-		}
-	}
-	if derefString(got[0].ScrubLastCompleted) != "never" || got[1].ScrubLastCompleted != nil {
-		t.Errorf("scrubLastCompleted = %v, %v", got[0].ScrubLastCompleted, got[1].ScrubLastCompleted)
+	a := got.Nodes[healthNodeA]
+	if a == nil || a.ResyncQueueLen != nil || a.Error != "" || a.ScrubCorruptions == nil || *a.ScrubCorruptions != 0 {
+		t.Errorf("node a = %+v", a)
 	}
 }
 
-func TestStorageHealthOldGarageWithoutBlockStats(t *testing.T) {
-	garage := fakeHealthGarage(t,
-		http.StatusOK, `{"success":{"`+healthNodeA+`":{"freeform":"x"},"`+healthNodeB+`":{"freeform":"x"}},"error":{}}`,
-		http.StatusOK, `{"success":{"`+healthNodeA+`":{},"`+healthNodeB+`":{}},"error":{}}`,
-	)
-	got := getStorageHealth(t, garage.URL)
-	for _, n := range got {
-		if !strings.Contains(n.Error, "blockManagerStats not reported") {
-			t.Errorf("node %s error = %q", n.ID, n.Error)
-		}
+func TestStorageHealthHidesTransportErrors(t *testing.T) {
+	garage, _ := fakeHealthGarage(t, http.StatusOK, `{}`, http.StatusOK, `{}`)
+	url := garage.URL
+	garage.Close() // connection refused: the error text would contain the URL
+	got := getStorageHealth(t, url)
+	if got.StatsError != statsUnavailableMsg || got.VarsError != varsUnavailableMsg {
+		t.Errorf("got %+v", got)
+	}
+	raw, _ := json.Marshal(got)
+	if strings.Contains(string(raw), "127.0.0.1") {
+		t.Errorf("response leaks the upstream address: %s", raw)
 	}
 }
 
-func TestStorageHealthForwardsClusterStatusError(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v2/GetClusterStatus", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"code":"NoQuorum","message":"no quorum"}`))
-	})
-	garage := httptest.NewServer(mux)
-	defer garage.Close()
-	rec := newNodeTestClient(t, garage.URL).do(http.MethodGet, "/api/cluster/storage-health", "")
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "no quorum") {
-		t.Errorf("status = %d body = %s", rec.Code, rec.Body.String())
+func TestStorageHealthReportsMissingOrBadCorruptionCounter(t *testing.T) {
+	garage, _ := fakeHealthGarage(t,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":{"freeform":"x"},"`+healthNodeB+`":{"freeform":"x","blockManagerStats":{"rcEntries":0,"resyncQueueLen":0,"resyncErrors":0}}},"error":{}}`,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":{"scrub-last-completed":"never"},"`+healthNodeB+`":{"scrub-corruptions_detected":"lots"}},"error":{}}`,
+	)
+	got := getStorageHealth(t, garage.URL)
+	a, b := got.Nodes[healthNodeA], got.Nodes[healthNodeB]
+	if !strings.Contains(a.Error, "blockManagerStats not reported") || !strings.Contains(a.Error, "報告されていません") {
+		t.Errorf("node a error = %q", a.Error)
+	}
+	if b.ScrubCorruptions != nil || !strings.Contains(b.Error, "解釈できません") {
+		t.Errorf("node b = %+v", b)
+	}
+}
+
+func TestStorageHealthNodeMissingFromOneFanOut(t *testing.T) {
+	garage, _ := fakeHealthGarage(t,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":{"freeform":"","blockManagerStats":{"rcEntries":0,"resyncQueueLen":0,"resyncErrors":0}}},"error":{}}`,
+		http.StatusOK, `{"success":{},"error":{}}`,
+	)
+	got := getStorageHealth(t, garage.URL)
+	if a := got.Nodes[healthNodeA]; a == nil || !strings.Contains(a.Error, "worker 変数: "+nodeNotAnsweredMsg) {
+		t.Errorf("node a = %+v", a)
+	}
+}
+
+func TestStorageHealthIsCached(t *testing.T) {
+	garage, calls := fakeHealthGarage(t,
+		http.StatusOK, `{"success":{},"error":{}}`,
+		http.StatusOK, `{"success":{},"error":{}}`,
+	)
+	getStorageHealth(t, garage.URL)
+	getStorageHealth(t, garage.URL)
+	if n := calls.Load(); n != 2 {
+		t.Errorf("upstream calls = %d, want 2 (one fan-out of two requests, then cached)", n)
 	}
 }
 
@@ -173,16 +187,16 @@ func TestStorageHealthIntegration(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("storage-health status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	var nodes []storageNodeHealth
-	if err := json.Unmarshal(rec.Body.Bytes(), &nodes); err != nil {
+	var resp storageHealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(nodes) == 0 {
-		t.Fatal("no storage nodes")
+	if len(resp.Nodes) == 0 || resp.StatsError != "" || resp.VarsError != "" {
+		t.Fatalf("resp = %s", rec.Body.String())
 	}
-	for _, n := range nodes {
+	for id, n := range resp.Nodes {
 		if n.Error != "" || n.ResyncQueueLen == nil || n.ScrubCorruptions == nil || n.ScrubLastCompleted == nil {
-			t.Errorf("node %+v: want every metric", n)
+			t.Errorf("node %s %+v: want every metric", id, n)
 		}
 	}
 

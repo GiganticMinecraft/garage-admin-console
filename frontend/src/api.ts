@@ -962,14 +962,12 @@ export async function getClusterStatistics(): Promise<ClusterStatistics> {
 }
 
 /**
- * One storage node of GET /api/cluster/storage-health. Metrics are null when
- * the node did not answer (then `error` says why) or its Garage does not
- * report them. scrubLastCompleted is Garage's string ("never" or a timestamp).
+ * Per-node block health from GET /api/cluster/storage-health. Metrics are
+ * null when the node did not answer (then `error` says why) or its Garage
+ * does not report them. scrubLastCompleted is Garage's string ("never" or an
+ * RFC 3339 timestamp).
  */
-export interface StorageNodeHealth {
-  id: string
-  hostname: string | null
-  isUp: boolean
+export interface NodeStorageHealth {
   resyncQueueLen: number | null
   resyncErrors: number | null
   scrubCorruptions: number | null
@@ -977,6 +975,18 @@ export interface StorageNodeHealth {
   error?: string
 }
 
-export async function getStorageHealth(): Promise<StorageNodeHealth[]> {
+/**
+ * GET /api/cluster/storage-health. `nodes` is keyed by full node ID (join it
+ * with GetClusterStatus); statsError / varsError are set when a whole
+ * fan-out (GetNodeStatistics / GetWorkerVariable) failed. Cached ~10 s
+ * server-side.
+ */
+export interface StorageHealth {
+  nodes: Record<string, NodeStorageHealth>
+  statsError?: string
+  varsError?: string
+}
+
+export async function getStorageHealth(): Promise<StorageHealth> {
   return fetchJSON('/cluster/storage-health')
 }

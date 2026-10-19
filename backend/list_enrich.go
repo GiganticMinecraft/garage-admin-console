@@ -69,7 +69,17 @@ func (e *garageDecodeError) Unwrap() error { return e.err }
 // Non-2xx answers come back as *garageStatusError, undecodable bodies as
 // *garageDecodeError.
 func garageGetJSON(ctx context.Context, garageAdmin *GarageAdminClient, garagePath string, out any) error {
-	resp, err := garageAdmin.doRequest(ctx, http.MethodGet, garagePath, nil)
+	return garageRequestJSON(ctx, garageAdmin, http.MethodGet, garagePath, nil, out)
+}
+
+// garageRequestJSON is garageGetJSON for any method, with an optional JSON
+// request body (nil sends none). Errors are typed the same way.
+func garageRequestJSON(ctx context.Context, garageAdmin *GarageAdminClient, method, garagePath string, reqBody []byte, out any) error {
+	var reader io.Reader
+	if reqBody != nil {
+		reader = bytes.NewReader(reqBody)
+	}
+	resp, err := garageAdmin.doRequest(ctx, method, garagePath, reader)
 	if err != nil {
 		return err
 	}
@@ -218,10 +228,12 @@ func listAllInfo[T any](ctx context.Context, garageAdmin *GarageAdminClient, end
 	return all, true, nil
 }
 
-// ttlCache is a small in-memory cache of per-item Garage info.
+// ttlCache is a small in-memory cache of per-item Garage info. Entries live
+// for ttl, or listInfoCacheTTL when ttl is zero.
 type ttlCache[T any] struct {
 	mu      sync.Mutex
 	entries map[string]ttlEntry[T]
+	ttl     time.Duration
 }
 
 type ttlEntry[T any] struct {
@@ -246,7 +258,11 @@ func (c *ttlCache[T]) put(key string, val T) {
 	if c.entries == nil {
 		c.entries = map[string]ttlEntry[T]{}
 	}
-	c.entries[key] = ttlEntry[T]{val: val, expires: time.Now().Add(listInfoCacheTTL)}
+	ttl := c.ttl
+	if ttl == 0 {
+		ttl = listInfoCacheTTL
+	}
+	c.entries[key] = ttlEntry[T]{val: val, expires: time.Now().Add(ttl)}
 }
 
 // purgeExpired drops expired entries so deleted items do not pile up. It is

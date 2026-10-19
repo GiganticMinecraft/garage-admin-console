@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import {
   getClusterHealth,
@@ -14,7 +14,8 @@ import {
   type KeyListItem,
   type ListResult,
   type PartitionUsage,
-  type StorageNodeHealth,
+  type NodeStorageHealth,
+  type StorageHealth,
 } from '@/api'
 
 const StorageCharts = lazy(() => import('@/components/storage-charts'))
@@ -420,40 +421,83 @@ function formatScrubLastCompleted(v: string | null): string {
   return formatDateTime(v)
 }
 
-function StorageHealthCard({ node }: { node: StorageNodeHealth }) {
-  const alert = (node.resyncErrors ?? 0) > 0 || (node.scrubCorruptions ?? 0) > 0
+const EMPTY_NODE_HEALTH: NodeStorageHealth = {
+  resyncQueueLen: null,
+  resyncErrors: null,
+  scrubCorruptions: null,
+  scrubLastCompleted: null,
+}
+
+/**
+ * Nodes that hold blocks: a current role with capacity, or draining (role
+ * removed in a newer layout but still holding data, which is exactly when
+ * its resync queue matters).
+ */
+function isStorageNode(node: ClusterNode): boolean {
+  return node.role ? node.role.capacity != null : node.draining
+}
+
+/** Error text for one node: its own error, else the failed fan-out(s), else "no answer". */
+function nodeHealthError(health: StorageHealth, node: ClusterNode): string | undefined {
+  const entry = health.nodes[node.id]
+  const msgs = [entry?.error, health.statsError, health.varsError].filter(Boolean)
+  if (msgs.length > 0) return msgs.join('; ')
+  return entry ? undefined : 'ノードが応答しませんでした'
+}
+
+function StorageHealthCard({ node, health }: { node: ClusterNode; health: StorageHealth }) {
+  const h = health.nodes[node.id] ?? EMPTY_NODE_HEALTH
+  const error = nodeHealthError(health, node)
+  const alert = (h.resyncErrors ?? 0) > 0 || (h.scrubCorruptions ?? 0) > 0
+  const body = (
+    <>
+      <div className="flex items-center gap-2">
+        <NodeStatusDot node={node} />
+        <span className="font-medium">{nodeDisplayName(node)}</span>
+        {!node.role && node.draining && (
+          <Badge variant="destructive" title="レイアウトから外されましたが、まだデータを保持しています">
+            draining
+          </Badge>
+        )}
+      </div>
+      <HealthMetric label="Resync キュー" value={h.resyncQueueLen} />
+      <HealthMetric label="Resync エラー" value={h.resyncErrors} alertWhenPositive />
+      <HealthMetric label="Scrub 破損検出数" value={h.scrubCorruptions} alertWhenPositive />
+      <div className="flex justify-between gap-2 text-sm">
+        <span className="text-muted-foreground">最終 Scrub</span>
+        <span title={h.scrubLastCompleted ?? undefined}>
+          {formatScrubLastCompleted(h.scrubLastCompleted)}
+        </span>
+      </div>
+      {error && <p className="break-words text-xs text-destructive">{error}</p>}
+    </>
+  )
+  const className = `block rounded-lg border p-4 space-y-2 ${alert ? 'border-destructive/60' : ''}`
+  // Same rule as NodeName: role-less (draining) nodes have no detail page.
+  if (!node.role) return <div className={className}>{body}</div>
   return (
     <Link
       to="/nodes/$id"
       params={{ id: node.id }}
-      className={`block rounded-lg border p-4 space-y-2 transition-colors hover:bg-muted/50 ${alert ? 'border-destructive/60' : ''}`}
+      className={`${className} transition-colors hover:bg-muted/50`}
     >
-      <div className="flex items-center gap-2">
-        <span
-          title={node.isUp ? '接続中' : '切断中'}
-          className={`inline-block h-2 w-2 rounded-full ${node.isUp ? 'bg-green-500' : 'bg-red-500'}`}
-        />
-        <span className="font-medium">{nodeDisplayName(node)}</span>
-      </div>
-      <HealthMetric label="Resync キュー" value={node.resyncQueueLen} />
-      <HealthMetric label="Resync エラー" value={node.resyncErrors} alertWhenPositive />
-      <HealthMetric label="Scrub 破損検出数" value={node.scrubCorruptions} alertWhenPositive />
-      <div className="flex justify-between gap-2 text-sm">
-        <span className="text-muted-foreground">最終 Scrub</span>
-        <span title={node.scrubLastCompleted ?? undefined}>
-          {formatScrubLastCompleted(node.scrubLastCompleted)}
-        </span>
-      </div>
-      {node.error && <p className="break-words text-xs text-destructive">{node.error}</p>}
+      {body}
     </Link>
   )
 }
 
-function StorageHealthSection({ query }: { query: QueryView<StorageNodeHealth[]> }) {
+function StorageHealthSection({
+  status,
+  query,
+}: {
+  status: QueryView<{ nodes: ClusterNode[] }>
+  query: QueryView<StorageHealth>
+}) {
+  const nodes = status.data?.nodes.filter(isStorageNode) ?? []
   return (
     <div className="space-y-3">
       <h2 className="text-lg font-semibold">Storage health</h2>
-      {query.isLoading ? (
+      {query.isLoading || status.isLoading ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-36 w-full rounded-lg" />
@@ -463,12 +507,15 @@ function StorageHealthSection({ query }: { query: QueryView<StorageNodeHealth[]>
         <p className="text-destructive">
           Storage health を読み込めませんでした: {query.error?.message ?? '不明なエラー'}
         </p>
-      ) : query.data.length === 0 ? (
+      ) : !status.data ? (
+        // The node list comes from the cluster status, whose error is shown below.
+        <p className="text-muted-foreground">ノード一覧が無いため表示できません</p>
+      ) : nodes.length === 0 ? (
         <p className="text-muted-foreground">ストレージノードがありません</p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {query.data.map((n) => (
-            <StorageHealthCard key={n.id} node={n} />
+          {nodes.map((n) => (
+            <StorageHealthCard key={n.id} node={n} health={query.data!} />
           ))}
         </div>
       )}
@@ -522,15 +569,25 @@ function DashboardPage() {
   // 更新 button refreshes it. Shares the cache with the keys page.
   const keys = useQuery({ queryKey: ['keys'], queryFn: listKeys })
 
-  const queries = [health, status, storageHealth, statistics, keys]
-  const fetching = queries.some((q) => q.isFetching)
-  // The oldest successful fetch among the polled queries: everything shown
-  // is at least this fresh.
-  const updatedAt = Math.min(
-    ...[health, status, storageHealth, statistics].map((q) => q.dataUpdatedAt || Infinity),
-  )
-  const refreshAll = () => {
-    for (const q of queries) void q.refetch()
+  // Latest successful fetch of the 15 s group (health / status / storage
+  // health); the slower statistics poll does not hold it back.
+  const updatedAt = Math.max(health.dataUpdatedAt, status.dataUpdatedAt, storageHealth.dataUpdatedAt)
+
+  // Manual refresh: everything under ['cluster'] (including the layout
+  // history behind the tracker) plus the key list. The spinner reflects only
+  // this, not background polling.
+  const queryClient = useQueryClient()
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshAll = async () => {
+    setRefreshing(true)
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['cluster'] }),
+        queryClient.invalidateQueries({ queryKey: ['keys'] }),
+      ])
+    } finally {
+      setRefreshing(false)
+    }
   }
 
   // GetClusterStatus roles are the current layout's, which is all the
@@ -544,9 +601,9 @@ function DashboardPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">ダッシュボード</h1>
         <div className="flex items-center gap-3">
-          {Number.isFinite(updatedAt) && <UpdatedAgo at={updatedAt} />}
-          <Button variant="outline" size="sm" onClick={refreshAll} disabled={fetching}>
-            <RefreshCw className={`h-4 w-4 ${fetching ? 'animate-spin' : ''}`} aria-hidden />
+          {updatedAt > 0 && <UpdatedAgo at={updatedAt} />}
+          <Button variant="outline" size="sm" onClick={refreshAll} disabled={refreshing}>
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} aria-hidden />
             更新
           </Button>
         </div>
@@ -566,7 +623,7 @@ function DashboardPage() {
 
       <SummaryCards stats={statistics} keys={keys} />
 
-      <StorageHealthSection query={storageHealth} />
+      <StorageHealthSection status={status} query={storageHealth} />
 
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">ノード</h2>

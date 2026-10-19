@@ -147,7 +147,14 @@ export function LayoutUpdateTracker({ roles, compact = false }: { roles: Tracker
 
   if (history.isLoading) return null
   if (compact) {
-    // The dashboard has its own error reporting; only surface an update.
+    // On failure, say so instead of showing possibly stale "in progress" data.
+    if (history.isError) {
+      return (
+        <p className="text-xs text-destructive">
+          レイアウト更新状況を取得できませんでした: {history.error.message}
+        </p>
+      )
+    }
     const ch = history.data
     if (!ch || !isUpdateInFlight(ch)) return null
     return <CompactTracker history={ch} roles={roles} />
