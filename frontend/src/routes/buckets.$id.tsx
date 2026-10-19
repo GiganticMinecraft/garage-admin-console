@@ -4,11 +4,14 @@ import { useState, useCallback } from 'react'
 import {
   getBucket,
 } from '@/api'
+import { BucketAliases } from '@/components/bucket-aliases'
 import { BucketKeyPermissions } from '@/components/bucket-key-permissions'
 import { BucketSettings } from '@/components/bucket-settings'
 import { ObjectBrowser } from '@/components/object-browser'
+import { LocalNameBadge } from '@/components/local-name-badge'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
 import { formatBytes } from '@/lib/format'
 import { toast } from 'sonner'
 import { Copy, Check } from 'lucide-react'
@@ -44,6 +47,9 @@ function BucketDetailPage() {
   })
 
   const data = bucket.data
+  const localAliases = data?.keys?.flatMap((k) => k.bucketLocalAliases ?? []) ?? []
+  const aliasCount = (data?.globalAliases?.length ?? 0) + localAliases.length
+  const name = bucketDisplayName(data?.id ?? id, data?.globalAliases, localAliases)
 
   const handleCopyId = useCallback(async () => {
     try {
@@ -60,17 +66,25 @@ function BucketDetailPage() {
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Link to="/buckets" className="hover:underline">バケット</Link>
         <span>/</span>
-        <span>{data?.globalAliases?.[0] || `${id.slice(0, 16)}...`}</span>
+        <span className="break-all">{name.name}</span>
       </div>
 
-      <h1 className="text-2xl font-bold">
-        {data?.globalAliases?.[0] || 'バケット詳細'}
-      </h1>
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-2xl font-bold break-all">
+          {name.source === 'id' ? 'バケット詳細' : name.name}
+        </h1>
+        <LocalNameBadge name={name} />
+        {aliasCount > 1 && (
+          <Badge variant="secondary" title="グローバル / ローカルエイリアスの合計">
+            エイリアス {aliasCount} 件
+          </Badge>
+        )}
+      </div>
 
       {bucket.isLoading ? (
         <div className="rounded-lg border p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
+            {Array.from({ length: 2 }).map((_, i) => (
               <div key={i} className="space-y-1">
                 <Skeleton className="h-4 w-20" />
                 <Skeleton className="h-5 w-28" />
@@ -83,16 +97,6 @@ function BucketDetailPage() {
       ) : data ? (
         <div className="rounded-lg border p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-            <div>
-              <p className="text-muted-foreground">エイリアス</p>
-              <div className="flex flex-wrap gap-1">
-                {data.globalAliases?.length
-                  ? data.globalAliases.map((a) => (
-                      <Badge key={a} variant="secondary">{a}</Badge>
-                    ))
-                  : <span className="text-muted-foreground">-</span>}
-              </div>
-            </div>
             <div>
               <p className="text-muted-foreground">オブジェクト数</p>
               <p className="font-medium">{data.objects ?? '-'}</p>
@@ -129,17 +133,20 @@ function BucketDetailPage() {
         </div>
       ) : null}
 
+      {/* Global / local aliases */}
+      {data && <BucketAliases key={`aliases-${id}`} bucket={data} />}
+
       {/* Key Permissions */}
       <BucketKeyPermissions
-        key={id}
+        key={`perms-${id}`}
         bucketId={id}
-        bucketLabel={data?.globalAliases?.[0] || id.slice(0, 16)}
+        bucketLabel={bucketDisplayLabel(name)}
         keys={data?.keys}
       />
 
       {/* Object Browser */}
       <ObjectBrowser
-        key={id}
+        key={`objects-${id}`}
         bucketId={id}
         bucketName={data?.globalAliases?.[0]}
         prefix={prefix}
@@ -147,7 +154,7 @@ function BucketDetailPage() {
       />
 
       {/* Bucket settings (quotas, website, CORS, lifecycle, unfinished uploads) */}
-      {data && <BucketSettings key={id} bucket={data} />}
+      {data && <BucketSettings key={`settings-${id}`} bucket={data} />}
     </div>
   )
 }

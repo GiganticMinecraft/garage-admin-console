@@ -19,7 +19,9 @@ import {
   TableHead,
   TableCell,
 } from '@/components/ui/table'
-import { formatBytes, formatCount, formatDateTime } from '@/lib/format'
+import { LocalNameBadge } from '@/components/local-name-badge'
+import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
+import { formatBytes, formatCount, formatDateTime, shortId } from '@/lib/format'
 import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
 import { useDebouncedValue } from '@/lib/use-debounce'
@@ -30,15 +32,17 @@ export const Route = createFileRoute('/buckets/')({
 
 type BucketSortKey = 'alias' | 'id' | 'objects' | 'bytes' | 'keyCount' | 'created'
 
-/** The name a bucket is shown under: first global alias, else first local alias. */
-function bucketLabel(b: BucketListItem): string {
-  return b.globalAliases[0] ?? b.localAliases[0]?.alias ?? ''
+function nameOf(b: BucketListItem) {
+  return bucketDisplayName(b.id, b.globalAliases, b.localAliases.map((a) => a.alias))
 }
 
 function bucketSortValue(b: BucketListItem, key: BucketSortKey): SortValue {
   switch (key) {
-    case 'alias':
-      return bucketLabel(b)
+    case 'alias': {
+      // Alias-less buckets sort first, as before.
+      const name = nameOf(b)
+      return name.source === 'id' ? '' : name.name
+    }
     case 'id':
       return b.id
     case 'objects':
@@ -188,12 +192,12 @@ function BucketsPage() {
                 {rows.map((bucket) => (
                   <TableRow key={bucket.id}>
                     <TableCell className="px-4 align-top font-medium">
-                      <BucketAliases bucket={bucket} />
+                      <BucketAliasCell bucket={bucket} />
                     </TableCell>
                     <TableCell className="px-4 align-top">
                       <span className="inline-flex items-center gap-1">
                         <span className="font-mono text-sm text-muted-foreground" title={bucket.id}>
-                          {bucket.id.slice(0, 16)}…
+                          {shortId(bucket.id)}
                         </span>
                         <CopyButton value={bucket.id} label="バケット ID をコピー" />
                       </span>
@@ -258,7 +262,7 @@ function BucketsPage() {
         open={deleteTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         title="バケットの削除"
-        description={`バケット「${(deleteTarget && bucketLabel(deleteTarget)) || deleteTarget?.id.slice(0, 16)}」を削除しますか？この操作は取り消せません。`}
+        description={`バケット「${deleteTarget ? bucketDisplayLabel(nameOf(deleteTarget)) : ''}」を削除しますか？この操作は取り消せません。`}
         onConfirm={() => {
           if (deleteTarget) return deleteMutation.mutateAsync(deleteTarget.id)
         }}
@@ -269,20 +273,22 @@ function BucketsPage() {
 }
 
 /** All global aliases (extra ones collapsed behind 「他 N 件」) plus a local-alias count. */
-function BucketAliases({ bucket }: { bucket: BucketListItem }) {
+function BucketAliasCell({ bucket }: { bucket: BucketListItem }) {
   const [expanded, setExpanded] = useState(false)
-  const [first, ...rest] = bucket.globalAliases
+  const rest = bucket.globalAliases.slice(1)
   const local = bucket.localAliases
+  const name = nameOf(bucket)
   return (
     <div className="flex flex-col items-start gap-1">
       <div className="flex flex-wrap items-center gap-2">
         <Link
           to="/buckets/$id"
           params={{ id: bucket.id }}
-          className="text-primary underline-offset-4 hover:underline"
+          className="break-all text-primary underline-offset-4 hover:underline"
         >
-          {first ?? local[0]?.alias ?? '(エイリアスなし)'}
+          {name.source === 'id' ? '(エイリアスなし)' : name.name}
         </Link>
+        <LocalNameBadge name={name} />
         {rest.length > 0 && (
           <button
             type="button"
@@ -296,7 +302,7 @@ function BucketAliases({ bucket }: { bucket: BucketListItem }) {
         {local.length > 0 && (
           <Badge
             variant="secondary"
-            title={local.map((a) => `${a.alias} (${a.accessKeyId})`).join('\n')}
+            title={`ローカルエイリアス:\n${local.map((a) => `${a.alias} (${a.accessKeyId})`).join('\n')}`}
           >
             ローカル {local.length}
           </Badge>
@@ -305,7 +311,7 @@ function BucketAliases({ bucket }: { bucket: BucketListItem }) {
       {expanded && (
         <ul className="space-y-0.5 text-sm font-normal text-muted-foreground">
           {rest.map((a) => (
-            <li key={a}>{a}</li>
+            <li key={a} className="break-all">{a}</li>
           ))}
         </ul>
       )}
