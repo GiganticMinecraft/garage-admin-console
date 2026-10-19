@@ -31,6 +31,9 @@ const TEXTAREA_CLASS =
   'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] ' +
   'aria-invalid:border-destructive dark:bg-input/30'
 
+/** Upper bound for the cleanup age (10 years). */
+const MAX_CLEANUP_AGE_SECS = 10 * 365 * 86400
+
 /** Picks the largest unit that represents bytes exactly, e.g. 10 GiB -> {10, GiB}. */
 function splitBytes(bytes: number): { value: string; unit: string } {
   for (let i = SIZE_UNITS.length - 1; i > 0; i--) {
@@ -48,8 +51,15 @@ function parsePositiveInt(text: string): number | null {
   return n > 0 && Number.isSafeInteger(n) ? n : null
 }
 
+/** A quota of 0 or less (or absent) is treated as unlimited. */
+function normalizeQuota(v: number | null | undefined): number | null {
+  return v != null && v > 0 ? v : null
+}
+
+type Rules = Record<string, unknown>[]
+
 /** Parses a JSON array of objects, or returns an error message. */
-function parseRulesJson(text: string): { rules: Record<string, unknown>[] } | { error: string } {
+function parseRulesJson(text: string): { rules: Rules } | { error: string } {
   let parsed: unknown
   try {
     parsed = JSON.parse(text.trim() === '' ? '[]' : text)
@@ -59,7 +69,7 @@ function parseRulesJson(text: string): { rules: Record<string, unknown>[] } | { 
   if (!Array.isArray(parsed)) return { error: 'ルールは JSON 配列 ([...]) で指定してください' }
   const bad = parsed.findIndex((r) => r === null || typeof r !== 'object' || Array.isArray(r))
   if (bad >= 0) return { error: `${bad + 1} 番目の要素がオブジェクトではありません` }
-  return { rules: parsed as Record<string, unknown>[] }
+  return { rules: parsed as Rules }
 }
 
 function rulesToText(rules: unknown[] | null | undefined): string {
@@ -70,14 +80,43 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** Shared save mutation: PUT the partial body, refresh the bucket and the list. */
-function useUpdateBucket(bucketId: string, successMessage: string) {
+/**
+ * Form state derived from a slice of the server data. The form is reset
+ * explicitly (after a save, from the PUT response; or by リセット). When the
+ * server slice changes underneath (background refetch) the form follows it
+ * only while it is untouched, so in-progress edits are never overwritten.
+ */
+function useServerForm<S, F>(server: S, toForm: (s: S) => F) {
+  const [base, setBase] = useState(server)
+  const [form, setForm] = useState(() => toForm(server))
+  const pristine = JSON.stringify(form) === JSON.stringify(toForm(base))
+  if (pristine && JSON.stringify(server) !== JSON.stringify(base)) {
+    // Adjusting state during render (React's documented pattern for
+    // deriving state from changed props).
+    setBase(server)
+    setForm(toForm(server))
+  }
+  const resetTo = (s: S) => {
+    setBase(s)
+    setForm(toForm(s))
+  }
+  const update = (patch: Partial<F>) => setForm((f) => ({ ...f, ...patch }))
+  return { base, form, update, resetTo }
+}
+
+/**
+ * Shared save mutation. UpdateBucket answers with the full bucket info, which
+ * goes straight into the bucket query (no extra GET) and is handed to onSaved
+ * so the card can reset its form to what Garage stored.
+ */
+function useUpdateBucket(bucketId: string, successMessage: string, onSaved: (bucket: BucketDetail) => void) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: UpdateBucketBody) => updateBucket(bucketId, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bucket', bucketId] })
+    onSuccess: (data) => {
+      queryClient.setQueryData(['bucket', bucketId], data)
       queryClient.invalidateQueries({ queryKey: ['buckets'] })
+      onSaved(data)
       toast.success(successMessage)
     },
     onError: (error) => {
@@ -190,50 +229,53 @@ function Switch({
 
 // ---- 1. quotas ----
 
-function QuotaCard({ bucket }: { bucket: BucketDetail }) {
-  const serverSize = bucket.quotas?.maxSize ?? null
-  const serverObjects = bucket.quotas?.maxObjects ?? null
-  const initialSize = serverSize != null ? splitBytes(serverSize) : { value: '', unit: 'GiB' }
+interface QuotaServer {
+  maxSize: number | null
+  maxObjects: number | null
+}
 
-  const [sizeUnlimited, setSizeUnlimited] = useState(serverSize == null)
-  const [sizeValue, setSizeValue] = useState(initialSize.value)
-  const [sizeUnit, setSizeUnit] = useState(initialSize.unit)
-  const [objectsUnlimited, setObjectsUnlimited] = useState(serverObjects == null)
-  const [objectsValue, setObjectsValue] = useState(serverObjects != null ? String(serverObjects) : '')
-  const save = useUpdateBucket(bucket.id, 'クォータを保存しました')
+function quotaServer(b: BucketDetail): QuotaServer {
+  return { maxSize: normalizeQuota(b.quotas?.maxSize), maxObjects: normalizeQuota(b.quotas?.maxObjects) }
+}
+
+function quotaForm(s: QuotaServer) {
+  const size = s.maxSize != null ? splitBytes(s.maxSize) : { value: '', unit: 'GiB' }
+  return {
+    sizeUnlimited: s.maxSize == null,
+    sizeValue: size.value,
+    sizeUnit: size.unit,
+    objectsUnlimited: s.maxObjects == null,
+    objectsValue: s.maxObjects != null ? String(s.maxObjects) : '',
+  }
+}
+
+function QuotaCard({ bucket }: { bucket: BucketDetail }) {
+  const { base, form, update, resetTo } = useServerForm(quotaServer(bucket), quotaForm)
+  const save = useUpdateBucket(bucket.id, 'クォータを保存しました', (b) => resetTo(quotaServer(b)))
 
   let sizeError: string | null = null
   let maxSize: number | null = null
-  if (!sizeUnlimited) {
-    const n = Number(sizeValue.trim())
-    const factor = SIZE_UNITS.find((u) => u.label === sizeUnit)?.factor ?? 1
+  if (!form.sizeUnlimited) {
+    const n = Number(form.sizeValue.trim())
+    const factor = SIZE_UNITS.find((u) => u.label === form.sizeUnit)?.factor ?? 1
     const bytes = Math.round(n * factor)
-    if (sizeValue.trim() === '' || !Number.isFinite(n) || bytes <= 0) sizeError = '正の数を入力してください'
+    if (form.sizeValue.trim() === '' || !Number.isFinite(n) || bytes <= 0) sizeError = '正の数を入力してください'
     else if (!Number.isSafeInteger(bytes)) sizeError = '値が大きすぎます'
     else maxSize = bytes
   }
   let objectsError: string | null = null
   let maxObjects: number | null = null
-  if (!objectsUnlimited) {
-    maxObjects = parsePositiveInt(objectsValue)
+  if (!form.objectsUnlimited) {
+    maxObjects = parsePositiveInt(form.objectsValue)
     if (maxObjects == null) objectsError = '1 以上の整数を入力してください'
   }
 
   const valid = sizeError == null && objectsError == null
   const dirty =
-    sizeUnlimited !== (serverSize == null) ||
-    objectsUnlimited !== (serverObjects == null) ||
-    (!sizeUnlimited && maxSize !== serverSize) ||
-    (!objectsUnlimited && maxObjects !== serverObjects)
-
-  const reset = () => {
-    setSizeUnlimited(serverSize == null)
-    setSizeValue(initialSize.value)
-    setSizeUnit(initialSize.unit)
-    setObjectsUnlimited(serverObjects == null)
-    setObjectsValue(serverObjects != null ? String(serverObjects) : '')
-    save.reset()
-  }
+    form.sizeUnlimited !== (base.maxSize == null) ||
+    form.objectsUnlimited !== (base.maxObjects == null) ||
+    (!form.sizeUnlimited && maxSize !== base.maxSize) ||
+    (!form.objectsUnlimited && maxObjects !== base.maxObjects)
 
   return (
     <SettingsCard
@@ -244,7 +286,10 @@ function QuotaCard({ bucket }: { bucket: BucketDetail }) {
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-medium">容量</span>
           <label className="flex items-center gap-1.5 text-sm">
-            <Checkbox checked={sizeUnlimited} onCheckedChange={(v) => setSizeUnlimited(v === true)} />
+            <Checkbox
+              checked={form.sizeUnlimited}
+              onCheckedChange={(v) => update({ sizeUnlimited: v === true })}
+            />
             無制限
           </label>
         </div>
@@ -254,17 +299,17 @@ function QuotaCard({ bucket }: { bucket: BucketDetail }) {
             min={0}
             step="any"
             inputMode="decimal"
-            value={sizeValue}
-            onChange={(e) => setSizeValue(e.target.value)}
-            disabled={sizeUnlimited}
-            placeholder={sizeUnlimited ? '無制限' : '例: 100'}
+            value={form.sizeValue}
+            onChange={(e) => update({ sizeValue: e.target.value })}
+            disabled={form.sizeUnlimited}
+            placeholder={form.sizeUnlimited ? '無制限' : '例: 100'}
             aria-label="最大容量"
             aria-invalid={sizeError != null}
           />
           <select
-            value={sizeUnit}
-            onChange={(e) => setSizeUnit(e.target.value)}
-            disabled={sizeUnlimited}
+            value={form.sizeUnit}
+            onChange={(e) => update({ sizeUnit: e.target.value })}
+            disabled={form.sizeUnlimited}
             className={SELECT_CLASS}
             aria-label="容量の単位"
           >
@@ -284,7 +329,10 @@ function QuotaCard({ bucket }: { bucket: BucketDetail }) {
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-medium">オブジェクト数</span>
           <label className="flex items-center gap-1.5 text-sm">
-            <Checkbox checked={objectsUnlimited} onCheckedChange={(v) => setObjectsUnlimited(v === true)} />
+            <Checkbox
+              checked={form.objectsUnlimited}
+              onCheckedChange={(v) => update({ objectsUnlimited: v === true })}
+            />
             無制限
           </label>
         </div>
@@ -293,10 +341,10 @@ function QuotaCard({ bucket }: { bucket: BucketDetail }) {
           min={1}
           step={1}
           inputMode="numeric"
-          value={objectsValue}
-          onChange={(e) => setObjectsValue(e.target.value)}
-          disabled={objectsUnlimited}
-          placeholder={objectsUnlimited ? '無制限' : '例: 10000'}
+          value={form.objectsValue}
+          onChange={(e) => update({ objectsValue: e.target.value })}
+          disabled={form.objectsUnlimited}
+          placeholder={form.objectsUnlimited ? '無制限' : '例: 10000'}
           aria-label="最大オブジェクト数"
           aria-invalid={objectsError != null}
         />
@@ -308,7 +356,10 @@ function QuotaCard({ bucket }: { bucket: BucketDetail }) {
         canSave={valid}
         pending={save.isPending}
         error={save.error}
-        onReset={reset}
+        onReset={() => {
+          resetTo(base)
+          save.reset()
+        }}
         onSave={() => save.mutate({ quotas: { maxSize, maxObjects } })}
       />
     </SettingsCard>
@@ -317,50 +368,76 @@ function QuotaCard({ bucket }: { bucket: BucketDetail }) {
 
 // ---- 2. website access ----
 
+interface WebsiteServer {
+  enabled: boolean
+  indexDocument: string
+  errorDocument: string
+  rulesText: string
+  ruleCount: number
+}
+
+function websiteServer(b: BucketDetail): WebsiteServer {
+  const cfg = b.websiteConfig ?? null
+  return {
+    enabled: b.websiteAccess,
+    indexDocument: cfg?.indexDocument ?? 'index.html',
+    errorDocument: cfg?.errorDocument ?? '',
+    rulesText: rulesToText(cfg?.routingRules),
+    ruleCount: cfg?.routingRules?.length ?? 0,
+  }
+}
+
+function websiteForm(s: WebsiteServer) {
+  return {
+    enabled: s.enabled,
+    indexDocument: s.indexDocument,
+    errorDocument: s.errorDocument,
+    rulesText: s.rulesText,
+  }
+}
+
+type WebsiteConfirm = { kind: 'disable' } | { kind: 'clear-rules'; body: UpdateBucketBody }
+
 function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
-  const serverEnabled = bucket.websiteAccess
-  const cfg = bucket.websiteConfig ?? null
-  const serverIndex = cfg?.indexDocument ?? 'index.html'
-  const serverError = cfg?.errorDocument ?? ''
-  const serverRulesText = rulesToText(cfg?.routingRules)
+  const { base, form, update, resetTo } = useServerForm(websiteServer(bucket), websiteForm)
+  const [confirm, setConfirm] = useState<WebsiteConfirm | null>(null)
+  const save = useUpdateBucket(bucket.id, 'Website 設定を保存しました', (b) => resetTo(websiteServer(b)))
 
-  const [enabled, setEnabled] = useState(serverEnabled)
-  const [indexDocument, setIndexDocument] = useState(serverIndex)
-  const [errorDocument, setErrorDocument] = useState(serverError)
-  const [rulesText, setRulesText] = useState(serverRulesText)
-  const [confirmDisable, setConfirmDisable] = useState(false)
-  const save = useUpdateBucket(bucket.id, 'Website 設定を保存しました')
-
-  const rulesTouched = rulesText !== serverRulesText
-  const parsedRules = parseRulesJson(rulesText)
-  const rulesError = enabled && 'error' in parsedRules ? parsedRules.error : null
-  const indexError = enabled && indexDocument.trim() === '' ? 'インデックスドキュメントは必須です' : null
+  const rulesTouched = form.rulesText !== base.rulesText
+  const parsedRules = parseRulesJson(form.rulesText)
+  const rulesError = form.enabled && 'error' in parsedRules ? parsedRules.error : null
+  const indexError = form.enabled && form.indexDocument.trim() === '' ? 'インデックスドキュメントは必須です' : null
 
   const dirty =
-    enabled !== serverEnabled ||
-    (enabled &&
-      (indexDocument !== serverIndex || errorDocument !== serverError || rulesTouched))
-
-  const reset = () => {
-    setEnabled(serverEnabled)
-    setIndexDocument(serverIndex)
-    setErrorDocument(serverError)
-    setRulesText(serverRulesText)
-    save.reset()
-  }
+    form.enabled !== base.enabled ||
+    (form.enabled &&
+      (form.indexDocument !== base.indexDocument || form.errorDocument !== base.errorDocument || rulesTouched))
 
   const onSave = () => {
-    if (!enabled) {
-      setConfirmDisable(true)
+    if (!form.enabled) {
+      setConfirm({ kind: 'disable' })
       return
     }
     const websiteAccess: NonNullable<UpdateBucketBody['websiteAccess']> = {
       enabled: true,
-      indexDocument: indexDocument.trim(),
-      errorDocument: errorDocument.trim() || null,
+      indexDocument: form.indexDocument.trim(),
+      errorDocument: form.errorDocument.trim() || null,
     }
     // Omitting routingRules keeps the current ones; only send them when edited.
-    if (rulesTouched && 'rules' in parsedRules) websiteAccess.routingRules = parsedRules.rules
+    let clearsRules = false
+    if (rulesTouched && 'rules' in parsedRules) {
+      if (parsedRules.rules.length > 0) {
+        websiteAccess.routingRules = parsedRules.rules
+      } else if (base.ruleCount > 0) {
+        // An emptied textarea deletes every rule: never do that silently.
+        websiteAccess.routingRules = []
+        clearsRules = true
+      }
+    }
+    if (clearsRules) {
+      setConfirm({ kind: 'clear-rules', body: { websiteAccess } })
+      return
+    }
     save.mutate({ websiteAccess })
   }
 
@@ -370,11 +447,11 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
       description="有効にすると Garage の web エンドポイントからバケットを静的サイトとして配信します。"
     >
       <label className="flex items-center gap-2 text-sm">
-        <Switch checked={enabled} onCheckedChange={setEnabled} label="Website access" />
-        {enabled ? '有効' : '無効'}
+        <Switch checked={form.enabled} onCheckedChange={(v) => update({ enabled: v })} label="Website access" />
+        {form.enabled ? '有効' : '無効'}
       </label>
 
-      {enabled ? (
+      {form.enabled ? (
         <div className="space-y-3">
           <div className="space-y-1">
             <label className="text-sm font-medium" htmlFor={`${bucket.id}-index-doc`}>
@@ -382,8 +459,8 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
             </label>
             <Input
               id={`${bucket.id}-index-doc`}
-              value={indexDocument}
-              onChange={(e) => setIndexDocument(e.target.value)}
+              value={form.indexDocument}
+              onChange={(e) => update({ indexDocument: e.target.value })}
               placeholder="index.html"
               aria-invalid={indexError != null}
             />
@@ -395,8 +472,8 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
             </label>
             <Input
               id={`${bucket.id}-error-doc`}
-              value={errorDocument}
-              onChange={(e) => setErrorDocument(e.target.value)}
+              value={form.errorDocument}
+              onChange={(e) => update({ errorDocument: e.target.value })}
               placeholder="error.html"
             />
           </div>
@@ -407,8 +484,8 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
             </label>
             <textarea
               id={`${bucket.id}-routing`}
-              value={rulesText}
-              onChange={(e) => setRulesText(e.target.value)}
+              value={form.rulesText}
+              onChange={(e) => update({ rulesText: e.target.value })}
               spellCheck={false}
               className={TEXTAREA_CLASS}
               aria-invalid={rulesError != null}
@@ -418,13 +495,13 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
             ) : (
               <p className="text-xs text-muted-foreground">
                 S3 の RoutingRules と同じ形式 (例: {'[{"Condition":{"KeyPrefixEquals":"old/"},"Redirect":{"ReplaceKeyPrefixWith":"new/"}}]'})。
-                変更しなければ現在のルールが維持されます。
+                変更しなければ現在のルールが維持されます。空にして保存するとすべてのルールを削除します (確認あり)。
               </p>
             )}
           </div>
         </div>
       ) : (
-        serverEnabled && (
+        base.enabled && (
           <p className="text-sm text-amber-700 dark:text-amber-500">
             保存すると Website access が無効になり、インデックス / エラードキュメントとルーティングルールの設定は破棄されます。
           </p>
@@ -433,22 +510,33 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
 
       <CardActions
         dirty={dirty}
-        canSave={!enabled || (indexError == null && rulesError == null)}
+        canSave={!form.enabled || (indexError == null && rulesError == null)}
         pending={save.isPending}
         error={save.error}
-        onReset={reset}
+        onReset={() => {
+          resetTo(base)
+          save.reset()
+        }}
         onSave={onSave}
       />
 
       <ConfirmDialog
-        open={confirmDisable}
-        onOpenChange={setConfirmDisable}
-        title="Website access の無効化"
-        description="Website access を無効にすると、インデックス / エラードキュメントとルーティングルールの設定は破棄され、再度有効にしても元に戻りません。無効にしますか？"
-        confirmLabel="無効にする"
+        open={confirm !== null}
+        onOpenChange={(open) => { if (!open) setConfirm(null) }}
+        title={confirm?.kind === 'clear-rules' ? 'ルーティングルールの削除' : 'Website access の無効化'}
+        description={
+          confirm?.kind === 'clear-rules'
+            ? `ルーティングルールを ${base.ruleCount} 件すべて削除しますか？`
+            : 'Website access を無効にすると、インデックス / エラードキュメントとルーティングルールの設定は破棄され、再度有効にしても元に戻りません。無効にしますか？'
+        }
+        confirmLabel={confirm?.kind === 'clear-rules' ? '削除して保存' : '無効にする'}
         pendingLabel="保存中..."
         isPending={save.isPending}
-        onConfirm={() => save.mutateAsync({ websiteAccess: { enabled: false } })}
+        onConfirm={() =>
+          save.mutateAsync(
+            confirm?.kind === 'clear-rules' ? confirm.body : { websiteAccess: { enabled: false } },
+          )
+        }
       />
     </SettingsCard>
   )
@@ -469,23 +557,23 @@ function RulesJsonCard({
   description: ReactNode
   example: unknown[]
 }) {
-  const serverRules = bucket[field] ?? []
-  const serverText = rulesToText(serverRules)
-  const [text, setText] = useState(serverText)
+  const pick = (b: BucketDetail): Rules => b[field] ?? []
+  const toForm = (rules: Rules) => ({ text: rulesToText(rules) })
+  const { base, form, update, resetTo } = useServerForm(pick(bucket), toForm)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const save = useUpdateBucket(bucket.id, `${title}を保存しました`)
+  const save = useUpdateBucket(bucket.id, `${title}を保存しました`, (b) => resetTo(pick(b)))
 
-  const parsed = parseRulesJson(text)
+  const parsed = parseRulesJson(form.text)
   const parseError = 'error' in parsed ? parsed.error : null
-  const dirty = text !== serverText
+  const dirty = form.text !== rulesToText(base)
 
-  const send = (rules: Record<string, unknown>[]) =>
+  const send = (rules: Rules) =>
     save.mutateAsync(field === 'corsRules' ? { corsRules: rules } : { lifecycleRules: rules })
 
   const onSave = () => {
     if (!('rules' in parsed)) return
     // [] deletes the whole configuration; make that explicit.
-    if (parsed.rules.length === 0 && serverRules.length > 0) {
+    if (parsed.rules.length === 0 && base.length > 0) {
       setConfirmDelete(true)
       return
     }
@@ -497,21 +585,19 @@ function RulesJsonCard({
   return (
     <SettingsCard title={title} experimental description={description}>
       <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">
-          現在 {serverRules.length} 件のルール
-        </span>
+        <span className="text-muted-foreground">現在 {base.length} 件のルール</span>
         <Button
           size="xs"
           variant="ghost"
-          onClick={() => setText(rulesToText(example))}
+          onClick={() => update({ text: rulesToText(example) })}
           disabled={save.isPending}
         >
           例を挿入
         </Button>
       </div>
       <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
+        value={form.text}
+        onChange={(e) => update({ text: e.target.value })}
         spellCheck={false}
         className={TEXTAREA_CLASS}
         aria-label={`${title} (JSON)`}
@@ -531,7 +617,7 @@ function RulesJsonCard({
         pending={save.isPending}
         error={save.error}
         onReset={() => {
-          setText(serverText)
+          resetTo(base)
           save.reset()
         }}
         onSave={onSave}
@@ -541,7 +627,7 @@ function RulesJsonCard({
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title={`${title}の削除`}
-        description={`このバケットの${title}を ${serverRules.length} 件すべて削除しますか？`}
+        description={`このバケットの${title}を ${base.length} 件すべて削除しますか？`}
         isPending={save.isPending}
         onConfirm={() => send([])}
       />
@@ -588,8 +674,14 @@ function UnfinishedUploadsCard({ bucket }: { bucket: BucketDetail }) {
 
   const n = Number(amount.trim())
   const unitInfo = AGE_UNITS.find((u) => u.value === unit) ?? AGE_UNITS[1]
-  const valid = amount.trim() !== '' && Number.isFinite(n) && n >= 0
-  const olderThanSecs = valid ? Math.round(n * unitInfo.secs) : 0
+  const olderThanSecs = Math.round(n * unitInfo.secs)
+  let ageError: string | null = null
+  if (amount.trim() === '' || !Number.isFinite(n) || n < 0 || !Number.isSafeInteger(olderThanSecs)) {
+    ageError = '0 以上の数値を入力してください'
+  } else if (olderThanSecs > MAX_CLEANUP_AGE_SECS) {
+    ageError = '10 年以内で指定してください'
+  }
+  const valid = ageError == null
   const tooRecent = valid && olderThanSecs < 3600
 
   const cleanup = useMutation({
@@ -604,7 +696,6 @@ function UnfinishedUploadsCard({ bucket }: { bucket: BucketDetail }) {
     },
   })
 
-  const uploads = bucket.unfinishedMultipartUploads
   return (
     <SettingsCard
       title="未完了マルチパートアップロード"
@@ -613,7 +704,7 @@ function UnfinishedUploadsCard({ bucket }: { bucket: BucketDetail }) {
       <div className="grid grid-cols-3 gap-3 text-sm">
         <div>
           <p className="text-muted-foreground">アップロード数</p>
-          <p className="font-medium">{formatCount(uploads)}</p>
+          <p className="font-medium">{formatCount(bucket.unfinishedMultipartUploads)}</p>
         </div>
         <div>
           <p className="text-muted-foreground">パート数</p>
@@ -660,7 +751,7 @@ function UnfinishedUploadsCard({ bucket }: { bucket: BucketDetail }) {
             {cleanup.isPending ? '削除中...' : '古いアップロードを削除'}
           </Button>
         </div>
-        {!valid && <p className="text-xs text-destructive">0 以上の数値を入力してください</p>}
+        {ageError && <p className="text-xs text-destructive">{ageError}</p>}
         {tooRecent && (
           <p className="text-sm text-amber-700 dark:text-amber-500">
             注意: 1 時間未満を指定すると、現在進行中のアップロードも中断される可能性があります。
@@ -686,23 +777,15 @@ function UnfinishedUploadsCard({ bucket }: { bucket: BucketDetail }) {
 
 // ---- section ----
 
-/**
- * Bucket settings editor on /buckets/$id. Each card keeps its own form state
- * and is re-keyed by the server values it edits, so a successful save (which
- * refetches the bucket) resets the form to what Garage stored.
- */
+/** Bucket settings editor on /buckets/$id; each card keeps its own form state. */
 export function BucketSettings({ bucket }: { bucket: BucketDetail }) {
   return (
     <div className="space-y-2">
       <h2 className="text-lg font-semibold">バケット設定</h2>
       <div className="grid gap-4 lg:grid-cols-2">
-        <QuotaCard key={`quota:${JSON.stringify(bucket.quotas ?? null)}`} bucket={bucket} />
-        <WebsiteCard
-          key={`web:${bucket.websiteAccess}:${JSON.stringify(bucket.websiteConfig ?? null)}`}
-          bucket={bucket}
-        />
+        <QuotaCard bucket={bucket} />
+        <WebsiteCard bucket={bucket} />
         <RulesJsonCard
-          key={`cors:${JSON.stringify(bucket.corsRules ?? [])}`}
           bucket={bucket}
           field="corsRules"
           title="CORS ルール"
@@ -710,7 +793,6 @@ export function BucketSettings({ bucket }: { bucket: BucketDetail }) {
           example={CORS_EXAMPLE}
         />
         <RulesJsonCard
-          key={`lifecycle:${JSON.stringify(bucket.lifecycleRules ?? [])}`}
           bucket={bucket}
           field="lifecycleRules"
           title="ライフサイクルルール"

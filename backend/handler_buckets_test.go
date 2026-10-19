@@ -57,6 +57,7 @@ func TestUpdateBucketForwardsSettingsUnchanged(t *testing.T) {
 	garage, calls := newFakeBucketGarage(t)
 	c := newNodeTestClient(t, garage.URL)
 
+	t.Cleanup(bucketInfoCache.clear)
 	bucketInfoCache.put("stale", garageBucketInfo{})
 	body := `{"websiteAccess":{"enabled":true,"indexDocument":"index.html","errorDocument":null,"routingRules":[{"Condition":{"KeyPrefixEquals":"a/"},"Redirect":{"ReplaceKeyPrefixWith":"b/"}}]},` +
 		`"quotas":{"maxSize":1073741824,"maxObjects":null},` +
@@ -138,7 +139,7 @@ func TestCleanupIncompleteUploadsRejectsInvalidBody(t *testing.T) {
 		var parsed struct {
 			Error string `json:"error"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil || parsed.Error == "" {
+		if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil || parsed.Error != "olderThanSecs must be a non-negative integer" {
 			t.Errorf("body %.40q: response = %s, want JSON {error}", body, rec.Body.String())
 		}
 	}

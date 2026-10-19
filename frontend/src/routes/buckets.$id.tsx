@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
+import { formatBytes } from '@/lib/format'
 import { toast } from 'sonner'
 import { Copy, Check } from 'lucide-react'
 
@@ -23,14 +24,6 @@ export const Route = createFileRoute('/buckets/$id')({
     prefix: (search.prefix as string) || undefined,
   }),
 })
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
 
 function BucketDetailPage() {
   const { id } = Route.useParams()
@@ -245,7 +238,7 @@ function BucketDetailPage() {
       />
 
       {/* Bucket settings (quotas, website, CORS, lifecycle, unfinished uploads) */}
-      {data && <BucketSettings bucket={data} />}
+      {data && <BucketSettings key={id} bucket={data} />}
 
       <ConfirmDialog
         open={revokeTarget !== null}

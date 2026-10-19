@@ -129,11 +129,9 @@ func handleCleanupIncompleteUploads(garageAdmin *GarageAdminClient) http.Handler
 			OlderThanSecs *int64 `json:"olderThanSecs"`
 		}
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCleanupBodyBytes))
-		if err := dec.Decode(&req); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
-			return
-		}
-		if req.OlderThanSecs == nil || *req.OlderThanSecs < 0 {
+		// Decode failures (malformed JSON, wrong type, oversized body) get the
+		// same fixed message as a missing or negative value.
+		if err := dec.Decode(&req); err != nil || req.OlderThanSecs == nil || *req.OlderThanSecs < 0 {
 			writeJSONError(w, http.StatusBadRequest, "olderThanSecs must be a non-negative integer")
 			return
 		}
