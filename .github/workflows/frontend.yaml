@@ -18,6 +18,7 @@ jobs:
           node-version: '25'
       - run: cd frontend && npm ci
       - run: cd frontend && npm run lint
+      - run: cd frontend && npm test
       - run: cd frontend && npm run build
 
   push:
