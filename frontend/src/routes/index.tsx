@@ -667,7 +667,10 @@ function DashboardPage() {
 
       {status.data && (
         <Suspense fallback={<p className="text-muted-foreground">チャートを読み込み中...</p>}>
-          <StorageCharts nodes={status.data.nodes} />
+          <StorageCharts
+            nodes={status.data.nodes}
+            incompleteAvailInfo={statistics.data?.incompleteAvailInfo === true}
+          />
         </Suspense>
       )}
 
