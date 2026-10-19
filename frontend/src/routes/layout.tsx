@@ -31,6 +31,7 @@ import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
 import { formatBytes } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 import { draftFromNode, draftToChange, type RoleDraft } from '@/lib/layout-draft'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/layout')({
   component: LayoutPage,
@@ -46,6 +47,7 @@ function formatRedundancy(z: ZoneRedundancy): string {
 }
 
 function LayoutPage() {
+  useDocumentTitle('レイアウト')
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [drafts, setDrafts] = useState<RoleDraft[]>([])

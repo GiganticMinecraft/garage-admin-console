@@ -22,7 +22,7 @@ import {
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
 import { formatBytes } from '@/lib/format'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
-import { describeState, formatSecsAgo, type StateKind } from '@/lib/workers'
+import { STATE_RANK, describeState, formatSecsAgo } from '@/lib/workers'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/table'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/nodes/$id')({
   component: NodeDetailPage,
@@ -582,9 +583,6 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
 // ---------------------------------------------------------------------------
 // Workers
 
-// Sort order for the state column: active workers first.
-const STATE_RANK: Record<StateKind, number> = { busy: 0, throttled: 1, idle: 2, other: 3 }
-
 type SortKey = 'name' | 'state'
 
 function SortIcon({ active, dir }: { active: boolean; dir: 1 | -1 }) {
@@ -715,6 +713,7 @@ function WorkersSection({ nodeId }: { nodeId: string }) {
 // Page
 
 function NodeDetailPage() {
+  useDocumentTitle('ノード詳細')
   const { id } = Route.useParams()
 
   // Cluster status still knows hostname / up state / last seen for nodes that

@@ -11,12 +11,14 @@ import { KeySettingsDialog } from '@/components/key-settings-dialog'
 import { S3ConnectionDialog } from '@/components/s3-connection-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatDateTime } from '@/lib/format'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/keys/$id')({
   component: KeyDetailPage,
 })
 
 function KeyDetailPage() {
+  useDocumentTitle('キー詳細')
   const { id } = Route.useParams()
   const queryClient = useQueryClient()
   // The route component is reused across /keys/:id navigations, so the

@@ -15,6 +15,7 @@ import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
 import { formatBytes } from '@/lib/format'
 import { toast } from 'sonner'
 import { Copy, Check } from 'lucide-react'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
@@ -24,6 +25,7 @@ export const Route = createFileRoute('/buckets/$id')({
 })
 
 function BucketDetailPage() {
+  useDocumentTitle('バケット詳細')
   const { id } = Route.useParams()
   const { prefix: rawPrefix } = Route.useSearch()
   const prefix = rawPrefix ?? ''

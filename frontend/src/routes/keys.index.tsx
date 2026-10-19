@@ -24,6 +24,7 @@ import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
 import { useDebouncedValue } from '@/lib/use-debounce'
 import { toast } from 'sonner'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/keys/')({
   component: KeysPage,
@@ -53,6 +54,7 @@ function matchesKey(k: KeyListItem, q: string): boolean {
 }
 
 function KeysPage() {
+  useDocumentTitle('キー')
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<KeyListItem | null>(null)
