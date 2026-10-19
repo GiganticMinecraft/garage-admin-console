@@ -317,8 +317,18 @@ func TestWorkerListProxy(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
 	}
-	if body := rr.Body.String(); !strings.Contains(body, "repair") {
-		t.Errorf("expected worker list, got: %s", body)
+	var body struct {
+		Workers []map[string]any  `json:"workers"`
+		Errors  map[string]string `json:"errors"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rr.Body.String())
+	}
+	if len(body.Workers) == 0 {
+		t.Fatalf("expected workers, got: %s", rr.Body.String())
+	}
+	if body.Workers[0]["nodeId"] == nil || body.Workers[0]["nodeId"] == "" {
+		t.Errorf("worker should carry nodeId: %v", body.Workers[0])
 	}
 }
 
@@ -393,5 +403,71 @@ func TestLayoutPostProxy(t *testing.T) {
 	}
 	if respBody := rr.Body.String(); !strings.Contains(respBody, "applied") {
 		t.Errorf("expected proxied POST response, got: %s", respBody)
+	}
+}
+
+func TestGetKeyForwardsShowSecretKey(t *testing.T) {
+	var gotQuery string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/GetKeyInfo", func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"accessKeyId":"GK1","secretAccessKey":"s"}`))
+	})
+	garage := httptest.NewServer(mux)
+	defer garage.Close()
+	handler, store := setupTestRouter(t, garage.URL)
+
+	for _, tc := range []struct{ query, want string }{
+		{"", "id=GK1"},
+		{"?showSecretKey=true", "id=GK1&showSecretKey=true"},
+		{"?showSecretKey=yes", "id=GK1"},
+	} {
+		req := authenticatedRequest(t, store, http.MethodGet, "/api/keys/GK1"+tc.query, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		if gotQuery != tc.want {
+			t.Errorf("query %q: upstream query = %q, want %q", tc.query, gotQuery, tc.want)
+		}
+	}
+}
+
+func TestSecretBearingKeyResponsesAreNoStore(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/GetKeyInfo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"accessKeyId":"GK1"}`))
+	})
+	mux.HandleFunc("/v2/CreateKey", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"accessKeyId":"GK1","secretAccessKey":"s"}`))
+	})
+	garage := httptest.NewServer(mux)
+	defer garage.Close()
+	handler, store := setupTestRouter(t, garage.URL)
+
+	get := func(path string) http.Header {
+		req := authenticatedRequest(t, store, http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Header()
+	}
+	if cc := get("/api/keys/GK1?showSecretKey=true").Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("secret GET Cache-Control = %q, want no-store", cc)
+	}
+	if cc := get("/api/keys/GK1").Get("Cache-Control"); cc != "" {
+		t.Errorf("plain GET should not set Cache-Control, got %q", cc)
+	}
+
+	req := authenticatedRequest(t, store, http.MethodPost, "/api/keys", strings.NewReader(`{"name":"n"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("CreateKey Cache-Control = %q, want no-store", cc)
 	}
 }

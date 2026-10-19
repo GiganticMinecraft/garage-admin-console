@@ -45,16 +45,28 @@ func newS3Client() *S3Client {
 		region = "seichi-cloud"
 	}
 
-	client := s3.New(s3.Options{
+	return &S3Client{client: newS3SDKClient(endpoint, region, accessKey, secretKey, 30*time.Second)}
+}
+
+// newS3SDKClient builds the underlying SDK client.
+//
+// It deliberately does not set http.Client.Timeout: that bounds the whole
+// exchange including the body transfer, so any upload, download or ZIP stream
+// taking longer than the timeout is cut off mid-transfer (multi-GB world
+// backups routinely exceed 30s). Only the wait for response headers is
+// bounded; the body transfer is governed by the request context, which is
+// cancelled when the browser disconnects.
+func newS3SDKClient(endpoint, region, accessKey, secretKey string, headerTimeout time.Duration, optFns ...func(*s3.Options)) *s3.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = headerTimeout
+
+	return s3.New(s3.Options{
 		BaseEndpoint: aws.String(endpoint),
 		Region:       region,
 		Credentials:  credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
 		UsePathStyle: true,
 		HTTPClient: &http.Client{
-			Transport: otelhttp.NewTransport(http.DefaultTransport),
-			Timeout:   30 * time.Second,
+			Transport: otelhttp.NewTransport(transport),
 		},
-	})
-
-	return &S3Client{client: client}
+	}, optFns...)
 }

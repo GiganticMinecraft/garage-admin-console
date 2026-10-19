@@ -210,11 +210,29 @@ export async function listKeys(): Promise<KeyListItem[]> {
   return fetchJSON('/keys')
 }
 
-export async function getKey(id: string): Promise<Record<string, unknown>> {
-  return fetchJSON(`/keys/${id}`)
+export interface KeyDetail {
+  accessKeyId: string
+  name: string
+  created: string
+  expiration: string | null
+  expired: boolean
+  /** Only present when requested with showSecretKey (or right after creation). */
+  secretAccessKey?: string
+  permissions: { createBucket: boolean }
+  buckets: {
+    id: string
+    globalAliases: string[]
+    localAliases: string[]
+    permissions: { read: boolean; write: boolean; owner: boolean }
+  }[]
 }
 
-export async function createKey(body: unknown): Promise<Record<string, unknown>> {
+export async function getKey(id: string, opts?: { showSecretKey?: boolean }): Promise<KeyDetail> {
+  const qs = opts?.showSecretKey ? '?showSecretKey=true' : ''
+  return fetchJSON(`/keys/${id}${qs}`)
+}
+
+export async function createKey(body: { name: string }): Promise<KeyDetail> {
   return fetchJSON('/keys', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -256,15 +274,18 @@ export function downloadObjectUrl(bucket: string, key: string): string {
   return `${BASE}/objects/${bucket}/download?key=${encodeURIComponent(key)}`
 }
 
-export function batchDownloadUrl(bucket: string, keys: string[]): string {
-  const params = keys.map((k) => `key=${encodeURIComponent(k)}`).join('&')
-  return `${BASE}/objects/${bucket}/batch-download?${params}`
+export function batchDownloadUrl(bucket: string, keys: string[], name?: string): string {
+  const params = keys.map((k) => `key=${encodeURIComponent(k)}`)
+  if (name) params.push(`name=${encodeURIComponent(name)}`)
+  return `${BASE}/objects/${bucket}/batch-download?${params.join('&')}`
 }
 
-export async function downloadObjectsZip(bucket: string, keys: string[]): Promise<void> {
+// `name` is the bucket alias used for the ZIP filename; `bucket` is the ID
+// used for the S3 request.
+export async function downloadObjectsZip(bucket: string, keys: string[], name?: string): Promise<void> {
   const a = document.createElement('a')
-  a.href = batchDownloadUrl(bucket, keys)
-  a.download = `${bucket}-files.zip`
+  a.href = batchDownloadUrl(bucket, keys, name)
+  a.download = `${name || bucket}-files.zip`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -298,6 +319,8 @@ export async function deleteObject(bucket: string, key: string): Promise<void> {
 export type WorkerState = string | { throttled: string }
 
 export interface Worker {
+  /** ID of the node this worker runs on (worker ids are per-node counters). */
+  nodeId: string
   id: number
   name: string
   state: WorkerState
@@ -311,7 +334,13 @@ export interface Worker {
   freeform: string[]
 }
 
-export async function listWorkers(): Promise<Worker[]> {
+export interface WorkersResponse {
+  workers: Worker[]
+  /** Nodes that failed to answer ListWorkers, keyed by node ID. */
+  errors: Record<string, string>
+}
+
+export async function listWorkers(): Promise<WorkersResponse> {
   return fetchJSON('/workers')
 }
 
@@ -413,11 +442,17 @@ export async function launchRepair(
   })
 }
 
-// Maintenance metrics (extracted from Garage /metrics)
+// Maintenance metrics for the repair page.
+// resyncQueueLength / resyncErroredBlocks are summed over every node that
+// answered GetNodeStatistics; `nodes` has the breakdown and `nodeErrors` the
+// nodes that could not be reached. corruptionCounter comes from the admin
+// endpoint node's /metrics only and is null when unavailable.
 export interface MaintenanceMetrics {
   resyncQueueLength: number
   resyncErroredBlocks: number
-  corruptionCounter: number
+  corruptionCounter: number | null
+  nodes: { nodeId: string; resyncQueueLen: number; resyncErrors: number }[]
+  nodeErrors: Record<string, string>
 }
 
 export async function getMaintenanceMetrics(): Promise<MaintenanceMetrics> {
