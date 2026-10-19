@@ -392,7 +392,7 @@ func TestLayoutPostProxy(t *testing.T) {
 	handler, store := setupTestRouter(t, gs.URL)
 
 	body := `{"version":1}`
-	req := authenticatedRequest(t, store, "POST", "/api/cluster/layout", strings.NewReader(body))
+	req := authenticatedRequest(t, store, "POST", "/api/cluster/layout/apply", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	rr := httptest.NewRecorder()
