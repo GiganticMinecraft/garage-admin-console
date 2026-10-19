@@ -64,6 +64,7 @@ Environment variables:
 | `GARAGE_S3_ACCESS_KEY` | S3 access key |
 | `GARAGE_S3_SECRET_KEY` | S3 secret key |
 | `GARAGE_S3_REGION` | S3 region (default: `seichi-cloud`) |
+| `GARAGE_S3_PUBLIC_ENDPOINT` | Optional. S3 URL shown to operators in the key page's "S3 接続情報" dialog (default: `GARAGE_S3_ENDPOINT`) |
 | `GITHUB_CLIENT_ID` | GitHub OAuth Client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth Client Secret |
 | `GITHUB_ORG` | GitHub org for team check (default: `GiganticMinecraft`) |

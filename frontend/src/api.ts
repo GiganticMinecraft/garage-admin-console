@@ -442,10 +442,15 @@ export async function deleteBucket(id: string): Promise<void> {
   await fetchJSON(`/buckets/${id}`, { method: 'DELETE' })
 }
 
+/**
+ * New grant (the key holds no permission on the bucket yet): POST →
+ * AllowBucketKey. Editing an existing grant goes through
+ * setBucketKeyPermissions (PUT), which also removes unchecked flags.
+ */
 export async function grantBucketKey(
   bucketId: string,
-  body: unknown,
-): Promise<Record<string, unknown>> {
+  body: { accessKeyId: string; permissions: BucketKeyPermissions },
+): Promise<BucketDetail> {
   return fetchJSON(`/buckets/${bucketId}/keys`, {
     method: 'POST',
     body: JSON.stringify(body),
@@ -489,14 +494,26 @@ export async function getKey(id: string, opts?: { showSecretKey?: boolean }): Pr
   return fetchJSON(`/keys/${id}${qs}`)
 }
 
-export async function createKey(body: { name: string }): Promise<KeyDetail> {
+/**
+ * Body of Garage CreateKey / UpdateKey (UpdateKeyRequestBody). `expiration`
+ * is RFC 3339; Garage rejects `expiration` together with `neverExpires`.
+ */
+export interface KeySettingsRequest {
+  name?: string
+  expiration?: string
+  neverExpires?: boolean
+  allow?: { createBucket: boolean }
+  deny?: { createBucket: boolean }
+}
+
+export async function createKey(body: KeySettingsRequest): Promise<KeyDetail> {
   return fetchJSON('/keys', {
     method: 'POST',
     body: JSON.stringify(body),
   })
 }
 
-export async function updateKey(id: string, body: unknown): Promise<Record<string, unknown>> {
+export async function updateKey(id: string, body: KeySettingsRequest): Promise<KeyDetail> {
   return fetchJSON(`/keys/${id}`, {
     method: 'PUT',
     body: JSON.stringify(body),
@@ -989,4 +1006,48 @@ export interface StorageHealth {
 
 export async function getStorageHealth(): Promise<StorageHealth> {
   return fetchJSON('/cluster/storage-health')
+}
+
+// Bucket-key permissions (#377)
+export interface BucketKeyPermissions {
+  read: boolean
+  write: boolean
+  owner: boolean
+}
+
+export interface SetBucketKeyPermissionsResult {
+  bucketId: string
+  accessKeyId: string
+  permissions: BucketKeyPermissions
+  /** false when the permissions were already as requested. */
+  changed: boolean
+}
+
+/**
+ * Sets one key's permissions on one bucket to exactly `permissions`. The
+ * backend diffs against the current state and sends AllowBucketKey for newly
+ * granted flags and DenyBucketKey for removed ones. At least one flag must be
+ * true; use revokeBucketKey to remove all of them.
+ */
+export async function setBucketKeyPermissions(
+  bucketId: string,
+  keyId: string,
+  permissions: BucketKeyPermissions,
+): Promise<SetBucketKeyPermissionsResult> {
+  return fetchJSON(`/buckets/${bucketId}/keys/${encodeURIComponent(keyId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(permissions),
+  })
+}
+
+/** Region / endpoint for S3 clients (GET /api/s3/connection). */
+export interface S3Connection {
+  region: string
+  endpoint: string
+  /** false when GARAGE_S3_PUBLIC_ENDPOINT is unset and `endpoint` may be cluster-internal. */
+  publicEndpoint: boolean
+}
+
+export async function getS3Connection(): Promise<S3Connection> {
+  return fetchJSON('/s3/connection')
 }

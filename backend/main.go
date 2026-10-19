@@ -58,6 +58,7 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 			r.Post("/{id}/keys", handleGrantBucketKey(garageAdmin))
 			r.Delete("/{id}/keys/{kid}", handleRevokeBucketKey(garageAdmin))
 			r.Post("/{id}/cleanup-uploads", handleCleanupIncompleteUploads(garageAdmin))
+			r.Put("/{id}/keys/{kid}", handleSetBucketKeyPermissions(garageAdmin))
 		})
 
 		r.Route("/api/keys", func(r chi.Router) {
@@ -102,6 +103,8 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 		})
 
 		r.Get("/api/metrics", handleMaintenanceMetrics(garageAdmin))
+
+		r.Get("/api/s3/connection", handleS3Connection())
 	})
 
 	return r

@@ -54,10 +54,7 @@ func parseMaxUploadBytes(v string) int64 {
 //	GARAGE_S3_REGION (default: seichi-cloud),
 //	GARAGE_MAX_UPLOAD_BYTES (default: 10 GiB).
 func newS3Client() *S3Client {
-	endpoint := os.Getenv("GARAGE_S3_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "http://garage.garage.svc.cluster.local:3900"
-	}
+	endpoint := s3EndpointFromEnv()
 
 	accessKey := os.Getenv("GARAGE_S3_ACCESS_KEY")
 	if accessKey == "" {
@@ -71,15 +68,29 @@ func newS3Client() *S3Client {
 		os.Exit(1)
 	}
 
-	region := os.Getenv("GARAGE_S3_REGION")
-	if region == "" {
-		region = "seichi-cloud"
-	}
+	region := s3RegionFromEnv()
 
 	return &S3Client{
 		client:         newS3SDKClient(endpoint, region, accessKey, secretKey, 30*time.Second),
 		maxUploadBytes: parseMaxUploadBytes(os.Getenv("GARAGE_MAX_UPLOAD_BYTES")),
 	}
+}
+
+// s3EndpointFromEnv is the S3 API URL the backend talks to:
+// GARAGE_S3_ENDPOINT, default http://garage.garage.svc.cluster.local:3900.
+func s3EndpointFromEnv() string {
+	if v := os.Getenv("GARAGE_S3_ENDPOINT"); v != "" {
+		return v
+	}
+	return "http://garage.garage.svc.cluster.local:3900"
+}
+
+// s3RegionFromEnv is the S3 region: GARAGE_S3_REGION, default seichi-cloud.
+func s3RegionFromEnv() string {
+	if v := os.Getenv("GARAGE_S3_REGION"); v != "" {
+		return v
+	}
+	return "seichi-cloud"
 }
 
 // newS3SDKClient builds the underlying SDK client.

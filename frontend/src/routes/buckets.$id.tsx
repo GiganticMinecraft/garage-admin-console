@@ -1,19 +1,14 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useState, useCallback } from 'react'
 import {
   getBucket,
-  grantBucketKey,
-  revokeBucketKey,
 } from '@/api'
+import { BucketKeyPermissions } from '@/components/bucket-key-permissions'
 import { BucketSettings } from '@/components/bucket-settings'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ObjectBrowser } from '@/components/object-browser'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Checkbox } from '@/components/ui/checkbox'
 import { formatBytes } from '@/lib/format'
 import { toast } from 'sonner'
 import { Copy, Check } from 'lucide-react'
@@ -30,7 +25,6 @@ function BucketDetailPage() {
   const { prefix: rawPrefix } = Route.useSearch()
   const prefix = rawPrefix ?? ''
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const setPrefix = useCallback(
     (newPrefix: string) => {
       navigate({
@@ -42,48 +36,11 @@ function BucketDetailPage() {
     },
     [navigate, id],
   )
-  const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
     queryFn: () => getBucket(id),
-  })
-
-  // Key grant state
-  const [grantKeyId, setGrantKeyId] = useState('')
-  const [grantPermissions, setGrantPermissions] = useState({
-    read: true,
-    write: false,
-    owner: false,
-  })
-  const grantMutation = useMutation({
-    mutationFn: (accessKeyId: string) =>
-      grantBucketKey(id, {
-        accessKeyId,
-        permissions: grantPermissions,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bucket', id] })
-      setGrantKeyId('')
-      setGrantPermissions({ read: true, write: false, owner: false })
-      toast.success('キーを付与しました')
-    },
-    onError: (error: Error) => {
-      toast.error(`キーの付与に失敗: ${error.message}`)
-    },
-  })
-
-  const revokeMutation = useMutation({
-    mutationFn: (keyId: string) => revokeBucketKey(id, keyId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bucket', id] })
-      setRevokeTarget(null)
-      toast.success('キーを取り消しました')
-    },
-    onError: (error) => {
-      toast.error(`キーの取り消しに失敗しました: ${error.message}`)
-    },
   })
 
   const data = bucket.data
@@ -173,60 +130,12 @@ function BucketDetailPage() {
       ) : null}
 
       {/* Key Permissions */}
-      <div className="space-y-2">
-        <h2 className="text-lg font-semibold">キーの権限</h2>
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            <Input
-              value={grantKeyId}
-              onChange={(e) => setGrantKeyId(e.target.value)}
-              placeholder="アクセスキー ID"
-              className="flex-1"
-            />
-            <Button
-              size="sm"
-              onClick={() => grantMutation.mutate(grantKeyId)}
-              disabled={!grantKeyId || grantMutation.isPending}
-            >
-              付与
-            </Button>
-          </div>
-          <div className="flex items-center gap-4">
-            {(['read', 'write', 'owner'] as const).map((perm) => (
-              <label key={perm} className="flex items-center gap-1.5 text-sm">
-                <Checkbox
-                  checked={grantPermissions[perm]}
-                  onCheckedChange={(checked) =>
-                    setGrantPermissions((prev) => ({ ...prev, [perm]: !!checked }))
-                  }
-                />
-                {perm}
-              </label>
-            ))}
-          </div>
-        </div>
-        {data?.keys?.map((k) => (
-          <div key={k.accessKeyId} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="font-mono">{k.accessKeyId}</span>
-              {k.name && <span className="text-muted-foreground">({k.name})</span>}
-              <div className="flex gap-1">
-                {k.permissions.read && <Badge variant="outline">read</Badge>}
-                {k.permissions.write && <Badge variant="outline">write</Badge>}
-                {k.permissions.owner && <Badge variant="outline">owner</Badge>}
-              </div>
-            </div>
-            <Button
-              variant="link"
-              size="sm"
-              className="text-destructive"
-              onClick={() => setRevokeTarget(k.accessKeyId)}
-            >
-              取り消し
-            </Button>
-          </div>
-        ))}
-      </div>
+      <BucketKeyPermissions
+        key={id}
+        bucketId={id}
+        bucketLabel={data?.globalAliases?.[0] || id.slice(0, 16)}
+        keys={data?.keys}
+      />
 
       {/* Object Browser */}
       <ObjectBrowser
@@ -239,19 +148,6 @@ function BucketDetailPage() {
 
       {/* Bucket settings (quotas, website, CORS, lifecycle, unfinished uploads) */}
       {data && <BucketSettings key={id} bucket={data} />}
-
-      <ConfirmDialog
-        open={revokeTarget !== null}
-        onOpenChange={(open) => { if (!open) setRevokeTarget(null) }}
-        title="キーの取り消し"
-        description={`キー「${revokeTarget}」のアクセス権限を取り消しますか？`}
-        confirmLabel="取り消し"
-        pendingLabel="取り消し中..."
-        onConfirm={() => {
-          if (revokeTarget) return revokeMutation.mutateAsync(revokeTarget)
-        }}
-        isPending={revokeMutation.isPending}
-      />
     </div>
   )
 }
