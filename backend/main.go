@@ -72,6 +72,9 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 			r.Get("/{bucket}/batch-download", handleBatchDownloadObjectsGet(s3Client))
 			r.Post("/{bucket}/upload", handleUploadObject(s3Client))
 			r.Delete("/{bucket}", handleDeleteObject(s3Client))
+			r.Delete("/{bucket}/batch", handleBatchDeleteObjects(s3Client))
+			r.Get("/{bucket}/prefix-summary", handlePrefixSummary(s3Client))
+			r.Delete("/{bucket}/prefix", handleDeletePrefix(s3Client))
 		})
 
 		r.Get("/api/workers", handleListWorkers(garageAdmin))
