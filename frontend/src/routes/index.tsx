@@ -10,6 +10,7 @@ import {
 } from '@/api'
 
 const StorageCharts = lazy(() => import('@/components/storage-charts'))
+import { nodeDisplayName } from '@/lib/nodes'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -104,11 +105,6 @@ function HealthCard({ data }: { data: ClusterHealth }) {
   )
 }
 
-/** Display name for a node: hostname when known, otherwise the ID prefix. */
-function nodeDisplayName(node: Pick<ClusterNode, 'id' | 'hostname'>): string {
-  return node.hostname || `${node.id.slice(0, 16)}…`
-}
-
 /**
  * Usage bar for a data/metadata partition. Garage reports null for nodes
  * that are down or have no role yet, in which case we show a placeholder
@@ -120,7 +116,7 @@ function PartitionBar({
   color,
 }: {
   label: string
-  partition: PartitionUsage | null
+  partition: PartitionUsage | null | undefined
   color: string
 }) {
   if (!partition) {
@@ -155,16 +151,22 @@ function NodeStatusDot({ node }: { node: ClusterNode }) {
   )
 }
 
+/**
+ * Zone of the node's current role. Garage sets `draining` only for nodes whose
+ * role was removed in a newer layout version while they still hold data, so
+ * that state is shown explicitly instead of as a plain "unassigned".
+ */
 function ZoneBadge({ node }: { node: ClusterNode }) {
   if (!node.role) {
-    return <Badge variant="outline">ロール未割当</Badge>
+    return node.draining ? (
+      <Badge variant="destructive" title="レイアウトから外されましたが、まだデータを保持しています">
+        draining
+      </Badge>
+    ) : (
+      <Badge variant="outline">ロール未割当</Badge>
+    )
   }
-  return (
-    <Badge variant="secondary">
-      {node.role.zone}
-      {node.draining ? ' (draining)' : ''}
-    </Badge>
-  )
+  return <Badge variant="secondary">{node.role.zone}</Badge>
 }
 
 function NodeCard({ node }: { node: ClusterNode }) {
@@ -197,14 +199,7 @@ function NodeTableRow({ node }: { node: ClusterNode }) {
       </TableCell>
       <TableCell className="text-muted-foreground">{node.garageVersion ?? '不明'}</TableCell>
       <TableCell className="text-muted-foreground">
-        {node.role ? (
-          <>
-            {node.role.zone}
-            {node.draining ? ' (draining)' : ''}
-          </>
-        ) : (
-          <Badge variant="outline">ロール未割当</Badge>
-        )}
+        <ZoneBadge node={node} />
       </TableCell>
       <TableCell className="min-w-[200px]">
         <PartitionBar label="データ" partition={node.dataPartition} color="bg-blue-500" />

@@ -142,9 +142,6 @@ function LayoutPage() {
           >
             {applyMutation.isPending ? '適用中...' : 'レイアウトを適用'}
           </Button>
-          {applyMutation.isError && (
-            <p className="text-sm text-destructive">{applyMutation.error.message}</p>
-          )}
         </div>
       ) : data ? (
         <>

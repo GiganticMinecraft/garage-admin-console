@@ -37,15 +37,23 @@ export function ConfirmDialog({
   pendingLabel = '削除中...',
   confirmVariant = 'destructive',
 }: ConfirmDialogProps) {
+  // While the confirmed action is in flight the dialog cannot be dismissed
+  // (Cancel, Escape or overlay click); otherwise the pending promise would
+  // later close whatever dialog instance happens to be open at that moment.
+  const handleOpenChange = (next: boolean) => {
+    if (!next && isPending) return
+    onOpenChange(next)
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
             キャンセル
           </Button>
           <Button
