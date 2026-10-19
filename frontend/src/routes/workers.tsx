@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { listWorkers, type Worker, type WorkerState } from '@/api'
+import { useMemo } from 'react'
+import { getClusterStatus, listWorkers, type Worker, type WorkerState } from '@/api'
 import {
   Table,
   TableHeader,
@@ -33,21 +34,84 @@ function describeState(state: WorkerState): { label: string; kind: StateKind } {
   return { label: typeof state === 'string' && state.length > 0 ? state : 'unknown', kind: 'other' }
 }
 
+interface NodeGroup {
+  nodeId: string
+  /** Hostname when the cluster status knows it; otherwise the heading shows the ID only. */
+  hostname: string | null
+  workers: Worker[]
+}
+
 function WorkersPage() {
-  const { data: workers, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['workers'],
     queryFn: listWorkers,
   })
+  // Hostnames come from the cluster status; fall back to the ID prefix if
+  // that query fails so the worker list still renders.
+  const status = useQuery({
+    queryKey: ['cluster', 'status'],
+    queryFn: getClusterStatus,
+  })
+
+  const groups = useMemo<NodeGroup[]>(() => {
+    if (!data) return []
+    const names = new Map<string, string>()
+    for (const n of status.data?.nodes ?? []) {
+      if (n.hostname) names.set(n.id, n.hostname)
+    }
+    const byNode = new Map<string, Worker[]>()
+    for (const w of data.workers) {
+      const list = byNode.get(w.nodeId)
+      if (list) list.push(w)
+      else byNode.set(w.nodeId, [w])
+    }
+    // Backend already sorts by node ID then worker ID; keep that order.
+    return [...byNode.entries()].map(([nodeId, workers]) => ({
+      nodeId,
+      hostname: names.get(nodeId) ?? null,
+      workers,
+    }))
+  }, [data, status.data])
+
+  const nodeErrors = Object.entries(data?.errors ?? {})
 
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">ワーカー</h1>
 
+      {nodeErrors.length > 0 && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+          <p className="font-medium text-destructive">応答しなかったノードがあります</p>
+          <ul className="mt-1 space-y-0.5 text-muted-foreground">
+            {nodeErrors.map(([nodeId, msg]) => (
+              <li key={nodeId}>
+                <span className="font-mono text-xs">{nodeId.slice(0, 16)}…</span>: {msg}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {isLoading ? (
         <p className="text-muted-foreground">読み込み中...</p>
       ) : isError ? (
         <p className="text-destructive">ワーカーの読み込みに失敗しました</p>
+      ) : groups.length === 0 ? (
+        <p className="text-muted-foreground">ワーカーがありません</p>
       ) : (
+        groups.map((group) => (
+          <div key={group.nodeId} className="space-y-2">
+            <h2 className="flex items-baseline gap-2 text-lg font-semibold">
+              {group.hostname ?? <span className="font-mono">{group.nodeId.slice(0, 16)}…</span>}
+              {group.hostname && (
+                <span className="font-mono text-xs font-normal text-muted-foreground">
+                  {group.nodeId.slice(0, 16)}…
+                </span>
+              )}
+              <span className="text-xs font-normal text-muted-foreground">
+                {group.workers.length} ワーカー
+              </span>
+            </h2>
         <div className="rounded-lg border">
           <Table>
             <TableHeader>
@@ -58,7 +122,7 @@ function WorkersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {workers?.map((worker: Worker) => {
+              {group.workers.map((worker: Worker) => {
                 const { label: stateLabel, kind: stateKind } = describeState(worker.state)
                 const hasError = worker.consecutiveErrors > 0
                 const stateVariant = hasError
@@ -69,7 +133,7 @@ function WorkersPage() {
                       ? 'default'
                       : 'outline'
                 return (
-                <TableRow key={worker.id}>
+                <TableRow key={`${worker.nodeId}-${worker.id}`}>
                   <TableCell className="font-medium">
                     {worker.name || '-'}
                   </TableCell>
@@ -118,16 +182,11 @@ function WorkersPage() {
                 </TableRow>
                 )
               })}
-              {workers?.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
-                    ワーカーがありません
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
         </div>
+          </div>
+        ))
       )}
     </div>
   )
