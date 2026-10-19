@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -107,5 +108,42 @@ func handleRevokeBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}()
 
 		proxyGarageMutation(w, r, garageAdmin, "/v2/DenyBucketKey", pr)
+	}
+}
+
+// maxCleanupBodyBytes bounds the tiny JSON body of the cleanup endpoint.
+const maxCleanupBodyBytes = 4 << 10
+
+// handleCleanupIncompleteUploads proxies POST /api/buckets/{id}/cleanup-uploads
+// (body {"olderThanSecs": N}) to Garage POST /v2/CleanupIncompleteUploads,
+// injecting the bucket ID from the URL. Garage answers {"uploadsDeleted": N}.
+// The list caches are cleared on success because the bucket list shows the
+// unfinished-upload count.
+func handleCleanupIncompleteUploads(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		bucketID := chi.URLParam(r, "id")
+
+		var req struct {
+			// Pointer so that a missing field is rejected instead of
+			// silently meaning "delete every unfinished upload".
+			OlderThanSecs *int64 `json:"olderThanSecs"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCleanupBodyBytes))
+		// Decode failures (malformed JSON, wrong type, oversized body) get the
+		// same fixed message as a missing or negative value.
+		if err := dec.Decode(&req); err != nil || req.OlderThanSecs == nil || *req.OlderThanSecs < 0 {
+			writeJSONError(w, http.StatusBadRequest, "olderThanSecs must be a non-negative integer")
+			return
+		}
+
+		body, err := json.Marshal(map[string]any{
+			"bucketId":      bucketID,
+			"olderThanSecs": *req.OlderThanSecs,
+		})
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		proxyGarageMutation(w, r, garageAdmin, "/v2/CleanupIncompleteUploads", bytes.NewReader(body))
 	}
 }

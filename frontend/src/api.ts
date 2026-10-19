@@ -346,8 +346,82 @@ export interface ListResult<T> {
   truncated: boolean
 }
 
-export async function getBucket(id: string): Promise<Record<string, unknown>> {
+/** Garage quotas; null means unlimited. */
+export interface BucketQuotas {
+  maxSize: number | null
+  maxObjects: number | null
+}
+
+/**
+ * S3-style rules are passed through as Garage serialises them (PascalCase XML
+ * field names such as "AllowedOrigin"); the console edits them as raw JSON.
+ */
+export type BucketCorsRule = Record<string, unknown>
+export type BucketLifecycleRule = Record<string, unknown>
+export type BucketRoutingRule = Record<string, unknown>
+
+/** Body of GET /api/buckets/{id} (Garage GetBucketInfoResponse). */
+export interface BucketDetail {
+  id: string
+  created?: string
+  globalAliases?: string[]
+  websiteAccess: boolean
+  /** Absent (or null) when website access is disabled. */
+  websiteConfig?: {
+    indexDocument: string
+    errorDocument: string | null
+    /** Absent on Garage < v2.3. */
+    routingRules?: BucketRoutingRule[]
+  } | null
+  /** Absent when the bucket has no CORS configuration. */
+  corsRules?: BucketCorsRule[] | null
+  /** Absent when the bucket has no lifecycle configuration. */
+  lifecycleRules?: BucketLifecycleRule[] | null
+  keys?: {
+    accessKeyId: string
+    name: string
+    permissions: { read: boolean; write: boolean; owner: boolean }
+    bucketLocalAliases?: string[]
+  }[]
+  objects?: number
+  bytes?: number
+  unfinishedUploads?: number
+  unfinishedMultipartUploads?: number
+  unfinishedMultipartUploadParts?: number
+  unfinishedMultipartUploadBytes?: number
+  quotas?: BucketQuotas | null
+}
+
+/**
+ * Body of PUT /api/buckets/{id} (Garage UpdateBucketRequestBody). Omitted
+ * fields are left unchanged; an empty corsRules / lifecycleRules array
+ * deletes that configuration.
+ */
+export interface UpdateBucketBody {
+  websiteAccess?: {
+    enabled: boolean
+    indexDocument?: string
+    errorDocument?: string | null
+    routingRules?: BucketRoutingRule[]
+  }
+  quotas?: BucketQuotas
+  corsRules?: BucketCorsRule[]
+  lifecycleRules?: BucketLifecycleRule[]
+}
+
+export async function getBucket(id: string): Promise<BucketDetail> {
   return fetchJSON(`/buckets/${id}`)
+}
+
+/** Deletes unfinished multipart uploads started more than olderThanSecs ago. */
+export async function cleanupIncompleteUploads(
+  bucketId: string,
+  olderThanSecs: number,
+): Promise<{ uploadsDeleted: number }> {
+  return fetchJSON(`/buckets/${bucketId}/cleanup-uploads`, {
+    method: 'POST',
+    body: JSON.stringify({ olderThanSecs }),
+  })
 }
 
 export async function createBucket(body: unknown): Promise<Record<string, unknown>> {
@@ -357,7 +431,7 @@ export async function createBucket(body: unknown): Promise<Record<string, unknow
   })
 }
 
-export async function updateBucket(id: string, body: unknown): Promise<Record<string, unknown>> {
+export async function updateBucket(id: string, body: UpdateBucketBody): Promise<BucketDetail> {
   return fetchJSON(`/buckets/${id}`, {
     method: 'PUT',
     body: JSON.stringify(body),

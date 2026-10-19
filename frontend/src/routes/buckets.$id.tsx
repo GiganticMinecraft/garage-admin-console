@@ -6,6 +6,7 @@ import {
   grantBucketKey,
   revokeBucketKey,
 } from '@/api'
+import { BucketSettings } from '@/components/bucket-settings'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ObjectBrowser } from '@/components/object-browser'
 import { Badge } from '@/components/ui/badge'
@@ -13,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
+import { formatBytes } from '@/lib/format'
 import { toast } from 'sonner'
 import { Copy, Check } from 'lucide-react'
 
@@ -22,31 +24,6 @@ export const Route = createFileRoute('/buckets/$id')({
     prefix: (search.prefix as string) || undefined,
   }),
 })
-
-interface BucketDetail {
-  id: string
-  globalAliases?: string[]
-  websiteAccess?: boolean
-  websiteConfig?: { indexDocument: string; errorDocument: string } | null
-  keys?: {
-    accessKeyId: string
-    name: string
-    permissions: { read: boolean; write: boolean; owner: boolean }
-  }[]
-  objects?: number
-  bytes?: number
-  unfinishedUploads?: number
-  unfinishedUploadBytes?: number
-  quotas?: { maxSize: number | null; maxObjects: number | null }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
 
 function BucketDetailPage() {
   const { id } = Route.useParams()
@@ -70,7 +47,7 @@ function BucketDetailPage() {
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
-    queryFn: () => getBucket(id) as unknown as Promise<BucketDetail>,
+    queryFn: () => getBucket(id),
   })
 
   // Key grant state
@@ -259,6 +236,9 @@ function BucketDetailPage() {
         prefix={prefix}
         onPrefixChange={setPrefix}
       />
+
+      {/* Bucket settings (quotas, website, CORS, lifecycle, unfinished uploads) */}
+      {data && <BucketSettings key={id} bucket={data} />}
 
       <ConfirmDialog
         open={revokeTarget !== null}
