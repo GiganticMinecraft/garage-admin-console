@@ -16,7 +16,10 @@ import (
 // signals that Garage only offers through node-scoped endpoints:
 // resync queue length / errors (GetNodeStatistics?node=*, blockManagerStats,
 // Garage >= v2.3.0) and scrub corruptions / last completion
-// (GetWorkerVariable?node=*). It does not call GetClusterStatus: the UI
+// (GetWorkerVariable?node=*), plus the live state of each node's "Block scrub
+// worker" (ListWorkers?node=*) so the UI can tell a running scrub from an idle
+// one. scrub-corruptions_detected is a lifetime counter Garage persists in
+// metadata_dir/scrub_info and never resets; only an increase is news. It does not call GetClusterStatus: the UI
 // already has it and joins on the node ID (and decides which nodes store data).
 
 // nodeStorageHealth is the per-node entry of the response. Every metric is a
@@ -28,24 +31,45 @@ type nodeStorageHealth struct {
 	ResyncErrors       *int64  `json:"resyncErrors"`
 	ScrubCorruptions   *int64  `json:"scrubCorruptions"`
 	ScrubLastCompleted *string `json:"scrubLastCompleted"`
-	Error              string  `json:"error,omitempty"`
+	// Scrub is the node's scrub worker, or null when ListWorkers failed or
+	// the node did not list one.
+	Scrub *scrubWorkerStatus `json:"scrub"`
+	Error string             `json:"error,omitempty"`
 }
 
+// scrubWorkerStatus is the subset of Garage's WorkerInfoResp for the
+// "Block scrub worker". State is Garage's WorkerStateResp passed through
+// as-is ("busy" / "idle" / "done" or {"throttled": {"durationSecs": n}}), so
+// the UI decodes it like the workers page. Progress is Garage's own
+// percentage string (e.g. "42.00%"), set while a scrub runs or is paused.
+type scrubWorkerStatus struct {
+	State       json.RawMessage `json:"state"`
+	Progress    *string         `json:"progress,omitempty"`
+	Tranquility *int64          `json:"tranquility,omitempty"`
+}
+
+// scrubWorkerName is the name Garage gives the scrub worker (src/block/repair.rs).
+const scrubWorkerName = "Block scrub worker"
+
 // storageHealthResponse is the body of GET /api/cluster/storage-health.
-// Nodes is keyed by full node ID and holds every node that appeared in either
+// Nodes is keyed by full node ID and holds every node that appeared in any
 // fan-out. StatsError / VarsError are set when a whole fan-out failed; the UI
 // then shows them for every node.
 type storageHealthResponse struct {
 	Nodes      map[string]*nodeStorageHealth `json:"nodes"`
 	StatsError string                        `json:"statsError,omitempty"`
 	VarsError  string                        `json:"varsError,omitempty"`
+	// WorkersError is set when the ListWorkers fan-out failed; every
+	// node's scrub is then null.
+	WorkersError string `json:"workersError,omitempty"`
 }
 
 const (
-	storageHealthTTL    = 10 * time.Second
-	statsUnavailableMsg = "ノード統計の取得に失敗しました"
-	varsUnavailableMsg  = "worker 変数の取得に失敗しました"
-	nodeNotAnsweredMsg  = "ノードが応答しませんでした"
+	storageHealthTTL      = 10 * time.Second
+	statsUnavailableMsg   = "ノード統計の取得に失敗しました"
+	varsUnavailableMsg    = "worker 変数の取得に失敗しました"
+	nodeNotAnsweredMsg    = "ノードが応答しませんでした"
+	workersUnavailableMsg = "worker 一覧の取得に失敗しました"
 )
 
 // storageHealthCache shares one fan-out between dashboard tabs and polls;
@@ -89,16 +113,18 @@ func loadStorageHealth(ctx context.Context, garageAdmin *GarageAdminClient) stor
 	}
 
 	const (
-		statsPath = "/v2/GetNodeStatistics?node=*"
-		varsPath  = "/v2/GetWorkerVariable?node=*"
+		statsPath   = "/v2/GetNodeStatistics?node=*"
+		varsPath    = "/v2/GetWorkerVariable?node=*"
+		workersPath = "/v2/ListWorkers?node=*"
 	)
 	var (
-		wg                sync.WaitGroup
-		stats             nodeStatisticsMulti
-		vars              garageMultiResponse
-		statsErr, varsErr error
+		wg                            sync.WaitGroup
+		stats                         nodeStatisticsMulti
+		vars                          garageMultiResponse
+		workers                       listWorkersMulti
+		statsErr, varsErr, workersErr error
 	)
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		statsErr = garageRequestJSON(ctx, garageAdmin, http.MethodGet, statsPath, nil, &stats)
@@ -107,6 +133,10 @@ func loadStorageHealth(ctx context.Context, garageAdmin *GarageAdminClient) stor
 		defer wg.Done()
 		varsErr = garageRequestJSON(ctx, garageAdmin, http.MethodPost, varsPath, []byte(`{}`), &vars)
 	}()
+	go func() {
+		defer wg.Done()
+		workersErr = garageRequestJSON(ctx, garageAdmin, http.MethodPost, workersPath, []byte(`{}`), &workers)
+	}()
 	wg.Wait()
 	if statsErr != nil {
 		slog.WarnContext(ctx, "node statistics fan-out failed", "path", statsPath, "error", statsErr)
@@ -114,8 +144,11 @@ func loadStorageHealth(ctx context.Context, garageAdmin *GarageAdminClient) stor
 	if varsErr != nil {
 		slog.WarnContext(ctx, "worker variables fan-out failed", "path", varsPath, "error", varsErr)
 	}
+	if workersErr != nil {
+		slog.WarnContext(ctx, "list workers fan-out failed", "path", workersPath, "error", workersErr)
+	}
 
-	out := buildStorageHealth(stats, statsErr, vars, varsErr)
+	out := buildStorageHealth(stats, statsErr, vars, varsErr, workers, workersErr)
 	// If the client went away the result is made of cancellations; don't cache it.
 	if ctx.Err() == nil {
 		storageHealthCache.put(garageAdmin.baseURL, out)
@@ -123,8 +156,8 @@ func loadStorageHealth(ctx context.Context, garageAdmin *GarageAdminClient) stor
 	return out
 }
 
-// buildStorageHealth merges both fan-out answers by node ID.
-func buildStorageHealth(stats nodeStatisticsMulti, statsErr error, vars garageMultiResponse, varsErr error) storageHealthResponse {
+// buildStorageHealth merges the three fan-out answers by node ID.
+func buildStorageHealth(stats nodeStatisticsMulti, statsErr error, vars garageMultiResponse, varsErr error, workers listWorkersMulti, workersErr error) storageHealthResponse {
 	out := storageHealthResponse{Nodes: map[string]*nodeStorageHealth{}}
 	errs := map[string][]string{}
 	statsSeen, varsSeen := map[string]bool{}, map[string]bool{}
@@ -181,6 +214,32 @@ func buildStorageHealth(stats nodeStatisticsMulti, statsErr error, vars garageMu
 			varsSeen[id] = true
 			node(id)
 			errs[id] = append(errs[id], "worker 変数: "+msg)
+		}
+	}
+
+	// The scrub worker is supplementary: a node that answered ListWorkers but
+	// does not list one simply has scrub = null (the UI falls back to the
+	// last completion time), and a node missing from ListWorkers is not an
+	// error of its own. A node only ListWorkers reported is still kept.
+	if workersErr != nil {
+		out.WorkersError = garageUserMessage(workersErr, workersUnavailableMsg)
+	} else {
+		for id, list := range workers.Success {
+			n := node(id)
+			for _, raw := range list {
+				var w struct {
+					Name string `json:"name"`
+					scrubWorkerStatus
+				}
+				if json.Unmarshal(raw, &w) == nil && w.Name == scrubWorkerName {
+					n.Scrub = &w.scrubWorkerStatus
+					break
+				}
+			}
+		}
+		for id, msg := range workers.Error {
+			node(id)
+			errs[id] = append(errs[id], "worker 一覧: "+msg)
 		}
 	}
 

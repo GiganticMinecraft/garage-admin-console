@@ -132,7 +132,7 @@ function corruptionHint(m: MaintenanceMetrics): string {
   if (m.corruptionCounter == null) {
     return 'Admin エンドポイントのノードの /metrics を読み取れませんでした。metrics_token を設定している場合は Admin トークンでは取得できません。'
   }
-  return 'Scrub で検出された破損の累積回数です。Admin エンドポイントに接続したノードの値のみです。増加の有無は Grafana で確認してください。'
+  return 'Scrub で検出された破損の累積回数で、Garage が永続化しておりリセットされません。Admin エンドポイントに接続したノード 1 台分の値です。検出ブロックはレプリカから再取得されます(リシンクエラーが 0 なら復旧済み)。増加の有無は Grafana で確認してください。'
 }
 
 function SignalCard({
@@ -304,7 +304,7 @@ function RepairPage() {
           <div className="grid gap-3 md:grid-cols-3">
             <SignalCard title="リシンクエラー数" value="取得失敗" hint="Garage のノード統計を取得できませんでした。" tone="warning" />
             <SignalCard title="リシンクキュー長" value="取得失敗" hint="Garage のノード統計を取得できませんでした。" tone="warning" />
-            <SignalCard title="破損検出回数" value="取得失敗" hint="Garage のノード統計を取得できませんでした。" tone="warning" />
+            <SignalCard title="破損検出回数 (累積)" value="取得失敗" hint="Garage のノード統計を取得できませんでした。" tone="warning" />
           </div>
         ) : (
           <BlockMetricsCards m={metrics.data!} />

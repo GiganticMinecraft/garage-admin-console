@@ -22,7 +22,7 @@ const StorageCharts = lazy(() => import('@/components/storage-charts'))
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
 import { formatBytes, formatCount, formatDateTime, formatUsage, usagePercent } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
-import { formatSecsAgo } from '@/lib/workers'
+import { describeState, formatSecsAgo } from '@/lib/workers'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -391,7 +391,7 @@ function SummaryCards({
   )
 }
 
-/** A count that turns destructive when > 0 (errors, corruptions). */
+/** A count that turns destructive when > 0 (errors). */
 function HealthMetric({
   label,
   value,
@@ -424,6 +424,135 @@ const EMPTY_NODE_HEALTH: NodeStorageHealth = {
   resyncErrors: null,
   scrubCorruptions: null,
   scrubLastCompleted: null,
+  scrub: null,
+}
+
+/** An increase of a node's cumulative corruption counter seen since the page was loaded. */
+interface CorruptionIncrease {
+  delta: number
+  /** Date.now() of the poll that first saw the counter above its baseline. */
+  noticedAt: number
+}
+
+/** Storage health plus the increases noticed since the page was loaded. */
+type StorageHealthView = StorageHealth & { increases: Record<string, CorruptionIncrease> }
+
+interface CorruptionBaseline {
+  first: number
+  noticedAt?: number
+}
+
+/**
+ * First-seen corruption counter per node. Module scope, like the react-query
+ * cache that holds the derived increases, so both live until the page is
+ * reloaded and a remount of the dashboard never shows a stale "+N".
+ */
+const corruptionBaselines = new Map<string, CorruptionBaseline>()
+
+/**
+ * Updates the per-node baselines with a fresh answer and returns the
+ * increases. scrubCorruptions is a lifetime counter, so only a rise above
+ * the first value seen is news; a drop (counter reset, e.g. metadata
+ * rebuilt) restarts the baseline.
+ */
+function trackCorruptions(
+  baselines: Map<string, CorruptionBaseline>,
+  health: StorageHealth,
+  now: number,
+): Record<string, CorruptionIncrease> {
+  const increases: Record<string, CorruptionIncrease> = {}
+  for (const [id, n] of Object.entries(health.nodes)) {
+    const v = n.scrubCorruptions
+    if (v == null) continue
+    const b = baselines.get(id)
+    if (!b || v < b.first) {
+      baselines.set(id, { first: v })
+      continue
+    }
+    if (v > b.first) {
+      b.noticedAt ??= now
+      increases[id] = { delta: v - b.first, noticedAt: b.noticedAt }
+    }
+  }
+  return increases
+}
+
+const CORRUPTIONS_HELP =
+  'Garage が永続化する累積値でリセットされません。検出ブロックはレプリカから再取得されます(Resync エラーが 0 なら復旧済み)'
+
+/** busy / throttled: the scrub worker is iterating over blocks right now. */
+function isScrubRunning(scrub: NodeStorageHealth['scrub']): boolean {
+  if (!scrub) return false
+  const { kind } = describeState(scrub.state)
+  return kind === 'busy' || kind === 'throttled'
+}
+
+// The card is a <Link>, so explanations use title attributes rather than
+// focusable tooltip triggers nested inside it.
+function CorruptionsMetric({ h, increase }: { h: NodeStorageHealth; increase?: CorruptionIncrease }) {
+  const running = isScrubRunning(h.scrub)
+  const increaseHelp = increase
+    ? `ページを読み込んでから ${formatCount(increase.delta)} 件増えました(${new Date(increase.noticedAt).toLocaleTimeString('ja-JP')} に増加を検知)。ページを再読み込みするとリセットされます。`
+    : undefined
+  return (
+    <div className="flex justify-between gap-2 text-sm">
+      <span
+        title={CORRUPTIONS_HELP}
+        className="cursor-help text-muted-foreground underline decoration-dotted underline-offset-2"
+      >
+        Scrub 破損検出数 (累積)
+      </span>
+      <span className="flex items-center gap-1.5">
+        {increase && (
+          <span title={increaseHelp} className="flex cursor-help items-center gap-1.5">
+            {running && <span className="text-xs text-amber-700 dark:text-amber-400">現在の Scrub で検出</span>}
+            <Badge className="border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-400">
+              +{formatCount(increase.delta)}
+            </Badge>
+          </span>
+        )}
+        <span className="tabular-nums">{formatCount(h.scrubCorruptions)}</span>
+      </span>
+    </div>
+  )
+}
+
+/**
+ * Running → 「Scrub 実行中」 with progress; paused → 「一時停止中」; else the
+ * last completion. Without a scrub worker entry (ListWorkers failed or did
+ * not list it) the state is marked unknown rather than shown as idle.
+ */
+function ScrubStatusRow({ h }: { h: NodeStorageHealth }) {
+  const s = h.scrub
+  if (s && isScrubRunning(s)) {
+    return (
+      <div className="flex justify-between gap-2 text-sm">
+        <span className="text-muted-foreground">Scrub</span>
+        <Badge
+          variant="secondary"
+          title={s.tranquility != null ? `tranquility: ${s.tranquility}` : undefined}
+        >
+          Scrub 実行中{s.progress ? ` ${s.progress}` : ''}
+        </Badge>
+      </div>
+    )
+  }
+  return (
+    <div className="flex justify-between gap-2 text-sm">
+      <span className="text-muted-foreground">最終 Scrub</span>
+      <span className="flex items-center gap-1.5">
+        {!s && <span className="text-xs text-muted-foreground">(実行状態不明)</span>}
+        {s?.progress && (
+          <Badge variant="outline" title="Scrub は一時停止中です">
+            一時停止中 {s.progress}
+          </Badge>
+        )}
+        <span title={h.scrubLastCompleted ?? undefined}>
+          {formatScrubLastCompleted(h.scrubLastCompleted)}
+        </span>
+      </span>
+    </div>
+  )
 }
 
 /**
@@ -438,15 +567,22 @@ function isStorageNode(node: ClusterNode): boolean {
 /** Error text for one node: its own error, else the failed fan-out(s), else "no answer". */
 function nodeHealthError(health: StorageHealth, node: ClusterNode): string | undefined {
   const entry = health.nodes[node.id]
-  const msgs = [entry?.error, health.statsError, health.varsError].filter(Boolean)
+  const msgs = [
+    entry?.error,
+    health.statsError,
+    health.varsError,
+    health.workersError && `Scrub 状態を取得できませんでした (${health.workersError})`,
+  ].filter(Boolean)
   if (msgs.length > 0) return msgs.join('; ')
   return entry ? undefined : 'ノードが応答しませんでした'
 }
 
-function StorageHealthCard({ node, health }: { node: ClusterNode; health: StorageHealth }) {
+function StorageHealthCard({ node, health }: { node: ClusterNode; health: StorageHealthView }) {
   const h = health.nodes[node.id] ?? EMPTY_NODE_HEALTH
   const error = nodeHealthError(health, node)
-  const alert = (h.resyncErrors ?? 0) > 0 || (h.scrubCorruptions ?? 0) > 0
+  // Only current problems: the cumulative corruption counter is history
+  // (the blocks were re-fetched from replicas), so it does not count.
+  const alert = !node.isUp || (h.resyncErrors ?? 0) > 0
   const body = (
     <>
       <div className="flex items-center gap-2">
@@ -460,13 +596,8 @@ function StorageHealthCard({ node, health }: { node: ClusterNode; health: Storag
       </div>
       <HealthMetric label="Resync キュー" value={h.resyncQueueLen} />
       <HealthMetric label="Resync エラー" value={h.resyncErrors} alertWhenPositive />
-      <HealthMetric label="Scrub 破損検出数" value={h.scrubCorruptions} alertWhenPositive />
-      <div className="flex justify-between gap-2 text-sm">
-        <span className="text-muted-foreground">最終 Scrub</span>
-        <span title={h.scrubLastCompleted ?? undefined}>
-          {formatScrubLastCompleted(h.scrubLastCompleted)}
-        </span>
-      </div>
+      <CorruptionsMetric h={h} increase={health.increases[node.id]} />
+      <ScrubStatusRow h={h} />
       {error && <p className="break-words text-xs text-destructive">{error}</p>}
     </>
   )
@@ -489,7 +620,7 @@ function StorageHealthSection({
   query,
 }: {
   status: QueryView<{ nodes: ClusterNode[] }>
-  query: QueryView<StorageHealth>
+  query: QueryView<StorageHealthView>
 }) {
   const nodes = status.data?.nodes.filter(isStorageNode) ?? []
   return (
@@ -552,7 +683,10 @@ function DashboardPage() {
 
   const storageHealth = useQuery({
     queryKey: ['cluster', 'storage-health'],
-    queryFn: getStorageHealth,
+    queryFn: async (): Promise<StorageHealthView> => {
+      const data = await getStorageHealth()
+      return { ...data, increases: trackCorruptions(corruptionBaselines, data, Date.now()) }
+    },
     ...polling,
   })
 
