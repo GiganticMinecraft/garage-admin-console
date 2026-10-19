@@ -996,12 +996,12 @@ export interface NodeStorageHealth {
 }
 
 /**
- * Live scrub worker state. state is "busy" / "idle" / "done" / "throttled"
- * (Garage's throttled object flattened); progress is Garage's percentage
+ * Live scrub worker state. state is Garage's WorkerStateResp as-is (decode
+ * with describeState from lib/workers); progress is Garage's percentage
  * string ("42.00%"), present while a scrub runs or is paused.
  */
 export interface ScrubWorkerStatus {
-  state: string
+  state: WorkerState
   progress?: string
   tranquility?: number
 }
@@ -1016,7 +1016,7 @@ export interface StorageHealth {
   nodes: Record<string, NodeStorageHealth>
   statsError?: string
   varsError?: string
-  /** ListWorkers fan-out failed; every node's scrub is null. */
+  /** ListWorkers fan-out failed; every node's scrub is null (unknown, not idle). */
   workersError?: string
 }
 

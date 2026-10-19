@@ -189,7 +189,7 @@ func TestStorageHealthScrubWorker(t *testing.T) {
 	)
 	got := getStorageHealth(t, garage.URL)
 	a, b := got.Nodes[healthNodeA], got.Nodes[healthNodeB]
-	if a == nil || a.Scrub == nil || a.Scrub.State != "throttled" || a.Scrub.Progress == nil || *a.Scrub.Progress != "12.50%" ||
+	if a == nil || a.Scrub == nil || string(a.Scrub.State) != `{"throttled":{"durationSecs":0.5}}` || a.Scrub.Progress == nil || *a.Scrub.Progress != "12.50%" ||
 		a.Scrub.Tranquility == nil || *a.Scrub.Tranquility != 4 || a.Error != "" {
 		t.Errorf("node a = %+v scrub = %+v", a, a.Scrub)
 	}
@@ -205,7 +205,7 @@ func TestStorageHealthScrubWorkerIdleAndFanOutFailure(t *testing.T) {
 	garage, _ := fakeHealthGarageWithWorkers(t, http.StatusOK, stats, http.StatusOK, vars,
 		http.StatusOK, `{"success":{"`+healthNodeA+`":[{"id":3,"name":"Block scrub worker","state":"idle","errors":0,"consecutiveErrors":0,"tranquility":2,"freeform":["Last scrub completed at x"]}]},"error":{}}`)
 	got := getStorageHealth(t, garage.URL)
-	if s := got.Nodes[healthNodeA].Scrub; s == nil || s.State != "idle" || s.Progress != nil {
+	if s := got.Nodes[healthNodeA].Scrub; s == nil || string(s.State) != `"idle"` || s.Progress != nil {
 		t.Errorf("scrub = %+v", s)
 	}
 	raw, _ := json.Marshal(got.Nodes[healthNodeA].Scrub)
@@ -220,6 +220,22 @@ func TestStorageHealthScrubWorkerIdleAndFanOutFailure(t *testing.T) {
 	a := got.Nodes[healthNodeA]
 	if got.WorkersError != workersUnavailableMsg+": boom" || a.Scrub != nil || a.Error != "" || a.ScrubCorruptions == nil {
 		t.Errorf("got %+v node a = %+v", got, a)
+	}
+}
+
+func TestStorageHealthScrubWorkerNodeErrorAndOnlyWorkersAnswered(t *testing.T) {
+	// Stats and vars fail as a whole; ListWorkers answers for A and fails on B.
+	garage, _ := fakeHealthGarageWithWorkers(t,
+		http.StatusInternalServerError, `{"message":"boom"}`,
+		http.StatusInternalServerError, `{"message":"boom"}`,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":[{"id":2,"name":"Block scrub worker","state":"busy","progress":"1.00%","errors":0,"consecutiveErrors":0,"freeform":[]}]},"error":{"`+healthNodeB+`":"Could not reach node"}}`)
+	got := getStorageHealth(t, garage.URL)
+	a, b := got.Nodes[healthNodeA], got.Nodes[healthNodeB]
+	if a == nil || a.Scrub == nil || string(a.Scrub.State) != `"busy"` || a.Error != "" {
+		t.Errorf("node a = %+v", a)
+	}
+	if b == nil || b.Scrub != nil || b.Error != "worker 一覧: Could not reach node" {
+		t.Errorf("node b = %+v", b)
 	}
 }
 

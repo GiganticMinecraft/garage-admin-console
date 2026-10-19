@@ -35,6 +35,13 @@ type workersResponse struct {
 	Errors  map[string]string `json:"errors"`
 }
 
+// listWorkersMulti is Garage's MultiResponse for ListWorkers: raw workers
+// per node that answered, error message per node that did not.
+type listWorkersMulti struct {
+	Success map[string][]json.RawMessage `json:"success"`
+	Error   map[string]string            `json:"error"`
+}
+
 // flattenWorkers converts Garage's MultiResponse for ListWorkers into a
 // deterministic list: sorted by node ID then worker ID.
 func flattenWorkers(success map[string][]json.RawMessage, errors map[string]string) workersResponse {
@@ -89,10 +96,7 @@ func serveWorkers(w http.ResponseWriter, r *http.Request, garageAdmin *GarageAdm
 		return
 	}
 
-	var multiResp struct {
-		Success map[string][]json.RawMessage `json:"success"`
-		Error   map[string]string            `json:"error"`
-	}
+	var multiResp listWorkersMulti
 	if err := json.NewDecoder(resp.Body).Decode(&multiResp); err != nil {
 		slog.ErrorContext(r.Context(), "failed to decode ListWorkers response", "error", err)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
