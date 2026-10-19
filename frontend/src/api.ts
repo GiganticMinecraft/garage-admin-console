@@ -190,15 +190,18 @@ export function downloadObjectUrl(bucket: string, key: string): string {
   return `${BASE}/objects/${bucket}/download?key=${encodeURIComponent(key)}`
 }
 
-export function batchDownloadUrl(bucket: string, keys: string[]): string {
-  const params = keys.map((k) => `key=${encodeURIComponent(k)}`).join('&')
-  return `${BASE}/objects/${bucket}/batch-download?${params}`
+export function batchDownloadUrl(bucket: string, keys: string[], name?: string): string {
+  const params = keys.map((k) => `key=${encodeURIComponent(k)}`)
+  if (name) params.push(`name=${encodeURIComponent(name)}`)
+  return `${BASE}/objects/${bucket}/batch-download?${params.join('&')}`
 }
 
-export async function downloadObjectsZip(bucket: string, keys: string[]): Promise<void> {
+// `name` is the bucket alias used for the ZIP filename; `bucket` is the ID
+// used for the S3 request.
+export async function downloadObjectsZip(bucket: string, keys: string[], name?: string): Promise<void> {
   const a = document.createElement('a')
-  a.href = batchDownloadUrl(bucket, keys)
-  a.download = `${bucket}-files.zip`
+  a.href = batchDownloadUrl(bucket, keys, name)
+  a.download = `${name || bucket}-files.zip`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
