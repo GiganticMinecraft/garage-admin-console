@@ -1,11 +1,11 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { listKeys, createKey, deleteKey } from '@/api'
+import { listKeys, deleteKey } from '@/api'
 import type { KeyListItem, KeyDetail } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { CreateKeyDialog } from '@/components/create-key-dialog'
 import {
   Table,
   TableHeader,
@@ -55,7 +55,6 @@ function matchesKey(k: KeyListItem, q: string): boolean {
 function KeysPage() {
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
-  const [newKeyName, setNewKeyName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<KeyListItem | null>(null)
   const [createdKey, setCreatedKey] = useState<KeyDetail | null>(null)
   const [search, setSearch] = useState('')
@@ -77,16 +76,11 @@ function KeysPage() {
     return sortRows(filtered, sort, keySortValue)
   }, [allKeys, query, sort])
 
-  const createMutation = useMutation({
-    mutationFn: (name: string) => createKey({ name }),
-    onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ['keys'] })
-      setShowCreate(false)
-      setNewKeyName('')
-      // The secret is only returned here; show it once so the operator can copy it.
-      setCreatedKey(created)
-    },
-  })
+  const handleCreated = (created: KeyDetail) => {
+    queryClient.invalidateQueries({ queryKey: ['keys'] })
+    // The secret is only returned here; show it once so the operator can copy it.
+    setCreatedKey(created)
+  }
 
   const deleteMutation = useMutation({
     mutationFn: deleteKey,
@@ -111,40 +105,7 @@ function KeysPage() {
         </Button>
       </div>
 
-      {showCreate && (
-        <div className="rounded-lg border p-4">
-          <h2 className="mb-2 font-semibold">新規キー</h2>
-          <div className="flex gap-2">
-            <Input
-              type="text"
-              value={newKeyName}
-              onChange={(e) => setNewKeyName(e.target.value)}
-              placeholder="キー名"
-              className="flex-1"
-              autoFocus
-            />
-            <Button
-              size="sm"
-              onClick={() => createMutation.mutate(newKeyName)}
-              disabled={!newKeyName || createMutation.isPending}
-            >
-              {createMutation.isPending ? '作成中...' : '作成'}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowCreate(false)}
-            >
-              キャンセル
-            </Button>
-          </div>
-          {createMutation.isError && (
-            <p className="mt-2 text-sm text-destructive">
-              {createMutation.error.message}
-            </p>
-          )}
-        </div>
-      )}
+      <CreateKeyDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
 
       {isLoading ? (
         <p className="text-muted-foreground">読み込み中...</p>
