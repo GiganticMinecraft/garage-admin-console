@@ -21,6 +21,7 @@ import {
 } from '@/api'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
 import { formatBytes } from '@/lib/format'
+import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
 import { describeState, formatSecsAgo, type StateKind } from '@/lib/workers'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -74,7 +75,8 @@ function PartitionBar({ label, partition }: { label: string; partition: Partitio
   }
   const used = partition.total - partition.available
   const percent = partition.total > 0 ? (used / partition.total) * 100 : 0
-  const color = percent >= 90 ? 'bg-red-500' : percent >= 75 ? 'bg-amber-500' : 'bg-blue-500'
+  const color =
+    percent >= USAGE_CRIT * 100 ? 'bg-red-500' : percent >= USAGE_WARN * 100 ? 'bg-amber-500' : 'bg-blue-500'
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-sm">
