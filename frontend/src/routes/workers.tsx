@@ -27,7 +27,9 @@ type StateKind = 'idle' | 'busy' | 'throttled' | 'other'
 
 function describeState(state: WorkerState): { label: string; kind: StateKind } {
   if (typeof state === 'object' && state !== null && 'throttled' in state) {
-    return { label: `throttled (${state.throttled})`, kind: 'throttled' }
+    const secs = state.throttled?.durationSecs
+    const detail = typeof secs === 'number' ? ` (${secs.toFixed(1)}s)` : ''
+    return { label: `throttled${detail}`, kind: 'throttled' }
   }
   if (state === 'idle') return { label: 'idle', kind: 'idle' }
   if (state === 'busy') return { label: 'busy', kind: 'busy' }

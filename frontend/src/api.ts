@@ -385,8 +385,9 @@ export async function deleteObject(bucket: string, key: string): Promise<void> {
 
 // Workers
 // Garage's worker state serializes as a string ("idle" / "busy" / "done") for
-// simple variants, but throttled is an object: { throttled: "<duration>" }.
-export type WorkerState = string | { throttled: string }
+// simple variants, but throttled is an object (Garage WorkerStateResp::Throttled
+// { duration_secs: f32 }): { throttled: { durationSecs: number } }.
+export type WorkerState = string | { throttled: { durationSecs: number } }
 
 export interface Worker {
   /** ID of the node this worker runs on (worker ids are per-node counters). */
