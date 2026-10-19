@@ -1,4 +1,5 @@
-import { RouterProvider, createRouter, Link, type ErrorComponentProps } from '@tanstack/react-router'
+import { RouterProvider, createRouter, Link, useRouter, type ErrorComponentProps } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -18,6 +19,15 @@ const queryClient = new QueryClient({
  * response shape from Garage no longer blanks the whole console.
  */
 function RouteErrorFallback({ error, reset }: ErrorComponentProps) {
+  const queryClient = useQueryClient()
+  const router = useRouter()
+  // Resetting only the boundary would re-render with the same cached query
+  // data and throw again; drop the cached data and reload the route too.
+  const retry = async () => {
+    await queryClient.resetQueries()
+    reset()
+    await router.invalidate()
+  }
   return (
     <div className="space-y-4 rounded-lg border border-destructive/40 p-6">
       <h1 className="text-xl font-bold">ページの表示中にエラーが発生しました</h1>
@@ -25,7 +35,7 @@ function RouteErrorFallback({ error, reset }: ErrorComponentProps) {
         {error instanceof Error ? error.message : String(error)}
       </pre>
       <div className="flex gap-2">
-        <Button variant="outline" onClick={reset}>
+        <Button variant="outline" onClick={retry}>
           再試行
         </Button>
         <Button asChild variant="ghost">

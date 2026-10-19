@@ -4,7 +4,8 @@ import * as echarts from 'echarts/core'
 import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { ClusterNode } from '@/api'
+import type { ClusterNode, PartitionUsage } from '@/api'
+import { nodeDisplayName } from '@/lib/nodes'
 
 echarts.use([PieChart, BarChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
 
@@ -27,8 +28,8 @@ function formatBytes(bytes: number): string {
 
 interface MeasuredNode {
   name: string
-  data: { available: number; total: number }
-  meta: { available: number; total: number }
+  data: PartitionUsage
+  meta: PartitionUsage
 }
 
 export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[] }) {
@@ -38,7 +39,7 @@ export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[
     () =>
       allNodes.flatMap((n) =>
         n.dataPartition && n.metadataPartition
-          ? [{ name: n.hostname || `${n.id.slice(0, 16)}…`, data: n.dataPartition, meta: n.metadataPartition }]
+          ? [{ name: nodeDisplayName(n), data: n.dataPartition, meta: n.metadataPartition }]
           : [],
       ),
     [allNodes],

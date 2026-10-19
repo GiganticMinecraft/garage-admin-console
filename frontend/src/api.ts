@@ -26,10 +26,15 @@ export async function errorFromResponse(res: Response): Promise<ApiError> {
     const text = await res.text()
     if (text) {
       try {
-        const body = JSON.parse(text) as { code?: unknown; message?: unknown; error?: unknown }
-        if (typeof body.message === 'string') message = body.message
-        else if (typeof body.error === 'string') message = body.error
-        if (typeof body.code === 'string') code = body.code
+        const parsed: unknown = JSON.parse(text)
+        if (parsed && typeof parsed === 'object') {
+          const body = parsed as { code?: unknown; message?: unknown; error?: unknown }
+          if (typeof body.message === 'string') message = body.message
+          else if (typeof body.error === 'string') message = body.error
+          if (typeof body.code === 'string') code = body.code
+        } else {
+          message = text.trim()
+        }
       } catch {
         message = text.trim()
       }
@@ -41,6 +46,19 @@ export async function errorFromResponse(res: Response): Promise<ApiError> {
   return new ApiError(res.status, message, code)
 }
 
+/**
+ * Shared policy for every API response: a 401 sends the browser to login
+ * (the root layout string-matches 'Unauthorized'), any other non-2xx becomes
+ * an ApiError with the upstream message.
+ */
+async function assertOk(res: Response): Promise<void> {
+  if (res.status === 401) {
+    window.location.href = `${BASE}/auth/login`
+    throw new Error('Unauthorized')
+  }
+  if (!res.ok) throw await errorFromResponse(res)
+}
+
 export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!headers.has('Content-Type')) {
@@ -49,11 +67,7 @@ export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T>
   headers.set('X-Requested-With', 'XMLHttpRequest')
 
   const res = await fetch(`${BASE}${path}`, { ...init, headers })
-  if (res.status === 401) {
-    window.location.href = `${BASE}/auth/login`
-    throw new Error('Unauthorized')
-  }
-  if (!res.ok) throw await errorFromResponse(res)
+  await assertOk(res)
   if (res.status === 204 || res.headers.get('Content-Length') === '0') {
     return undefined as T
   }
@@ -89,9 +103,12 @@ export interface PartitionUsage {
   total: number
 }
 
-// Mirrors Garage's NodeResp: role, hostname and the partition stats are all
-// Option<_> upstream and come back as null for nodes that are down or have
-// no role assigned yet. Keep them nullable so the UI is forced to handle it.
+// Mirrors Garage's NodeResp: role and hostname are Option<_> upstream and come
+// back as null for nodes that are down or have no role assigned yet. The
+// partition stats are Option<_> with skip_serializing_if, so the keys are
+// omitted entirely (undefined) rather than null. Keep them optional so the UI
+// is forced to handle it. `draining` is only ever true when `role` is null
+// (the node was removed from the layout but still holds data).
 export interface ClusterNode {
   id: string
   garageVersion: string | null
@@ -105,8 +122,8 @@ export interface ClusterNode {
     capacity: number | null
   } | null
   draining: boolean
-  dataPartition: PartitionUsage | null
-  metadataPartition: PartitionUsage | null
+  dataPartition?: PartitionUsage | null
+  metadataPartition?: PartitionUsage | null
 }
 
 export interface ClusterStatus {
@@ -334,11 +351,7 @@ export async function uploadFile(bucket: string, file: File, prefix?: string): P
     headers: { 'X-Requested-With': 'XMLHttpRequest' },
     body: form,
   })
-  if (res.status === 401) {
-    window.location.href = `${BASE}/auth/login`
-    throw new Error('Unauthorized')
-  }
-  if (!res.ok) throw await errorFromResponse(res)
+  await assertOk(res)
   return res.json()
 }
 
