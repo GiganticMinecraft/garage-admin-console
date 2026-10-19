@@ -1112,3 +1112,28 @@ export async function updateAdminToken(id: string, body: AdminTokenBody): Promis
 export async function deleteAdminToken(id: string): Promise<void> {
   await fetchJSON(`/admin-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+
+// Bucket aliases (#378)
+/** Body of POST / DELETE /api/buckets/{id}/aliases. */
+export type BucketAliasTarget =
+  | { globalAlias: string }
+  | { localAlias: string; accessKeyId: string }
+
+/** Adds a global alias or a local alias in a key's namespace (Garage AddBucketAlias). */
+export async function addBucketAlias(bucketId: string, target: BucketAliasTarget): Promise<BucketDetail> {
+  return fetchJSON(`/buckets/${bucketId}/aliases`, {
+    method: 'POST',
+    body: JSON.stringify(target),
+  })
+}
+
+/**
+ * Removes a global or local alias (Garage RemoveBucketAlias). Garage refuses
+ * to remove a bucket's very last alias.
+ */
+export async function removeBucketAlias(bucketId: string, target: BucketAliasTarget): Promise<BucketDetail> {
+  return fetchJSON(`/buckets/${bucketId}/aliases`, {
+    method: 'DELETE',
+    body: JSON.stringify(target),
+  })
+}

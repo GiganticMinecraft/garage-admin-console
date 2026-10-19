@@ -279,7 +279,7 @@ function BucketAliases({ bucket }: { bucket: BucketListItem }) {
         <Link
           to="/buckets/$id"
           params={{ id: bucket.id }}
-          className="text-primary underline-offset-4 hover:underline"
+          className="break-all text-primary underline-offset-4 hover:underline"
         >
           {first ?? local[0]?.alias ?? '(エイリアスなし)'}
         </Link>
@@ -296,7 +296,7 @@ function BucketAliases({ bucket }: { bucket: BucketListItem }) {
         {local.length > 0 && (
           <Badge
             variant="secondary"
-            title={local.map((a) => `${a.alias} (${a.accessKeyId})`).join('\n')}
+            title={`ローカルエイリアス:\n${local.map((a) => `${a.alias} (${a.accessKeyId})`).join('\n')}`}
           >
             ローカル {local.length}
           </Badge>
@@ -305,7 +305,7 @@ function BucketAliases({ bucket }: { bucket: BucketListItem }) {
       {expanded && (
         <ul className="space-y-0.5 text-sm font-normal text-muted-foreground">
           {rest.map((a) => (
-            <li key={a}>{a}</li>
+            <li key={a} className="break-all">{a}</li>
           ))}
         </ul>
       )}

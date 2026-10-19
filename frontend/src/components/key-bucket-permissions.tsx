@@ -25,8 +25,8 @@ import { DEFAULT_GRANT, hasAnyPermission } from '@/lib/permissions'
 
 type KeyBucket = KeyDetail['buckets'][number]
 
-function bucketLabel(b: { id: string; globalAliases?: string[] }): string {
-  return b.globalAliases?.[0] || `${b.id.slice(0, 16)}…`
+function bucketLabel(b: { id: string; globalAliases?: string[]; localAliases?: string[] }): string {
+  return b.globalAliases?.[0] || b.localAliases?.[0] || `${b.id.slice(0, 16)}…`
 }
 
 interface KeyBucketPermissionsProps {
@@ -129,6 +129,7 @@ export function KeyBucketPermissions({ keyId, keyName, buckets }: KeyBucketPermi
             <TableHeader>
               <TableRow>
                 <TableHead>バケット</TableHead>
+                <TableHead>ローカルエイリアス</TableHead>
                 <TableHead>権限</TableHead>
                 <TableHead className="text-right">操作</TableHead>
               </TableRow>
@@ -139,20 +140,31 @@ export function KeyBucketPermissions({ keyId, keyName, buckets }: KeyBucketPermi
                 return (
                   <TableRow key={bucket.id}>
                     <TableCell>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Link
-                          to="/buckets/$id"
-                          params={{ id: bucket.id }}
-                          className="text-primary underline-offset-4 hover:underline"
-                        >
-                          {bucketLabel(bucket)}
-                        </Link>
-                        {bucket.localAliases?.map((a) => (
-                          <Badge key={a} variant="secondary" title="このキーのローカルエイリアス">
-                            {a}
-                          </Badge>
-                        ))}
-                      </div>
+                      <Link
+                        to="/buckets/$id"
+                        params={{ id: bucket.id }}
+                        className="break-all text-primary underline-offset-4 hover:underline"
+                      >
+                        {bucketLabel(bucket)}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="whitespace-normal">
+                      {bucket.localAliases?.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {bucket.localAliases.map((a) => (
+                            <Badge
+                              key={a}
+                              variant="secondary"
+                              className="break-all whitespace-normal"
+                              title="このキーのローカルエイリアス(バケットページで追加・削除できます)"
+                            >
+                              {a}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <PermissionBadges permissions={bucket.permissions} />

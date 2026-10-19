@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react'
 import {
   getBucket,
 } from '@/api'
+import { BucketAliases } from '@/components/bucket-aliases'
 import { BucketKeyPermissions } from '@/components/bucket-key-permissions'
 import { BucketSettings } from '@/components/bucket-settings'
 import { ObjectBrowser } from '@/components/object-browser'
@@ -44,6 +45,10 @@ function BucketDetailPage() {
   })
 
   const data = bucket.data
+  const localAliases = data?.keys?.flatMap((k) => k.bucketLocalAliases ?? []) ?? []
+  const aliasCount = (data?.globalAliases?.length ?? 0) + localAliases.length
+  // First global alias, else a local one (only visible to its key).
+  const displayName = data?.globalAliases?.[0] || localAliases[0]
 
   const handleCopyId = useCallback(async () => {
     try {
@@ -60,12 +65,19 @@ function BucketDetailPage() {
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Link to="/buckets" className="hover:underline">バケット</Link>
         <span>/</span>
-        <span>{data?.globalAliases?.[0] || `${id.slice(0, 16)}...`}</span>
+        <span className="break-all">{displayName || `${id.slice(0, 16)}...`}</span>
       </div>
 
-      <h1 className="text-2xl font-bold">
-        {data?.globalAliases?.[0] || 'バケット詳細'}
-      </h1>
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-2xl font-bold break-all">
+          {displayName || 'バケット詳細'}
+        </h1>
+        {aliasCount > 1 && (
+          <Badge variant="secondary" title="グローバル / ローカルエイリアスの合計">
+            エイリアス {aliasCount} 件
+          </Badge>
+        )}
+      </div>
 
       {bucket.isLoading ? (
         <div className="rounded-lg border p-4 space-y-3">
@@ -129,11 +141,14 @@ function BucketDetailPage() {
         </div>
       ) : null}
 
+      {/* Global / local aliases */}
+      {data && <BucketAliases key={id} bucket={data} />}
+
       {/* Key Permissions */}
       <BucketKeyPermissions
         key={id}
         bucketId={id}
-        bucketLabel={data?.globalAliases?.[0] || id.slice(0, 16)}
+        bucketLabel={displayName || id.slice(0, 16)}
         keys={data?.keys}
       />
 
