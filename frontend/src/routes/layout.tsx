@@ -28,6 +28,8 @@ import {
 } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { LayoutPreview } from '@/components/layout-preview'
+import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
 
 export const Route = createFileRoute('/layout')({
   component: LayoutPage,
@@ -267,7 +269,8 @@ function LayoutPage() {
   const stagedCount = staged.length + (data?.stagedParameters ? 1 : 0)
   const hasStaged = stagedCount > 0
   const nextVersion = (data?.version ?? 0) + 1
-  const preview = previewMutation.data?.message ?? null
+  const preview = previewMutation.data ?? null
+  const applied = applyMutation.data ?? null
 
   return (
     <div className="space-y-6">
@@ -321,6 +324,20 @@ function LayoutPage() {
             </div>
           </div>
 
+          <LayoutUpdateTracker />
+
+          {applied && !editing && (
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold">v{applied.layout.version} の適用結果</h2>
+                <Button variant="ghost" size="sm" onClick={() => applyMutation.reset()}>
+                  閉じる
+                </Button>
+              </div>
+              <LayoutPreview statistics={applied.statistics} message={applied.message ?? []} nameOf={nameOf} />
+            </div>
+          )}
+
           {hasStaged && !editing && (
             <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50/50 p-4 dark:bg-amber-950/20">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -369,9 +386,7 @@ function LayoutPage() {
                 )}
               </ul>
               {preview && (
-                <pre className="max-h-80 overflow-auto rounded bg-muted p-3 text-xs whitespace-pre-wrap">
-                  {preview.join('\n')}
-                </pre>
+                <LayoutPreview statistics={preview.statistics} message={preview.message ?? []} nameOf={nameOf} />
               )}
             </div>
           )}
@@ -539,7 +554,7 @@ function LayoutPage() {
         open={showApply}
         onOpenChange={setShowApply}
         title={`レイアウト v${nextVersion} の適用`}
-        description="ステージ中の変更を適用します。パーティションの再配置が始まり、クラスタの負荷が一時的に上がります。適用後は数時間待ってリシンクの収束を確認してください。"
+        description="ステージ中の変更を適用します。パーティションの再配置が始まり、クラスタの負荷が一時的に上がります。進捗はこのページの「レイアウト更新中」トラッカーで確認できます。完了後もデータブロックのリシンクには数時間かかることがあります。"
         confirmLabel="適用"
         pendingLabel="適用中..."
         confirmVariant="default"

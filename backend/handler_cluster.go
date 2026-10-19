@@ -72,3 +72,21 @@ func handleRevertLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleApplyLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return proxyGaragePOST(garageAdmin, "/v2/ApplyClusterLayout")
 }
+
+// handleLayoutHistory proxies GET /api/cluster/layout/history to Garage GET /v2/GetClusterLayoutHistory.
+// The response carries currentVersion, minAck, the current/draining/historical
+// versions and, while more than one version is live, per-node update trackers
+// (ack / sync / syncAck) that the UI turns into a progress tracker.
+func handleLayoutHistory(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return proxyGarageGET(garageAdmin, "/v2/GetClusterLayoutHistory")
+}
+
+// handleSkipDeadNodes proxies POST /api/cluster/layout/skip-dead-nodes to Garage
+// POST /v2/ClusterLayoutSkipDeadNodes. Body: {"version": n, "allowMissingData": bool}.
+// It is the escape hatch for a layout update stuck on nodes that are down.
+// With allowMissingData Garage also marks every node as synced, which can lose
+// data that only existed on the skipped nodes. Garage rejects the call with
+// 400 when only one layout version is live; that error is forwarded as-is.
+func handleSkipDeadNodes(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return proxyGaragePOST(garageAdmin, "/v2/ClusterLayoutSkipDeadNodes")
+}

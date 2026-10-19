@@ -170,14 +170,106 @@ export interface ClusterLayout {
   stagedParameters: LayoutParameters | null
 }
 
+/** Per-node statistics of a layout computation (Garage ComputationStatNode). */
+export interface LayoutStatNode {
+  id: string
+  tags: string[]
+  /** Partitions replicated on this node in the new layout. */
+  storedPartitions: number
+  /** Partitions this node newly receives (to be transferred). */
+  newPartitions: number
+  totalCapacity: number
+  usableCapacity: number
+}
+
+/** Per-zone statistics of a layout computation (Garage ComputationStatZone). */
+export interface LayoutStatZone {
+  name: string
+  nodes: LayoutStatNode[]
+  totalReplicatedPartitions: number
+  uniquePartitions: number
+  totalCapacity: number
+  usableCapacity: number
+}
+
+/**
+ * Structured result of a layout computation (Garage ComputationStat, v2.4.0+).
+ * Older Garage versions omit it and only return the plain-text `message`.
+ */
+export interface LayoutStatistics {
+  replicationFactor: number
+  effectiveZoneRedundancy: number
+  partitionSize: number
+  previousPartitionSize: number | null
+  lowPartitionSize: boolean
+  usableCapacity: number
+  totalCapacity: number
+  effectiveCapacity: number
+  lowUsableCapacity: boolean
+  totalMovedPartitions: number | null
+  zones: LayoutStatZone[]
+}
+
 export interface LayoutPreview {
   message: string[]
+  statistics?: LayoutStatistics | null
   newLayout: ClusterLayout
 }
 
 export interface LayoutApplyResult {
   message: string[]
+  statistics?: LayoutStatistics | null
   layout: ClusterLayout
+}
+
+// Layout history / update trackers (mirrors Garage GetClusterLayoutHistoryResponse)
+export type LayoutVersionStatus = 'Current' | 'Draining' | 'Historical'
+
+export interface LayoutVersionInfo {
+  version: number
+  status: LayoutVersionStatus
+  storageNodes: number
+  gatewayNodes: number
+}
+
+/** Highest layout version each node has acknowledged / synced / seen everyone sync. */
+export interface NodeUpdateTrackers {
+  ack: number
+  sync: number
+  syncAck: number
+}
+
+export interface LayoutHistory {
+  currentVersion: number
+  minAck: number
+  versions: LayoutVersionInfo[]
+  /** Only present while more than one layout version is live. */
+  updateTrackers: Record<string, NodeUpdateTrackers> | null
+}
+
+export async function getLayoutHistory(): Promise<LayoutHistory> {
+  return fetchJSON('/cluster/layout/history')
+}
+
+export interface SkipDeadNodesResult {
+  /** Nodes whose ack tracker was advanced to the requested version. */
+  ackUpdated: string[]
+  /** With allowMissingData: nodes whose sync tracker was advanced. */
+  syncUpdated: string[]
+}
+
+/**
+ * Force a stuck layout update forward (Garage ClusterLayoutSkipDeadNodes).
+ * `allowMissingData` also marks every node as synced and can lose data.
+ */
+export async function skipDeadNodes(body: {
+  version: number
+  allowMissingData: boolean
+}): Promise<SkipDeadNodesResult> {
+  return fetchJSON('/cluster/layout/skip-dead-nodes', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 export async function getClusterLayout(): Promise<ClusterLayout> {
