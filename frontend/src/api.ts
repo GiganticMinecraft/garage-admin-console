@@ -1,5 +1,64 @@
 const BASE = '/api'
 
+/** Error thrown for non-2xx API responses, carrying the upstream message. */
+export class ApiError extends Error {
+  status: number
+  /** Garage error code such as "BucketNotEmpty", when the upstream returned one. */
+  code?: string
+
+  constructor(status: number, message: string, code?: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
+/**
+ * Builds an ApiError from a failed response. Garage Admin API errors are JSON
+ * objects like {"code":"BucketNotEmpty","message":"..."}; the Go backend's own
+ * errors are either {"error":"..."} or plain text. Fall back to the status.
+ */
+export async function errorFromResponse(res: Response): Promise<ApiError> {
+  let message = ''
+  let code: string | undefined
+  try {
+    const text = await res.text()
+    if (text) {
+      try {
+        const parsed: unknown = JSON.parse(text)
+        if (parsed && typeof parsed === 'object') {
+          const body = parsed as { code?: unknown; message?: unknown; error?: unknown }
+          if (typeof body.message === 'string') message = body.message
+          else if (typeof body.error === 'string') message = body.error
+          if (typeof body.code === 'string') code = body.code
+        } else {
+          message = text.trim()
+        }
+      } catch {
+        message = text.trim()
+      }
+    }
+  } catch {
+    // body unreadable; keep the status-only message below
+  }
+  if (!message) message = `API error: ${res.status}`
+  return new ApiError(res.status, message, code)
+}
+
+/**
+ * Shared policy for every API response: a 401 sends the browser to login
+ * (the root layout string-matches 'Unauthorized'), any other non-2xx becomes
+ * an ApiError with the upstream message.
+ */
+async function assertOk(res: Response): Promise<void> {
+  if (res.status === 401) {
+    window.location.href = `${BASE}/auth/login`
+    throw new Error('Unauthorized')
+  }
+  if (!res.ok) throw await errorFromResponse(res)
+}
+
 export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!headers.has('Content-Type')) {
@@ -8,11 +67,7 @@ export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T>
   headers.set('X-Requested-With', 'XMLHttpRequest')
 
   const res = await fetch(`${BASE}${path}`, { ...init, headers })
-  if (res.status === 401) {
-    window.location.href = `${BASE}/auth/login`
-    throw new Error('Unauthorized')
-  }
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  await assertOk(res)
   if (res.status === 204 || res.headers.get('Content-Length') === '0') {
     return undefined as T
   }
@@ -43,21 +98,32 @@ export interface ClusterHealth {
   partitionsAllOk: number
 }
 
+export interface PartitionUsage {
+  available: number
+  total: number
+}
+
+// Mirrors Garage's NodeResp: role and hostname are Option<_> upstream and come
+// back as null for nodes that are down or have no role assigned yet. The
+// partition stats are Option<_> with skip_serializing_if, so the keys are
+// omitted entirely (undefined) rather than null. Keep them optional so the UI
+// is forced to handle it. `draining` is only ever true when `role` is null
+// (the node was removed from the layout but still holds data).
 export interface ClusterNode {
   id: string
-  garageVersion: string
-  addr: string
-  hostname: string
+  garageVersion: string | null
+  addr: string | null
+  hostname: string | null
   isUp: boolean
   lastSeenSecsAgo: number | null
   role: {
     zone: string
     tags: string[]
-    capacity: number
-  }
+    capacity: number | null
+  } | null
   draining: boolean
-  dataPartition: { available: number; total: number }
-  metadataPartition: { available: number; total: number }
+  dataPartition?: PartitionUsage | null
+  metadataPartition?: PartitionUsage | null
 }
 
 export interface ClusterStatus {
@@ -237,7 +303,7 @@ export async function uploadFile(bucket: string, file: File, prefix?: string): P
     headers: { 'X-Requested-With': 'XMLHttpRequest' },
     body: form,
   })
-  if (!res.ok) throw new Error(`Upload error: ${res.status}`)
+  await assertOk(res)
   return res.json()
 }
 

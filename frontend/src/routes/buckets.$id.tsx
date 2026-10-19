@@ -579,7 +579,7 @@ function BucketDetailPage() {
         title="オブジェクトの削除"
         description={`「${deleteObjectTarget}」を削除しますか？この操作は取り消せません。`}
         onConfirm={() => {
-          if (deleteObjectTarget) deleteMutation.mutate(deleteObjectTarget)
+          if (deleteObjectTarget) return deleteMutation.mutateAsync(deleteObjectTarget)
         }}
         isPending={deleteMutation.isPending}
       />
@@ -592,7 +592,7 @@ function BucketDetailPage() {
         confirmLabel="取り消し"
         pendingLabel="取り消し中..."
         onConfirm={() => {
-          if (revokeTarget) revokeMutation.mutate(revokeTarget)
+          if (revokeTarget) return revokeMutation.mutateAsync(revokeTarget)
         }}
         isPending={revokeMutation.isPending}
       />

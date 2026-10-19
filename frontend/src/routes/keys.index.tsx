@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { KeySecretDialog } from '@/components/key-secret-dialog'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/keys/')({
   component: KeysPage,
@@ -47,6 +48,10 @@ function KeysPage() {
     mutationFn: deleteKey,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['keys'] })
+      toast.success('キーを削除しました')
+    },
+    onError: (error) => {
+      toast.error(`キーの削除に失敗しました: ${error.message}`)
     },
   })
 
@@ -149,7 +154,7 @@ function KeysPage() {
         title="キーの削除"
         description={`キー「${deleteTarget?.name || deleteTarget?.id}」を削除しますか？この操作は取り消せません。`}
         onConfirm={() => {
-          if (deleteTarget) deleteMutation.mutate(deleteTarget.id)
+          if (deleteTarget) return deleteMutation.mutateAsync(deleteTarget.id)
         }}
         isPending={deleteMutation.isPending}
       />

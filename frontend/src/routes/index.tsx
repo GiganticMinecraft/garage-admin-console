@@ -6,9 +6,11 @@ import {
   getClusterStatus,
   type ClusterHealth,
   type ClusterNode,
+  type PartitionUsage,
 } from '@/api'
 
 const StorageCharts = lazy(() => import('@/components/storage-charts'))
+import { nodeDisplayName } from '@/lib/nodes'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -46,7 +48,7 @@ function ProgressBar({
   total: number
   color: string
 }) {
-  const percent = (used / total) * 100
+  const percent = total > 0 ? (used / total) * 100 : 0
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
@@ -103,71 +105,107 @@ function HealthCard({ data }: { data: ClusterHealth }) {
   )
 }
 
-function NodeCard({ node }: { node: ClusterNode }) {
-  const dataUsed = node.dataPartition.total - node.dataPartition.available
-  const metaUsed = node.metadataPartition.total - node.metadataPartition.available
+/**
+ * Usage bar for a data/metadata partition. Garage reports null for nodes
+ * that are down or have no role yet, in which case we show a placeholder
+ * instead of crashing on `.total`.
+ */
+function PartitionBar({
+  label,
+  partition,
+  color,
+}: {
+  label: string
+  partition: PartitionUsage | null | undefined
+  color: string
+}) {
+  if (!partition) {
+    return (
+      <div className="flex justify-between text-xs text-muted-foreground">
+        <span>{label}</span>
+        <span>情報なし</span>
+      </div>
+    )
+  }
+  return (
+    <ProgressBar
+      label={label}
+      used={partition.total - partition.available}
+      total={partition.total}
+      color={color}
+    />
+  )
+}
 
+function NodeStatusDot({ node }: { node: ClusterNode }) {
+  const title = node.isUp
+    ? '接続中'
+    : node.lastSeenSecsAgo != null
+      ? `切断中 (最終確認 ${Math.floor(node.lastSeenSecsAgo / 60)} 分前)`
+      : '切断中'
+  return (
+    <span
+      title={title}
+      className={`inline-block h-2 w-2 rounded-full ${node.isUp ? 'bg-green-500' : 'bg-red-500'}`}
+    />
+  )
+}
+
+/**
+ * Zone of the node's current role. Garage sets `draining` only for nodes whose
+ * role was removed in a newer layout version while they still hold data, so
+ * that state is shown explicitly instead of as a plain "unassigned".
+ */
+function ZoneBadge({ node }: { node: ClusterNode }) {
+  if (!node.role) {
+    return node.draining ? (
+      <Badge variant="destructive" title="レイアウトから外されましたが、まだデータを保持しています">
+        draining
+      </Badge>
+    ) : (
+      <Badge variant="outline">ロール未割当</Badge>
+    )
+  }
+  return <Badge variant="secondary">{node.role.zone}</Badge>
+}
+
+function NodeCard({ node }: { node: ClusterNode }) {
   return (
     <div className="rounded-lg border p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span
-            className={`inline-block h-2 w-2 rounded-full ${node.isUp ? 'bg-green-500' : 'bg-red-500'}`}
-          />
-          <span className="font-medium">{node.hostname}</span>
+          <NodeStatusDot node={node} />
+          <span className="font-medium">{nodeDisplayName(node)}</span>
         </div>
         <div className="flex gap-2">
-          <Badge variant="outline">{node.garageVersion}</Badge>
-          <Badge variant="secondary">{node.role.zone}</Badge>
+          <Badge variant="outline">{node.garageVersion ?? '不明'}</Badge>
+          <ZoneBadge node={node} />
         </div>
       </div>
-      <ProgressBar
-        label="データ"
-        used={dataUsed}
-        total={node.dataPartition.total}
-        color="bg-blue-500"
-      />
-      <ProgressBar
-        label="メタデータ"
-        used={metaUsed}
-        total={node.metadataPartition.total}
-        color="bg-purple-500"
-      />
+      <PartitionBar label="データ" partition={node.dataPartition} color="bg-blue-500" />
+      <PartitionBar label="メタデータ" partition={node.metadataPartition} color="bg-purple-500" />
     </div>
   )
 }
 
 function NodeTableRow({ node }: { node: ClusterNode }) {
-  const dataUsed = node.dataPartition.total - node.dataPartition.available
-  const metaUsed = node.metadataPartition.total - node.metadataPartition.available
-
   return (
     <TableRow>
       <TableCell>
         <div className="flex items-center gap-2">
-          <span
-            className={`inline-block h-2 w-2 rounded-full ${node.isUp ? 'bg-green-500' : 'bg-red-500'}`}
-          />
-          <span className="font-medium">{node.hostname}</span>
+          <NodeStatusDot node={node} />
+          <span className="font-medium">{nodeDisplayName(node)}</span>
         </div>
       </TableCell>
-      <TableCell className="text-muted-foreground">{node.garageVersion}</TableCell>
-      <TableCell className="text-muted-foreground">{node.role.zone}</TableCell>
-      <TableCell className="min-w-[200px]">
-        <ProgressBar
-          label="データ"
-          used={dataUsed}
-          total={node.dataPartition.total}
-          color="bg-blue-500"
-        />
+      <TableCell className="text-muted-foreground">{node.garageVersion ?? '不明'}</TableCell>
+      <TableCell className="text-muted-foreground">
+        <ZoneBadge node={node} />
       </TableCell>
       <TableCell className="min-w-[200px]">
-        <ProgressBar
-          label="メタデータ"
-          used={metaUsed}
-          total={node.metadataPartition.total}
-          color="bg-purple-500"
-        />
+        <PartitionBar label="データ" partition={node.dataPartition} color="bg-blue-500" />
+      </TableCell>
+      <TableCell className="min-w-[200px]">
+        <PartitionBar label="メタデータ" partition={node.metadataPartition} color="bg-purple-500" />
       </TableCell>
     </TableRow>
   )

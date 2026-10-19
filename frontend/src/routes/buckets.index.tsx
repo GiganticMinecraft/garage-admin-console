@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { listBuckets, createBucket, deleteBucket } from '@/api'
 import type { BucketListItem } from '@/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -37,6 +38,7 @@ function BucketsPage() {
       queryClient.invalidateQueries({ queryKey: ['buckets'] })
       setShowCreate(false)
       setNewBucketAlias('')
+      toast.success('バケットを作成しました')
     },
   })
 
@@ -44,6 +46,10 @@ function BucketsPage() {
     mutationFn: deleteBucket,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['buckets'] })
+      toast.success('バケットを削除しました')
+    },
+    onError: (error) => {
+      toast.error(`バケットの削除に失敗しました: ${error.message}`)
     },
   })
 
@@ -146,7 +152,7 @@ function BucketsPage() {
         title="バケットの削除"
         description={`バケット「${deleteTarget?.globalAliases?.[0] || deleteTarget?.id.slice(0, 16)}」を削除しますか？この操作は取り消せません。`}
         onConfirm={() => {
-          if (deleteTarget) deleteMutation.mutate(deleteTarget.id)
+          if (deleteTarget) return deleteMutation.mutateAsync(deleteTarget.id)
         }}
         isPending={deleteMutation.isPending}
       />

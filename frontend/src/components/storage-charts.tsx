@@ -4,7 +4,8 @@ import * as echarts from 'echarts/core'
 import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { ClusterNode } from '@/api'
+import type { ClusterNode, PartitionUsage } from '@/api'
+import { nodeDisplayName } from '@/lib/nodes'
 
 echarts.use([PieChart, BarChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
 
@@ -25,12 +26,30 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(1)} ${units[i]}`
 }
 
-export default function StorageCharts({ nodes }: { nodes: ClusterNode[] }) {
+interface MeasuredNode {
+  name: string
+  data: PartitionUsage
+  meta: PartitionUsage
+}
+
+export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[] }) {
+  // Nodes that are down or have no role report null partitions; chart only
+  // the ones that actually have numbers.
+  const nodes = useMemo<MeasuredNode[]>(
+    () =>
+      allNodes.flatMap((n) =>
+        n.dataPartition && n.metadataPartition
+          ? [{ name: nodeDisplayName(n), data: n.dataPartition, meta: n.metadataPartition }]
+          : [],
+      ),
+    [allNodes],
+  )
+
   const pieOption = useMemo(() => {
-    const totalData = nodes.reduce((sum, n) => sum + n.dataPartition.total, 0)
-    const usedData = nodes.reduce((sum, n) => sum + (n.dataPartition.total - n.dataPartition.available), 0)
-    const totalMeta = nodes.reduce((sum, n) => sum + n.metadataPartition.total, 0)
-    const usedMeta = nodes.reduce((sum, n) => sum + (n.metadataPartition.total - n.metadataPartition.available), 0)
+    const totalData = nodes.reduce((sum, n) => sum + n.data.total, 0)
+    const usedData = nodes.reduce((sum, n) => sum + (n.data.total - n.data.available), 0)
+    const totalMeta = nodes.reduce((sum, n) => sum + n.meta.total, 0)
+    const usedMeta = nodes.reduce((sum, n) => sum + (n.meta.total - n.meta.available), 0)
 
     return {
       tooltip: { trigger: 'item' as const, formatter: '{b}: {c} ({d}%)' },
@@ -76,7 +95,7 @@ export default function StorageCharts({ nodes }: { nodes: ClusterNode[] }) {
     grid: { left: 80, right: 20, top: 50, bottom: 30 },
     xAxis: {
       type: 'category' as const,
-      data: nodes.map((n) => n.hostname),
+      data: nodes.map((n) => n.name),
     },
     yAxis: {
       type: 'value' as const,
@@ -87,32 +106,41 @@ export default function StorageCharts({ nodes }: { nodes: ClusterNode[] }) {
         name: 'データ使用量',
         type: 'bar' as const,
         stack: 'data',
-        data: nodes.map((n) => n.dataPartition.total - n.dataPartition.available),
+        data: nodes.map((n) => n.data.total - n.data.available),
         color: '#3b82f6',
       },
       {
         name: 'データ空き',
         type: 'bar' as const,
         stack: 'data',
-        data: nodes.map((n) => n.dataPartition.available),
+        data: nodes.map((n) => n.data.available),
         color: '#93c5fd',
       },
       {
         name: 'メタデータ使用量',
         type: 'bar' as const,
         stack: 'meta',
-        data: nodes.map((n) => n.metadataPartition.total - n.metadataPartition.available),
+        data: nodes.map((n) => n.meta.total - n.meta.available),
         color: '#8b5cf6',
       },
       {
         name: 'メタデータ空き',
         type: 'bar' as const,
         stack: 'meta',
-        data: nodes.map((n) => n.metadataPartition.available),
+        data: nodes.map((n) => n.meta.available),
         color: '#c4b5fd',
       },
     ],
   }), [nodes])
+
+  if (nodes.length === 0) {
+    return (
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold">ストレージ使用状況</h2>
+        <p className="text-sm text-muted-foreground">ストレージ情報を報告しているノードがありません</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-3">
