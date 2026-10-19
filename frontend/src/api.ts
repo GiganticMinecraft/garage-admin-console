@@ -676,7 +676,8 @@ export interface Worker {
   consecutiveErrors: number
   lastError: { message: string; secsAgo: number } | null
   tranquility: number | null
-  progress: number | null
+  /** Garage's own text (e.g. "12.34%"); the v2.4.1 spec types it as a string. */
+  progress: string | null
   queueLength: number | null
   persistentErrors: number | null
   freeform: string[]

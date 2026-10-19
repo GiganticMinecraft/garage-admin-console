@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { toast } from 'sonner'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/blocks')({
   component: BlocksPage,
@@ -119,6 +120,7 @@ function BlockInfoPanel({ blockHash }: { blockHash: string }) {
 }
 
 function BlocksPage() {
+  useDocumentTitle('ブロック')
   const queryClient = useQueryClient()
   const [expandedHash, setExpandedHash] = useState<string | null>(null)
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set())

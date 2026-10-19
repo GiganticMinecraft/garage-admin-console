@@ -46,6 +46,7 @@ import { formatDateTime } from '@/lib/format'
 import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
 import { useDebouncedValue } from '@/lib/use-debounce'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/admin-tokens/')({
   component: AdminTokensPage,
@@ -71,6 +72,7 @@ function matchesToken(t: AdminToken, q: string): boolean {
 }
 
 function AdminTokensPage() {
+  useDocumentTitle('管理トークン')
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AdminToken | null>(null)

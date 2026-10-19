@@ -15,6 +15,9 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
+import { PAGE_POLLING } from '@/lib/polling'
+import { RefreshIndicator } from '@/components/refresh-indicator'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/repair')({
   component: RepairPage,
@@ -177,6 +180,7 @@ function SectionSkeleton() {
 }
 
 function RepairPage() {
+  useDocumentTitle('メンテナンス')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [pendingRepairType, setPendingRepairType] = useState<RepairType | null>(null)
   const [pendingLabel, setPendingLabel] = useState('')
@@ -185,17 +189,22 @@ function RepairPage() {
   const health = useQuery({
     queryKey: ['cluster', 'health'],
     queryFn: getClusterHealth,
+    ...PAGE_POLLING,
   })
 
   const blockErrors = useQuery({
     queryKey: ['blockErrors'],
     queryFn: listBlockErrors,
+    ...PAGE_POLLING,
   })
 
   const metrics = useQuery({
     queryKey: ['maintenance', 'metrics'],
     queryFn: getMaintenanceMetrics,
+    ...PAGE_POLLING,
   })
+  const refreshAll = () => Promise.all([health.refetch(), blockErrors.refetch(), metrics.refetch()])
+  const updatedAt = Math.max(health.dataUpdatedAt, blockErrors.dataUpdatedAt, metrics.dataUpdatedAt)
 
   const mutation = useMutation({
     mutationFn: (repairType: RepairType) => launchRepair(repairType),
@@ -238,6 +247,7 @@ function RepairPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <RefreshIndicator updatedAt={updatedAt} onRefresh={refreshAll} />
           <Button asChild variant="outline" size="sm">
             <Link to="/blocks">ブロックエラーを見る</Link>
           </Button>

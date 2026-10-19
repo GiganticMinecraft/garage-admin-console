@@ -1,7 +1,6 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw } from 'lucide-react'
 import {
   getClusterHealth,
   getClusterStatistics,
@@ -22,9 +21,11 @@ const StorageCharts = lazy(() => import('@/components/storage-charts'))
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
 import { formatBytes, formatCount, formatDateTime, formatUsage, usagePercent } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
-import { describeState, formatSecsAgo } from '@/lib/workers'
+import { describeState } from '@/lib/workers'
+import { pollEvery } from '@/lib/polling'
+import { RefreshIndicator } from '@/components/refresh-indicator'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import {
   Table,
   TableHeader,
@@ -652,22 +653,9 @@ function StorageHealthSection({
   )
 }
 
-/** 「最終更新: N秒前」, re-rendered every second. */
-function UpdatedAgo({ at }: { at: number }) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [])
-  return (
-    <span className="text-sm text-muted-foreground" title={new Date(at).toLocaleString('ja-JP')}>
-      最終更新: {formatSecsAgo(Math.max(0, (now - at) / 1000))}
-    </span>
-  )
-}
-
 function DashboardPage() {
-  const polling = { refetchInterval: STATUS_REFETCH_MS, refetchIntervalInBackground: false }
+  useDocumentTitle('ダッシュボード')
+  const polling = pollEvery(STATUS_REFETCH_MS)
 
   const health = useQuery({
     queryKey: ['cluster', 'health'],
@@ -693,8 +681,7 @@ function DashboardPage() {
   const statistics = useQuery({
     queryKey: ['cluster', 'statistics'],
     queryFn: getClusterStatistics,
-    refetchInterval: STATISTICS_REFETCH_MS,
-    refetchIntervalInBackground: false,
+    ...pollEvery(STATISTICS_REFETCH_MS),
   })
 
   // The key list fans out per key on the backend, so it is not polled; the
@@ -709,18 +696,11 @@ function DashboardPage() {
   // history behind the tracker) plus the key list. The spinner reflects only
   // this, not background polling.
   const queryClient = useQueryClient()
-  const [refreshing, setRefreshing] = useState(false)
-  const refreshAll = async () => {
-    setRefreshing(true)
-    try {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['cluster'] }),
-        queryClient.invalidateQueries({ queryKey: ['keys'] }),
-      ])
-    } finally {
-      setRefreshing(false)
-    }
-  }
+  const refreshAll = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['cluster'] }),
+      queryClient.invalidateQueries({ queryKey: ['keys'] }),
+    ])
 
   // GetClusterStatus roles are the current layout's, which is all the
   // tracker needs (ID + whether the node stores data).
@@ -732,13 +712,7 @@ function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">ダッシュボード</h1>
-        <div className="flex items-center gap-3">
-          {updatedAt > 0 && <UpdatedAgo at={updatedAt} />}
-          <Button variant="outline" size="sm" onClick={refreshAll} disabled={refreshing}>
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} aria-hidden />
-            更新
-          </Button>
-        </div>
+        <RefreshIndicator updatedAt={updatedAt} onRefresh={refreshAll} />
       </div>
 
       {status.data && <LayoutUpdateTracker roles={trackerRoles} compact />}

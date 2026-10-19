@@ -25,6 +25,7 @@ import { formatBytes, formatCount, formatDateTime, shortId } from '@/lib/format'
 import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
 import { useDebouncedValue } from '@/lib/use-debounce'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/buckets/')({
   component: BucketsPage,
@@ -65,6 +66,7 @@ function matchesBucket(b: BucketListItem, q: string): boolean {
 }
 
 function BucketsPage() {
+  useDocumentTitle('バケット')
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [newBucketAlias, setNewBucketAlias] = useState('')

@@ -17,12 +17,14 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { sameScope } from '@/lib/admin-scopes'
 import { expirationBody, expirationFromIso, expirationValid, sameExpiration } from '@/lib/expiration'
 import { formatDateTime } from '@/lib/format'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/admin-tokens/$id')({
   component: AdminTokenDetailPage,
 })
 
 function AdminTokenDetailPage() {
+  useDocumentTitle('管理トークン詳細')
   const { id } = Route.useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
