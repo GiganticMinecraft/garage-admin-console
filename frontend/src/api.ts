@@ -159,7 +159,8 @@ export interface LayoutParameters {
 /** A staged change: either a new/updated role or a removal. */
 export type NodeRoleChange =
   | { id: string; remove: true }
-  | { id: string; zone: string; tags: string[]; capacity: number | null }
+  // capacity: null or absent means a gateway node (NodeAssignedRole in the v2 spec).
+  | { id: string; zone: string; tags: string[]; capacity?: number | null }
 
 export interface ClusterLayout {
   version: number

@@ -275,7 +275,7 @@ function LayoutPage() {
                           <Badge variant={before ? 'secondary' : 'default'}>{before ? '変更' : '追加'}</Badge>
                           <span>
                             zone {before && before.zone !== c.zone ? <s className="text-muted-foreground">{before.zone}</s> : null} {c.zone}
-                            {' / '}容量 {before && before.capacity !== c.capacity ? <s className="text-muted-foreground">{formatSize(before.capacity)}</s> : null} {c.capacity == null ? 'gateway' : formatSize(c.capacity)}
+                            {' / '}容量 {before && (before.capacity ?? null) !== (c.capacity ?? null) ? <s className="text-muted-foreground">{formatSize(before.capacity)}</s> : null} {c.capacity == null ? 'gateway' : formatSize(c.capacity)}
                             {' / '}tags [{c.tags.join(', ')}]
                           </span>
                         </>
@@ -311,66 +311,69 @@ function LayoutPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {drafts.map((d) => (
-                      <TableRow key={d.id} className={d.remove ? 'opacity-60' : undefined}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <span className={`inline-block h-2 w-2 rounded-full ${d.isUp ? 'bg-green-500' : 'bg-red-500'}`} />
-                            <div>
-                              <div className="font-medium">{nodeDisplayName(d)}</div>
-                              <div className="font-mono text-xs text-muted-foreground">{nodeDisplayName({ id: d.id, hostname: null })}</div>
-                              {!d.applied && !d.effective && <Badge variant="outline" className="mt-1">ロール未割当</Badge>}
-                              {d.applied && d.effective == null && !d.remove && <Badge variant="destructive" className="mt-1">削除をステージ中</Badge>}
-                              {d.effective && d.applied && d.effective !== d.applied && <Badge variant="secondary" className="mt-1">変更をステージ中</Badge>}
-                              {d.effective && !d.applied && <Badge variant="default" className="mt-1">追加をステージ中</Badge>}
+                    {drafts.map((d) => {
+                      const name = nodeDisplayName(d)
+                      return (
+                        <TableRow key={d.id} className={d.remove ? 'opacity-60' : undefined}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <span className={`inline-block h-2 w-2 rounded-full ${d.isUp ? 'bg-green-500' : 'bg-red-500'}`} />
+                              <div>
+                                <div className="font-medium">{name}</div>
+                                <div className="font-mono text-xs text-muted-foreground">{nodeDisplayName({ id: d.id, hostname: null })}</div>
+                                {!d.applied && !d.effective && <Badge variant="outline" className="mt-1">ロール未割当</Badge>}
+                                {d.applied && d.effective == null && !d.remove && <Badge variant="destructive" className="mt-1">削除をステージ中</Badge>}
+                                {d.effective && d.applied && d.effective !== d.applied && <Badge variant="secondary" className="mt-1">変更をステージ中</Badge>}
+                                {d.effective && !d.applied && <Badge variant="default" className="mt-1">追加をステージ中</Badge>}
+                              </div>
                             </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            value={d.zone}
-                            list="layout-zones"
-                            disabled={d.remove}
-                            onChange={(e) => updateDraft(d.id, { zone: e.target.value })}
-                            aria-label={`${nodeDisplayName(d)} のゾーン`}
-                            className="w-32"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={0}
-                            step="any"
-                            value={d.capacityGiB}
-                            disabled={d.remove}
-                            placeholder="gateway"
-                            onChange={(e) => updateDraft(d.id, { capacityGiB: e.target.value })}
-                            aria-label={`${nodeDisplayName(d)} の容量 (GiB、空欄でゲートウェイ)`}
-                            className="w-32"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            value={d.tags}
-                            disabled={d.remove}
-                            onChange={(e) => updateDraft(d.id, { tags: e.target.value })}
-                            aria-label={`${nodeDisplayName(d)} のタグ (カンマ区切り)`}
-                            className="w-40"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          {(d.applied || d.effective) && (
-                            <input
-                              type="checkbox"
-                              className="rounded"
-                              checked={d.remove}
-                              onChange={(e) => updateDraft(d.id, { remove: e.target.checked })}
-                              aria-label={`${d.hostname ?? d.id} をレイアウトから削除`}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              value={d.zone}
+                              list="layout-zones"
+                              disabled={d.remove}
+                              onChange={(e) => updateDraft(d.id, { zone: e.target.value })}
+                              aria-label={`${name} のゾーン`}
+                              className="w-32"
                             />
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={d.capacityGiB}
+                              disabled={d.remove}
+                              placeholder="gateway"
+                              onChange={(e) => updateDraft(d.id, { capacityGiB: e.target.value })}
+                              aria-label={`${name} の容量 (GiB、空欄でゲートウェイ)`}
+                              className="w-32"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              value={d.tags}
+                              disabled={d.remove}
+                              onChange={(e) => updateDraft(d.id, { tags: e.target.value })}
+                              aria-label={`${name} のタグ (カンマ区切り)`}
+                              className="w-40"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            {(d.applied || d.effective) && (
+                              <input
+                                type="checkbox"
+                                className="rounded"
+                                checked={d.remove}
+                                onChange={(e) => updateDraft(d.id, { remove: e.target.checked })}
+                                aria-label={`${name} をレイアウトから削除`}
+                              />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
                 <datalist id="layout-zones">

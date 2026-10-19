@@ -1,7 +1,6 @@
 import type { ClusterNode, LayoutNodeRole, NodeRoleChange } from '@/api'
+import { GIB } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
-
-export const GIB = 1024 ** 3
 
 /** The editable fields of a row, as strings so "unchanged" can be detected exactly. */
 export interface RoleFields {
@@ -23,8 +22,14 @@ export interface RoleDraft extends RoleFields {
   /** Role in the applied layout, if any. */
   applied: LayoutNodeRole | null
   /** Role after staged changes: null when unassigned or staged for removal. */
-  effective: Pick<LayoutNodeRole, 'zone' | 'tags' | 'capacity'> | null
+  effective: { zone: string; tags: string[]; capacity?: number | null } | null
   original: RoleFields
+  /**
+   * Capacity in bytes of the role the form was filled from (null: gateway or
+   * no role). Reused as-is when the capacity field is left untouched, since
+   * the GiB string is rounded and cannot reproduce the exact byte count.
+   */
+  originalCapacity: number | null
   remove: boolean
 }
 
@@ -45,11 +50,12 @@ export function draftFromNode(
   // staged for removal show the applied role so unchecking "remove" restores
   // it; nodes without any role get a blank form.
   const source = effective ?? applied ?? null
+  const originalCapacity = source?.capacity ?? null
   const fields: RoleFields = source
     ? {
         zone: source.zone,
-        capacityGiB: capacityToGiB(source.capacity ?? null),
-        tags: source.tags.join(', '),
+        capacityGiB: capacityToGiB(originalCapacity),
+        tags: (source.tags ?? []).join(', '),
       }
     : { zone: '', capacityGiB: '', tags: '' }
   return {
@@ -59,6 +65,7 @@ export function draftFromNode(
     applied: applied ?? null,
     effective,
     original: fields,
+    originalCapacity,
     ...fields,
     remove: stagedRemove,
   }
@@ -88,7 +95,11 @@ export function draftToChange(d: RoleDraft): NodeRoleChange | null | Error {
   const zone = d.zone.trim()
   const tags = parseTags(d.tags)
   let capacity: number | null = null
-  if (d.capacityGiB.trim() !== '') {
+  if (d.capacityGiB === d.original.capacityGiB && d.originalCapacity != null) {
+    // Untouched capacity: keep the exact bytes instead of re-deriving them
+    // from the rounded GiB string (which can drift, or round tiny values to 0).
+    capacity = d.originalCapacity
+  } else if (d.capacityGiB.trim() !== '') {
     const n = Number(d.capacityGiB)
     if (!Number.isFinite(n) || n <= 0) {
       return new Error(`${name}: 容量は正の数 (GiB) で入力してください`)

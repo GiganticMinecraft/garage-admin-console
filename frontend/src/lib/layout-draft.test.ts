@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LayoutNodeRole, NodeRoleChange } from '@/api'
-import { GIB, capacityToGiB, draftFromNode, draftToChange, parseTags } from './layout-draft'
+import { GIB } from './format'
+import { capacityToGiB, draftFromNode, draftToChange, parseTags } from './layout-draft'
 
 const node = { id: 'a'.repeat(64), hostname: 'garage-0', isUp: true }
 
@@ -30,8 +31,17 @@ describe('draftFromNode', () => {
   })
 
   it('treats an absent staged capacity as gateway too', () => {
-    const staged = { id: node.id, zone: 'dc1', tags: [] } as unknown as NodeRoleChange
-    expect(draftFromNode(node, appliedRole(), staged).capacityGiB).toBe('')
+    const staged: NodeRoleChange = { id: node.id, zone: 'dc1', tags: [] }
+    const d = draftFromNode(node, appliedRole(), staged)
+    expect(d.capacityGiB).toBe('')
+    expect(draftToChange({ ...d, tags: 'edge' })).toMatchObject({ capacity: null })
+  })
+
+  it('does not throw when a staged change from the API has no tags', () => {
+    // Wire data is not validated, so simulate a response missing `tags`.
+    const staged = JSON.parse(`{"id":"${node.id}","zone":"dc1","capacity":null}`) as NodeRoleChange
+    const d = draftFromNode(node, appliedRole(), staged)
+    expect(d).toMatchObject({ zone: 'dc1', capacityGiB: '', tags: '' })
   })
 
   it('shows the applied capacity when nothing is staged', () => {
@@ -95,6 +105,33 @@ describe('draftToChange', () => {
       tags: ['ssd'],
       capacity: 20 * GIB,
     })
+  })
+
+  it('keeps the exact bytes when the capacity field is untouched', () => {
+    // 1e12 bytes = 931.3225... GiB, shown as '931.32'; re-deriving from that
+    // string would stage 999_997_300_736 bytes.
+    const d = draftFromNode(node, appliedRole({ capacity: 1_000_000_000_000 }), undefined)
+    expect(d.capacityGiB).toBe('931.32')
+    expect(draftToChange({ ...d, tags: 'ssd, edge' })).toMatchObject({ capacity: 1_000_000_000_000 })
+  })
+
+  it('keeps a tiny capacity that rounds to 0 GiB when only the zone changes', () => {
+    // 1 byte is what backend/handler_cluster_test.go stages.
+    const staged: NodeRoleChange = { id: node.id, zone: 'dc1', tags: [], capacity: 1 }
+    const d = draftFromNode(node, undefined, staged)
+    expect(d.capacityGiB).toBe('0')
+    expect(draftToChange({ ...d, zone: 'dc2' })).toEqual({ id: node.id, zone: 'dc2', tags: [], capacity: 1 })
+  })
+
+  it('keeps the applied bytes when re-adding a node staged for removal', () => {
+    const d = draftFromNode(node, appliedRole({ capacity: 1_000_000_000_000 }), { id: node.id, remove: true })
+    expect(draftToChange({ ...d, remove: false })).toMatchObject({ capacity: 1_000_000_000_000 })
+  })
+
+  it('re-derives bytes when the capacity field is edited, or empties it to a gateway', () => {
+    const d = draftFromNode(node, appliedRole({ capacity: 1_000_000_000_000 }), undefined)
+    expect(draftToChange({ ...d, capacityGiB: '931.33' })).toMatchObject({ capacity: Math.round(931.33 * GIB) })
+    expect(draftToChange({ ...d, capacityGiB: '' })).toMatchObject({ capacity: null })
   })
 
   it('stages a removal only for nodes with an applied role', () => {
