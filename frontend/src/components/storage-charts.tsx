@@ -5,6 +5,7 @@ import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ClusterNode, PartitionUsage } from '@/api'
+import { formatBytes } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 
 echarts.use([PieChart, BarChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
@@ -14,17 +15,6 @@ echarts.use([PieChart, BarChart, TooltipComponent, LegendComponent, GridComponen
 const ReactEChartsCore = ('default' in EChartsReactCore
   ? (EChartsReactCore as unknown as { default: typeof EChartsReactCore }).default
   : EChartsReactCore) as typeof EChartsReactCore
-
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let value = bytes
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024
-    i++
-  }
-  return `${value.toFixed(1)} ${units[i]}`
-}
 
 interface MeasuredNode {
   name: string

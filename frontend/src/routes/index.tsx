@@ -1,17 +1,29 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
+import { RefreshCw } from 'lucide-react'
 import {
   getClusterHealth,
+  getClusterStatistics,
   getClusterStatus,
+  getStorageHealth,
+  listKeys,
   type ClusterHealth,
   type ClusterNode,
+  type ClusterStatistics,
+  type KeyListItem,
+  type ListResult,
   type PartitionUsage,
+  type StorageNodeHealth,
 } from '@/api'
 
 const StorageCharts = lazy(() => import('@/components/storage-charts'))
+import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
+import { formatBytes, formatCount, formatDateTime } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
+import { formatSecsAgo } from '@/lib/workers'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Table,
   TableHeader,
@@ -26,16 +38,9 @@ export const Route = createFileRoute('/')({
   component: DashboardPage,
 })
 
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let value = bytes
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024
-    i++
-  }
-  return `${value.toFixed(1)} ${units[i]}`
-}
+/** Polling periods; polling pauses while the tab is hidden. */
+const STATUS_REFETCH_MS = 15_000
+const STATISTICS_REFETCH_MS = 30_000
 
 function ProgressBar({
   label,
@@ -264,35 +269,313 @@ function NodesSkeleton() {
   )
 }
 
+/** One summary tile. `title` becomes a native tooltip. */
+function SummaryCard({
+  label,
+  value,
+  sub,
+  title,
+}: {
+  label: string
+  value: string
+  sub?: string
+  title?: string
+}) {
+  return (
+    <div className="rounded-lg border p-4" title={title}>
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <p className="text-xl font-semibold tabular-nums">{value}</p>
+      {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+    </div>
+  )
+}
+
+function SummaryCardSkeleton({ label }: { label: string }) {
+  return (
+    <div className="rounded-lg border p-4 space-y-2">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <Skeleton className="h-6 w-24" />
+    </div>
+  )
+}
+
+const INCOMPLETE_AVAIL_HINT =
+  '一部のストレージノードが空き容量を報告していないため、実際の空き容量とは異なる可能性があります (incompleteAvailInfo)'
+
+/** Free space, prefixed with "~" when Garage flags the value as incomplete. */
+function availValue(bytes: number | null | undefined, incomplete: boolean): string {
+  if (bytes == null) return '-'
+  return `${incomplete ? '~' : ''}${formatBytes(bytes)}`
+}
+
+/** The subset of a useQuery result the presentational sections need. */
+interface QueryView<T> {
+  data?: T
+  isLoading: boolean
+  isError: boolean
+  error: Error | null
+}
+
+const KEY_TILE_LABEL = 'キー数 (有効 / 総数)'
+
+function KeyCountCard({ keys }: { keys: QueryView<ListResult<KeyListItem>> }) {
+  if (keys.isLoading) return <SummaryCardSkeleton label={KEY_TILE_LABEL} />
+  if (keys.isError || !keys.data) {
+    return (
+      <SummaryCard
+        label={KEY_TILE_LABEL}
+        value="-"
+        sub={`取得失敗: ${keys.error?.message ?? '不明なエラー'}`}
+      />
+    )
+  }
+  const { items, truncated } = keys.data
+  const valid = items.filter((k) => !k.expired).length
+  return (
+    <SummaryCard
+      label={KEY_TILE_LABEL}
+      value={`${formatCount(valid)} / ${formatCount(items.length)}${truncated ? '+' : ''}`}
+      sub={truncated ? '一覧が上限で打ち切られています' : `期限切れ ${formatCount(items.length - valid)}`}
+    />
+  )
+}
+
+function SummaryCards({
+  stats,
+  keys,
+}: {
+  stats: QueryView<ClusterStatistics>
+  keys: QueryView<ListResult<KeyListItem>>
+}) {
+  const s = stats.data
+  const incomplete = s?.incompleteAvailInfo === true
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        {stats.isLoading
+          ? ['データ空き', 'メタデータ空き', 'バケット数', '総オブジェクト'].map((label) => (
+              <SummaryCardSkeleton key={label} label={label} />
+            ))
+          : s && (
+              <>
+                <SummaryCard
+                  label="データ空き"
+                  value={availValue(s.dataAvail, incomplete)}
+                  sub={incomplete ? '不完全な値 (一部ノード未報告)' : 'クラスタ全体の推定値'}
+                  title={incomplete ? INCOMPLETE_AVAIL_HINT : undefined}
+                />
+                <SummaryCard
+                  label="メタデータ空き"
+                  value={availValue(s.metadataAvail, incomplete)}
+                  sub={incomplete ? '不完全な値 (一部ノード未報告)' : 'クラスタ全体の推定値'}
+                  title={incomplete ? INCOMPLETE_AVAIL_HINT : undefined}
+                />
+                <SummaryCard label="バケット数" value={formatCount(s.bucketCount)} />
+                {/* Garage omits the object totals for clusters with > 1000 buckets. */}
+                {s.totalObjectCount != null && (
+                  <SummaryCard
+                    label="総オブジェクト"
+                    value={formatCount(s.totalObjectCount)}
+                    sub={s.totalObjectBytes != null ? formatBytes(s.totalObjectBytes) : undefined}
+                  />
+                )}
+              </>
+            )}
+        <KeyCountCard keys={keys} />
+      </div>
+      {stats.isError && (
+        <p className="text-sm text-destructive">
+          クラスタ統計を読み込めませんでした: {stats.error?.message ?? '不明なエラー'}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** A count that turns destructive when > 0 (errors, corruptions). */
+function HealthMetric({
+  label,
+  value,
+  alertWhenPositive = false,
+}: {
+  label: string
+  value: number | null
+  alertWhenPositive?: boolean
+}) {
+  const alert = alertWhenPositive && value != null && value > 0
+  return (
+    <div className="flex justify-between gap-2 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`tabular-nums ${alert ? 'font-semibold text-destructive' : ''}`}>
+        {formatCount(value)}
+      </span>
+    </div>
+  )
+}
+
+/** Garage reports "never" or an RFC 3339 timestamp. */
+function formatScrubLastCompleted(v: string | null): string {
+  if (v == null) return '-'
+  if (v === 'never') return '未実行'
+  return formatDateTime(v)
+}
+
+function StorageHealthCard({ node }: { node: StorageNodeHealth }) {
+  const alert = (node.resyncErrors ?? 0) > 0 || (node.scrubCorruptions ?? 0) > 0
+  return (
+    <Link
+      to="/nodes/$id"
+      params={{ id: node.id }}
+      className={`block rounded-lg border p-4 space-y-2 transition-colors hover:bg-muted/50 ${alert ? 'border-destructive/60' : ''}`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          title={node.isUp ? '接続中' : '切断中'}
+          className={`inline-block h-2 w-2 rounded-full ${node.isUp ? 'bg-green-500' : 'bg-red-500'}`}
+        />
+        <span className="font-medium">{nodeDisplayName(node)}</span>
+      </div>
+      <HealthMetric label="Resync キュー" value={node.resyncQueueLen} />
+      <HealthMetric label="Resync エラー" value={node.resyncErrors} alertWhenPositive />
+      <HealthMetric label="Scrub 破損検出数" value={node.scrubCorruptions} alertWhenPositive />
+      <div className="flex justify-between gap-2 text-sm">
+        <span className="text-muted-foreground">最終 Scrub</span>
+        <span title={node.scrubLastCompleted ?? undefined}>
+          {formatScrubLastCompleted(node.scrubLastCompleted)}
+        </span>
+      </div>
+      {node.error && <p className="break-words text-xs text-destructive">{node.error}</p>}
+    </Link>
+  )
+}
+
+function StorageHealthSection({ query }: { query: QueryView<StorageNodeHealth[]> }) {
+  return (
+    <div className="space-y-3">
+      <h2 className="text-lg font-semibold">Storage health</h2>
+      {query.isLoading ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-36 w-full rounded-lg" />
+          ))}
+        </div>
+      ) : query.isError || !query.data ? (
+        <p className="text-destructive">
+          Storage health を読み込めませんでした: {query.error?.message ?? '不明なエラー'}
+        </p>
+      ) : query.data.length === 0 ? (
+        <p className="text-muted-foreground">ストレージノードがありません</p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {query.data.map((n) => (
+            <StorageHealthCard key={n.id} node={n} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 「最終更新: N秒前」, re-rendered every second. */
+function UpdatedAgo({ at }: { at: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <span className="text-sm text-muted-foreground" title={new Date(at).toLocaleString('ja-JP')}>
+      最終更新: {formatSecsAgo(Math.max(0, (now - at) / 1000))}
+    </span>
+  )
+}
+
 function DashboardPage() {
+  const polling = { refetchInterval: STATUS_REFETCH_MS, refetchIntervalInBackground: false }
+
   const health = useQuery({
     queryKey: ['cluster', 'health'],
     queryFn: getClusterHealth,
+    ...polling,
   })
 
   const status = useQuery({
     queryKey: ['cluster', 'status'],
     queryFn: getClusterStatus,
+    ...polling,
   })
+
+  const storageHealth = useQuery({
+    queryKey: ['cluster', 'storage-health'],
+    queryFn: getStorageHealth,
+    ...polling,
+  })
+
+  const statistics = useQuery({
+    queryKey: ['cluster', 'statistics'],
+    queryFn: getClusterStatistics,
+    refetchInterval: STATISTICS_REFETCH_MS,
+    refetchIntervalInBackground: false,
+  })
+
+  // The key list fans out per key on the backend, so it is not polled; the
+  // 更新 button refreshes it. Shares the cache with the keys page.
+  const keys = useQuery({ queryKey: ['keys'], queryFn: listKeys })
+
+  const queries = [health, status, storageHealth, statistics, keys]
+  const fetching = queries.some((q) => q.isFetching)
+  // The oldest successful fetch among the polled queries: everything shown
+  // is at least this fresh.
+  const updatedAt = Math.min(
+    ...[health, status, storageHealth, statistics].map((q) => q.dataUpdatedAt || Infinity),
+  )
+  const refreshAll = () => {
+    for (const q of queries) void q.refetch()
+  }
+
+  // GetClusterStatus roles are the current layout's, which is all the
+  // tracker needs (ID + whether the node stores data).
+  const trackerRoles = (status.data?.nodes ?? []).flatMap((n) =>
+    n.role ? [{ id: n.id, capacity: n.role.capacity }] : [],
+  )
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">ダッシュボード</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">ダッシュボード</h1>
+        <div className="flex items-center gap-3">
+          {Number.isFinite(updatedAt) && <UpdatedAgo at={updatedAt} />}
+          <Button variant="outline" size="sm" onClick={refreshAll} disabled={fetching}>
+            <RefreshCw className={`h-4 w-4 ${fetching ? 'animate-spin' : ''}`} aria-hidden />
+            更新
+          </Button>
+        </div>
+      </div>
+
+      {status.data && <LayoutUpdateTracker roles={trackerRoles} compact />}
 
       {health.isLoading ? (
         <HealthSkeleton />
       ) : health.isError ? (
-        <p className="text-destructive">クラスタの状態を読み込めませんでした</p>
+        <p className="text-destructive">
+          クラスタの状態を読み込めませんでした: {health.error.message}
+        </p>
       ) : (
         <HealthCard data={health.data!} />
       )}
+
+      <SummaryCards stats={statistics} keys={keys} />
+
+      <StorageHealthSection query={storageHealth} />
 
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">ノード</h2>
         {status.isLoading ? (
           <NodesSkeleton />
         ) : status.isError ? (
-          <p className="text-destructive">クラスタのステータスを読み込めませんでした</p>
+          <p className="text-destructive">
+            クラスタのステータスを読み込めませんでした: {status.error.message}
+          </p>
         ) : (
           <>
             {/* Mobile: card layout */}

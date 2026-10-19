@@ -938,3 +938,45 @@ export async function deletePrefix(bucket: string, prefix: string): Promise<Batc
     method: 'DELETE',
   })
 }
+
+// Dashboard (#379)
+/**
+ * GET /api/cluster/statistics (Garage GetClusterStatistics, structured since
+ * v2.3.0). totalObjectCount / totalObjectBytes are omitted when the cluster
+ * has more than 1000 buckets. incompleteAvailInfo is true when some storage
+ * nodes did not report their free space, so dataAvail / metadataAvail are
+ * lower bounds.
+ */
+export interface ClusterStatistics {
+  freeform: string
+  dataAvail?: number | null
+  metadataAvail?: number | null
+  incompleteAvailInfo?: boolean
+  bucketCount?: number | null
+  totalObjectCount?: number | null
+  totalObjectBytes?: number | null
+}
+
+export async function getClusterStatistics(): Promise<ClusterStatistics> {
+  return fetchJSON('/cluster/statistics')
+}
+
+/**
+ * One storage node of GET /api/cluster/storage-health. Metrics are null when
+ * the node did not answer (then `error` says why) or its Garage does not
+ * report them. scrubLastCompleted is Garage's string ("never" or a timestamp).
+ */
+export interface StorageNodeHealth {
+  id: string
+  hostname: string | null
+  isUp: boolean
+  resyncQueueLen: number | null
+  resyncErrors: number | null
+  scrubCorruptions: number | null
+  scrubLastCompleted: string | null
+  error?: string
+}
+
+export async function getStorageHealth(): Promise<StorageNodeHealth[]> {
+  return fetchJSON('/cluster/storage-health')
+}
