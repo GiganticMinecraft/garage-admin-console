@@ -12,7 +12,7 @@ import { LocalNameBadge } from '@/components/local-name-badge'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
-import { formatBytes } from '@/lib/format'
+import { formatBytes, formatCount } from '@/lib/format'
 import { toast } from 'sonner'
 import { Copy, Check } from 'lucide-react'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -101,7 +101,7 @@ function BucketDetailPage() {
           <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
             <div>
               <p className="text-muted-foreground">オブジェクト数</p>
-              <p className="font-medium">{data.objects ?? '-'}</p>
+              <p className="font-medium">{formatCount(data.objects)}</p>
             </div>
             <div>
               <p className="text-muted-foreground">サイズ</p>

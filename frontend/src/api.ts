@@ -1079,10 +1079,25 @@ export interface S3Connection {
   endpoint: string
   /** false when GARAGE_S3_PUBLIC_ENDPOINT is unset and `endpoint` may be cluster-internal. */
   publicEndpoint: boolean
+  /**
+   * Access key ID of the console's own S3 key (GARAGE_S3_ACCESS_KEY), which
+   * the object browser uses. Empty when not configured. The secret is never
+   * returned.
+   */
+  accessKeyId?: string
 }
 
 export async function getS3Connection(): Promise<S3Connection> {
   return fetchJSON('/s3/connection')
+}
+
+/**
+ * Grants read + write on the bucket to the console's own S3 key (the one the
+ * object browser uses). The backend always uses its configured key; no key ID
+ * is sent. `changed` is false when the key already had both.
+ */
+export async function grantConsoleAccess(bucketId: string): Promise<SetBucketKeyPermissionsResult> {
+  return fetchJSON(`/buckets/${encodeURIComponent(bucketId)}/console-access`, { method: 'POST' })
 }
 
 // Admin API tokens

@@ -14,6 +14,9 @@ type s3ConnectionInfo struct {
 	// PublicEndpoint is false when GARAGE_S3_PUBLIC_ENDPOINT is unset and the
 	// endpoint is the backend's own (possibly cluster-internal) S3 URL.
 	PublicEndpoint bool `json:"publicEndpoint"`
+	// AccessKeyID is the console's own S3 key (GARAGE_S3_ACCESS_KEY), used by
+	// the object browser. Only the ID is exposed, never the secret.
+	AccessKeyID string `json:"accessKeyId"`
 }
 
 // s3ConnectionInfoFromEnv reads the connection parameters shown to operators.
@@ -22,8 +25,9 @@ type s3ConnectionInfo struct {
 // (s3EndpointFromEnv / s3RegionFromEnv, shared with newS3Client).
 func s3ConnectionInfoFromEnv() s3ConnectionInfo {
 	info := s3ConnectionInfo{
-		Region:   s3RegionFromEnv(),
-		Endpoint: os.Getenv("GARAGE_S3_PUBLIC_ENDPOINT"),
+		Region:      s3RegionFromEnv(),
+		Endpoint:    os.Getenv("GARAGE_S3_PUBLIC_ENDPOINT"),
+		AccessKeyID: consoleKeyIDFromEnv(),
 	}
 	if info.Endpoint != "" {
 		info.PublicEndpoint = true

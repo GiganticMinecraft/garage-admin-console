@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { listBuckets, createBucket, deleteBucket } from '@/api'
+import { listBuckets, createBucket, deleteBucket, grantConsoleAccess } from '@/api'
 import type { BucketListItem } from '@/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
@@ -10,6 +10,7 @@ import { SortableTableHead } from '@/components/sortable-table-head'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import {
   Table,
@@ -26,6 +27,7 @@ import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
 import { useDebouncedValue } from '@/lib/use-debounce'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { refreshAfterConsoleAccess } from '@/hooks/use-console-access'
 
 export const Route = createFileRoute('/buckets/')({
   component: BucketsPage,
@@ -70,6 +72,7 @@ function BucketsPage() {
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [newBucketAlias, setNewBucketAlias] = useState('')
+  const [grantConsole, setGrantConsole] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<BucketListItem | null>(null)
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebouncedValue(search.trim())
@@ -90,14 +93,36 @@ function BucketsPage() {
     return sortRows(filtered, sort, bucketSortValue)
   }, [allBuckets, query, sort])
 
+  // Creating the bucket and granting the console's key are separate Garage
+  // calls. A failed grant does not undo the bucket: it is reported as a
+  // warning and can be retried from the bucket's object browser.
   const createMutation = useMutation({
-    mutationFn: (alias: string) =>
-      createBucket({ globalAlias: alias }),
-    onSuccess: () => {
+    mutationFn: async (v: { alias: string; grantConsole: boolean }) => {
+      const created = await createBucket({ globalAlias: v.alias })
+      const bucketId = typeof created?.id === 'string' ? created.id : undefined
+      if (!v.grantConsole) return { bucketId, grantError: null }
+      if (!bucketId) {
+        return { bucketId, grantError: new Error('作成したバケットの ID を取得できませんでした') }
+      }
+      try {
+        const granted = await grantConsoleAccess(bucketId)
+        refreshAfterConsoleAccess(queryClient, bucketId, granted.accessKeyId)
+        return { bucketId, grantError: null }
+      } catch (e) {
+        return { bucketId, grantError: e instanceof Error ? e : new Error(String(e)) }
+      }
+    },
+    onSuccess: ({ grantError }) => {
       queryClient.invalidateQueries({ queryKey: ['buckets'] })
       setShowCreate(false)
       setNewBucketAlias('')
+      setGrantConsole(true)
       toast.success('バケットを作成しました')
+      if (grantError) {
+        toast.warning(
+          `コンソールのキーへの権限付与に失敗しました: ${grantError.message}。バケット詳細のオブジェクト欄から再度付与できます`,
+        )
+      }
     },
   })
 
@@ -138,7 +163,7 @@ function BucketsPage() {
             />
             <Button
               size="sm"
-              onClick={() => createMutation.mutate(newBucketAlias)}
+              onClick={() => createMutation.mutate({ alias: newBucketAlias, grantConsole })}
               disabled={!newBucketAlias || createMutation.isPending}
             >
               {createMutation.isPending ? '作成中...' : '作成'}
@@ -150,6 +175,17 @@ function BucketsPage() {
             >
               キャンセル
             </Button>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <Checkbox
+              id="create-bucket-grant-console"
+              checked={grantConsole}
+              disabled={createMutation.isPending}
+              onCheckedChange={(checked) => setGrantConsole(checked === true)}
+            />
+            <label htmlFor="create-bucket-grant-console" className="text-sm">
+              コンソールのキーに read/write を付与する
+            </label>
           </div>
           {createMutation.isError && (
             <p className="mt-2 text-sm text-destructive">

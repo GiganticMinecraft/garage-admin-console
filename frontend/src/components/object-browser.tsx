@@ -9,6 +9,7 @@ import {
   downloadObjectUrl,
   downloadObjectsZip,
   getPrefixSummary,
+  grantConsoleAccess,
   listObjects,
   uploadObject,
   type PrefixSummary,
@@ -24,7 +25,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useConsoleKey, refreshAfterConsoleAccess } from '@/hooks/use-console-access'
 import { formatBytes, formatDateTime } from '@/lib/format'
+import { emptyObjectsMessage, isConsoleKeyAccessDenied } from '@/lib/object-browser'
 import { toast } from 'sonner'
 import { ArrowDown, ArrowUp, ArrowUpDown, Folder, FolderUp } from 'lucide-react'
 
@@ -651,6 +654,26 @@ export function ObjectBrowser({
   })
   const tooManyForZip = selectedKeys.size > MAX_BATCH_DOWNLOAD_KEYS
 
+  // --- Console key without access to this bucket ---------------------------
+  const accessDenied = objects.isError && isConsoleKeyAccessDenied(objects.error)
+  const consoleKey = useConsoleKey(accessDenied)
+  const [consoleAccessOpen, setConsoleAccessOpen] = useState(false)
+  const consoleAccessMutation = useMutation({
+    mutationFn: () => grantConsoleAccess(bucketId),
+    onSuccess: (result) => {
+      toast.success(
+        result.changed
+          ? 'コンソールのキーに read / write を付与しました'
+          : 'コンソールのキーには既に read / write があります',
+      )
+    },
+    onError: (error) => {
+      toast.error(`コンソールのキーへの権限付与に失敗しました: ${error.message}`)
+    },
+    onSettled: (result) =>
+      refreshAfterConsoleAccess(queryClient, bucketId, result?.accessKeyId ?? consoleKey.accessKeyId),
+  })
+
   return (
     <div className="space-y-2">
       <h2 className="text-lg font-semibold">オブジェクト</h2>
@@ -720,7 +743,7 @@ export function ObjectBrowser({
         <Button
           variant="link"
           size="sm"
-          className="flex h-auto items-center gap-1.5 p-0"
+          className="flex h-auto max-w-full items-center justify-start gap-1.5 p-0"
           onClick={() => goToPrefix(parentPrefix(prefix))}
         >
           <FolderUp className="h-4 w-4" />
@@ -732,16 +755,32 @@ export function ObjectBrowser({
           key={p}
           variant="link"
           size="sm"
-          className="flex h-auto items-center gap-1.5 p-0"
+          className="flex h-auto max-w-full items-start justify-start gap-1.5 p-0 text-left whitespace-normal"
           onClick={() => goToPrefix(p)}
         >
-          <Folder className="h-4 w-4" />
-          {p}
+          <Folder className="mt-0.5 h-4 w-4" />
+          <span className="min-w-0 break-all">{p}</span>
         </Button>
       ))}
 
       {objects.isLoading ? (
         <p className="text-muted-foreground">オブジェクトを読み込み中...</p>
+      ) : accessDenied ? (
+        <div className="space-y-2 rounded-lg border border-amber-500/50 bg-amber-500/5 p-4 text-sm">
+          <p className="font-medium">
+            コンソールのキー（<span className="break-all">{consoleKey.label}</span>）にこのバケットの権限がありません
+          </p>
+          <p className="text-muted-foreground">
+            オブジェクトの一覧・アップロード・ダウンロードには、コンソールが使う S3 キーにこのバケットの read / write 権限が必要です。
+          </p>
+          <Button
+            size="sm"
+            onClick={() => setConsoleAccessOpen(true)}
+            disabled={consoleAccessMutation.isPending}
+          >
+            コンソールのキーに read/write を付与
+          </Button>
+        </div>
       ) : objects.isError ? (
         <p className="text-destructive">
           オブジェクトの読み込みに失敗しました: {objects.error.message}
@@ -817,7 +856,7 @@ export function ObjectBrowser({
               {sortedObjects.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                    オブジェクトがありません
+                    {emptyObjectsMessage(allPrefixes.length)}
                   </TableCell>
                 </TableRow>
               )}
@@ -842,6 +881,18 @@ export function ObjectBrowser({
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={consoleAccessOpen}
+        onOpenChange={setConsoleAccessOpen}
+        title="コンソールのキーに権限を付与"
+        description={`コンソールのキー（${consoleKey.label}）に「${bucketName ?? bucketId}」の read / write 権限を付与しますか？owner 権限は付与しません。権限は「キーの権限」からいつでも変更・取り消しできます。`}
+        onConfirm={() => consoleAccessMutation.mutateAsync()}
+        isPending={consoleAccessMutation.isPending}
+        confirmLabel="付与"
+        pendingLabel="付与中..."
+        confirmVariant="default"
+      />
 
       <ConfirmDialog
         open={deleteObjectTarget !== null}
