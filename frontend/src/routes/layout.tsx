@@ -55,60 +55,96 @@ function shortId(id: string): string {
   return `${id.slice(0, 16)}…`
 }
 
-/** One row of the edit form. Capacity is edited in GiB; empty means gateway. */
-interface RoleDraft {
-  id: string
-  hostname: string | null
-  isUp: boolean
-  current: LayoutNodeRole | null
+/** The editable fields of a row, as strings so "unchanged" can be detected exactly. */
+interface RoleFields {
   zone: string
   capacityGiB: string
   tags: string
+}
+
+/**
+ * One row of the edit form. Capacity is edited in GiB; empty means gateway.
+ * `effective` is what the next layout version would contain for this node
+ * (a staged change wins over the applied role), `original` is the form state
+ * derived from it so a row only counts as changed when the operator edited it.
+ */
+interface RoleDraft extends RoleFields {
+  id: string
+  hostname: string | null
+  isUp: boolean
+  /** Role in the applied layout, if any. */
+  applied: LayoutNodeRole | null
+  /** Role after staged changes: null when unassigned or staged for removal. */
+  effective: Pick<LayoutNodeRole, 'zone' | 'tags' | 'capacity'> | null
+  original: RoleFields
   remove: boolean
 }
 
+function capacityToGiB(capacity: number | null): string {
+  return capacity != null ? String(Math.round((capacity / GIB) * 100) / 100) : ''
+}
+
 function draftFromNode(
-  node: Pick<ClusterNode, 'id' | 'hostname' | 'isUp' | 'role'>,
-  role: LayoutNodeRole | undefined,
+  node: Pick<ClusterNode, 'id' | 'hostname' | 'isUp'>,
+  applied: LayoutNodeRole | undefined,
+  staged: NodeRoleChange | undefined,
 ): RoleDraft {
+  const stagedRemove = staged != null && 'remove' in staged
+  const effective = stagedRemove ? null : (staged ?? applied ?? null)
+  const fields: RoleFields = {
+    zone: effective?.zone ?? applied?.zone ?? '',
+    capacityGiB: capacityToGiB(effective?.capacity ?? applied?.capacity ?? null),
+    tags: (effective?.tags ?? applied?.tags ?? []).join(', '),
+  }
   return {
     id: node.id,
     hostname: node.hostname,
     isUp: node.isUp,
-    current: role ?? null,
-    zone: role?.zone ?? node.role?.zone ?? '',
-    capacityGiB: role?.capacity != null ? String(Math.round((role.capacity / GIB) * 100) / 100) : '',
-    tags: role?.tags.join(', ') ?? '',
-    remove: false,
+    applied: applied ?? null,
+    effective,
+    original: fields,
+    ...fields,
+    remove: stagedRemove,
   }
 }
 
-/** Convert a draft to the change Garage expects, or null when nothing changed. */
+function parseTags(s: string): string[] {
+  return s.split(',').map((t) => t.trim()).filter(Boolean)
+}
+
+/**
+ * Convert a draft to the change Garage expects, or null when the operator did
+ * not touch the row. Comparison is on the form strings, not on bytes
+ * re-derived from a rounded GiB value, so untouched rows never re-stage.
+ */
 function draftToChange(d: RoleDraft): NodeRoleChange | null | Error {
+  const name = d.hostname ?? shortId(d.id)
+  const wasRemoved = d.effective == null && d.applied != null
   if (d.remove) {
-    return d.current ? { id: d.id, remove: true } : null
+    if (wasRemoved) return null // already staged for removal
+    return d.applied ? { id: d.id, remove: true } : null
   }
+  const untouched =
+    d.zone === d.original.zone && d.capacityGiB === d.original.capacityGiB && d.tags === d.original.tags
+  if (untouched && !wasRemoved) return null
+  if (untouched && wasRemoved && !d.zone.trim()) return null
+
   const zone = d.zone.trim()
-  const tags = d.tags.split(',').map((t) => t.trim()).filter(Boolean)
+  const tags = parseTags(d.tags)
   let capacity: number | null = null
   if (d.capacityGiB.trim() !== '') {
     const n = Number(d.capacityGiB)
     if (!Number.isFinite(n) || n <= 0) {
-      return new Error(`${d.hostname ?? shortId(d.id)}: 容量は正の数 (GiB) で入力してください`)
+      return new Error(`${name}: 容量は正の数 (GiB) で入力してください`)
     }
     capacity = Math.round(n * GIB)
   }
-  if (!d.current) {
-    // Node without a role: only a change if the operator filled in a zone.
-    if (!zone) return null
-    return { id: d.id, zone, tags, capacity }
+  if (!zone) {
+    // Node that has no role and was left blank: nothing to stage.
+    if (!d.effective && !d.applied) return null
+    return new Error(`${name}: ゾーンは必須です`)
   }
-  if (!zone) return new Error(`${d.hostname ?? shortId(d.id)}: ゾーンは必須です`)
-  const same =
-    zone === d.current.zone &&
-    capacity === d.current.capacity &&
-    tags.join(',') === d.current.tags.join(',')
-  return same ? null : { id: d.id, zone, tags, capacity }
+  return { id: d.id, zone, tags, capacity }
 }
 
 function LayoutPage() {
@@ -119,7 +155,6 @@ function LayoutPage() {
   const [redundancyN, setRedundancyN] = useState('1')
   const [showApply, setShowApply] = useState(false)
   const [showRevert, setShowRevert] = useState(false)
-  const [preview, setPreview] = useState<string[] | null>(null)
 
   const layout = useQuery({ queryKey: ['cluster', 'layout'], queryFn: getClusterLayout })
   const status = useQuery({ queryKey: ['cluster', 'status'], queryFn: getClusterStatus })
@@ -131,10 +166,16 @@ function LayoutPage() {
   }, [status.data])
   const nameOf = (id: string) => hostnames.get(id) ?? shortId(id)
 
+  const previewMutation = useMutation({
+    mutationFn: previewLayout,
+    onError: (error) => toast.error(`プレビューに失敗しました: ${error.message}`),
+  })
+
+  // Any change to the staged set makes a previous preview stale.
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['cluster', 'layout'] })
     queryClient.invalidateQueries({ queryKey: ['cluster', 'status'] })
-    setPreview(null)
+    previewMutation.reset()
   }
 
   const stageMutation = useMutation({
@@ -145,15 +186,6 @@ function LayoutPage() {
       toast.success('変更をステージしました。プレビューで確認してから適用してください。')
     },
     onError: (error) => toast.error(`ステージに失敗しました: ${error.message}`),
-  })
-
-  const previewMutation = useMutation({
-    mutationFn: previewLayout,
-    onSuccess: (res) => setPreview(res.message),
-    onError: (error) => {
-      setPreview(null)
-      toast.error(`プレビューに失敗しました: ${error.message}`)
-    },
   })
 
   const applyMutation = useMutation({
@@ -179,13 +211,14 @@ function LayoutPage() {
   const startEditing = () => {
     if (!data) return
     const roleById = new Map(data.roles.map((r) => [r.id, r]))
+    const stagedById = new Map(data.stagedRoleChanges.map((c) => [c.id, c]))
     const nodes = status.data?.nodes ?? []
     const known = new Set(nodes.map((n) => n.id))
-    const rows = nodes.map((n) => draftFromNode(n, roleById.get(n.id)))
-    // Roles for nodes the status endpoint does not know about (e.g. gone) still need to be editable.
-    for (const r of data.roles) {
-      if (!known.has(r.id)) {
-        rows.push(draftFromNode({ id: r.id, hostname: null, isUp: false, role: null }, r))
+    const rows = nodes.map((n) => draftFromNode(n, roleById.get(n.id), stagedById.get(n.id)))
+    // Roles or staged changes for nodes the status endpoint does not know about (e.g. gone) stay editable.
+    for (const id of new Set([...roleById.keys(), ...stagedById.keys()])) {
+      if (!known.has(id)) {
+        rows.push(draftFromNode({ id, hostname: null, isUp: false }, roleById.get(id), stagedById.get(id)))
       }
     }
     setDrafts(rows)
@@ -210,8 +243,15 @@ function LayoutPage() {
       if (c) roles.push(c)
     }
     const currentZ = data.stagedParameters?.zoneRedundancy ?? data.parameters.zoneRedundancy
-    const nextZ: ZoneRedundancy =
-      redundancy === 'maximum' ? 'maximum' : { atLeast: Math.max(1, Number(redundancyN) || 1) }
+    let nextZ: ZoneRedundancy = 'maximum'
+    if (redundancy === 'atLeast') {
+      const n = Number(redundancyN)
+      if (!Number.isInteger(n) || n < 1) {
+        toast.error('ゾーン冗長性 (atLeast) は 1 以上の整数で入力してください')
+        return
+      }
+      nextZ = { atLeast: n }
+    }
     const zChanged = JSON.stringify(currentZ) !== JSON.stringify(nextZ)
     if (roles.length === 0 && !zChanged) {
       toast.info('変更はありません')
@@ -224,8 +264,10 @@ function LayoutPage() {
   }
 
   const staged = data?.stagedRoleChanges ?? []
-  const hasStaged = staged.length > 0 || (data?.stagedParameters != null)
+  const stagedCount = staged.length + (data?.stagedParameters ? 1 : 0)
+  const hasStaged = stagedCount > 0
   const nextVersion = (data?.version ?? 0) + 1
+  const preview = previewMutation.data?.message ?? null
 
   return (
     <div className="space-y-6">
@@ -272,7 +314,7 @@ function LayoutPage() {
                 <p className="text-muted-foreground">保留中の変更</p>
                 <p className="font-medium">
                   {hasStaged
-                    ? <Badge variant="destructive">{staged.length} 件保留中</Badge>
+                    ? <Badge variant="destructive">{stagedCount} 件保留中</Badge>
                     : <span className="text-muted-foreground">なし</span>}
                 </p>
               </div>
@@ -360,7 +402,10 @@ function LayoutPage() {
                             <div>
                               <div className="font-medium">{d.hostname ?? shortId(d.id)}</div>
                               <div className="font-mono text-xs text-muted-foreground">{shortId(d.id)}</div>
-                              {!d.current && <Badge variant="outline" className="mt-1">ロール未割当</Badge>}
+                              {!d.applied && !d.effective && <Badge variant="outline" className="mt-1">ロール未割当</Badge>}
+                              {d.applied && d.effective == null && !d.remove && <Badge variant="destructive" className="mt-1">削除をステージ中</Badge>}
+                              {d.effective && d.applied && d.effective !== d.applied && <Badge variant="secondary" className="mt-1">変更をステージ中</Badge>}
+                              {d.effective && !d.applied && <Badge variant="default" className="mt-1">追加をステージ中</Badge>}
                             </div>
                           </div>
                         </TableCell>
@@ -394,7 +439,7 @@ function LayoutPage() {
                           />
                         </TableCell>
                         <TableCell>
-                          {d.current && (
+                          {(d.applied || d.effective) && (
                             <input
                               type="checkbox"
                               className="rounded"

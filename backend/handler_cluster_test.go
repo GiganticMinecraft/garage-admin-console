@@ -93,18 +93,30 @@ func TestLayoutWorkflowIntegration(t *testing.T) {
 	}
 
 	_, layout := call(http.MethodGet, "/api/cluster/layout", "")
-	roles := layout["roles"].([]any)
-	if len(roles) == 0 {
-		t.Skip("cluster has no applied layout")
+	roles, _ := layout["roles"].([]any)
+	// Pick the first storage node; gateway roles have capacity null.
+	var role map[string]any
+	for _, r := range roles {
+		if m, ok := r.(map[string]any); ok {
+			if _, ok := m["capacity"].(float64); ok {
+				role = m
+				break
+			}
+		}
 	}
-	role := roles[0].(map[string]any)
+	if role == nil {
+		t.Skip("cluster has no applied storage role")
+	}
 	nodeID := role["id"].(string)
+	zone := role["zone"].(string)
 	origCap := role["capacity"].(float64)
 	version := layout["version"].(float64)
+	// Preserve the node's tags so the test leaves the cluster as it found it.
+	tags, _ := json.Marshal(role["tags"])
 
 	stage := func(capacity float64) {
 		t.Helper()
-		body := fmt.Sprintf(`{"roles":[{"id":%q,"zone":%q,"capacity":%d,"tags":[]}]}`, nodeID, role["zone"].(string), int64(capacity))
+		body := fmt.Sprintf(`{"roles":[{"id":%q,"zone":%q,"capacity":%d,"tags":%s}]}`, nodeID, zone, int64(capacity), tags)
 		if code, out := call(http.MethodPost, "/api/cluster/layout/stage", body); code != http.StatusOK {
 			t.Fatalf("stage: %d %v", code, out)
 		}

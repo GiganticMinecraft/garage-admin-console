@@ -39,7 +39,6 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 			r.Get("/health", handleClusterHealth(garageAdmin))
 			r.Get("/status", handleClusterStatus(garageAdmin))
 			r.Get("/layout", handleClusterLayout(garageAdmin))
-			r.Post("/layout", handleApplyLayout(garageAdmin)) // legacy alias of /layout/apply
 			r.Post("/layout/stage", handleStageLayout(garageAdmin))
 			r.Post("/layout/preview", handlePreviewLayout(garageAdmin))
 			r.Post("/layout/apply", handleApplyLayout(garageAdmin))

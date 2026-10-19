@@ -67,28 +67,8 @@ func handleRevertLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return proxyGaragePOST(garageAdmin, "/v2/RevertClusterLayout")
 }
 
-// handleApplyLayout proxies POST /api/cluster/layout/apply (and the legacy
-// POST /api/cluster/layout) to Garage POST /v2/ApplyClusterLayout.
+// handleApplyLayout proxies POST /api/cluster/layout/apply to Garage POST /v2/ApplyClusterLayout.
 // The request body ({"version": n}) is forwarded as-is.
 func handleApplyLayout(garageAdmin *GarageAdminClient) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		const garagePath = "/v2/ApplyClusterLayout"
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		ct := resp.Header.Get("Content-Type")
-		if ct == "" {
-			ct = "application/json"
-		}
-		w.Header().Set("Content-Type", ct)
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
-		}
-	}
+	return proxyGaragePOST(garageAdmin, "/v2/ApplyClusterLayout")
 }

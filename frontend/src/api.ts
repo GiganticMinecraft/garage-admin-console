@@ -202,6 +202,7 @@ export async function previewLayout(): Promise<LayoutPreview> {
     body: '{}',
   })
   // Garage returns 200 with {"error": "..."} when the layout cannot be computed.
+  if (!res || typeof res !== 'object') throw new ApiError(200, 'プレビュー結果が空でした')
   if ('error' in res) throw new ApiError(200, res.error)
   return res
 }
