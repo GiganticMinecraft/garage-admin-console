@@ -15,9 +15,15 @@ const (
 	healthNodeB = "bbbb000000000000000000000000000000000000000000000000000000000002"
 )
 
-// fakeHealthGarage serves the two fan-out endpoints with the given
-// bodies/statuses and counts the calls to each.
+// fakeHealthGarage serves the fan-out endpoints with the given
+// bodies/statuses (ListWorkers answers with no workers) and counts the calls.
 func fakeHealthGarage(t *testing.T, statsStatus int, statsBody string, varsStatus int, varsBody string) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	return fakeHealthGarageWithWorkers(t, statsStatus, statsBody, varsStatus, varsBody, http.StatusOK, `{"success":{},"error":{}}`)
+}
+
+// fakeHealthGarageWithWorkers is fakeHealthGarage with a ListWorkers answer.
+func fakeHealthGarageWithWorkers(t *testing.T, statsStatus int, statsBody string, varsStatus int, varsBody string, workersStatus int, workersBody string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
 	mux := http.NewServeMux()
@@ -43,6 +49,16 @@ func fakeHealthGarage(t *testing.T, statsStatus int, statsBody string, varsStatu
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(varsStatus)
 		w.Write([]byte(varsBody))
+	})
+	mux.HandleFunc("/v2/ListWorkers", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Method != http.MethodPost || r.URL.Query().Get("node") != "*" {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(workersStatus)
+		w.Write([]byte(workersBody))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -151,8 +167,59 @@ func TestStorageHealthIsCached(t *testing.T) {
 	)
 	getStorageHealth(t, garage.URL)
 	getStorageHealth(t, garage.URL)
-	if n := calls.Load(); n != 2 {
-		t.Errorf("upstream calls = %d, want 2 (one fan-out of two requests, then cached)", n)
+	if n := calls.Load(); n != 3 {
+		t.Errorf("upstream calls = %d, want 3 (one fan-out of three requests, then cached)", n)
+	}
+}
+
+func TestStorageHealthScrubWorker(t *testing.T) {
+	const okStats = `{"freeform":"","blockManagerStats":{"rcEntries":0,"resyncQueueLen":0,"resyncErrors":0}}`
+	const okVars = `{"scrub-corruptions_detected":"5","scrub-last-completed":"never"}`
+	garage, _ := fakeHealthGarageWithWorkers(t,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":`+okStats+`,"`+healthNodeB+`":`+okStats+`},"error":{}}`,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":`+okVars+`,"`+healthNodeB+`":`+okVars+`},"error":{}}`,
+		http.StatusOK, `{"success":{
+			"`+healthNodeA+`":[
+				{"id":1,"name":"Block resync worker #1","state":"idle","errors":0,"consecutiveErrors":0,"freeform":[]},
+				{"id":2,"name":"Block scrub worker","state":{"throttled":{"durationSecs":0.5}},"errors":0,"consecutiveErrors":0,"tranquility":4,"progress":"12.50%","persistentErrors":5,"freeform":[]}
+			],
+			"`+healthNodeB+`":[
+				{"id":1,"name":"Block resync worker #1","state":"busy","errors":0,"consecutiveErrors":0,"freeform":[]}
+			]},"error":{}}`,
+	)
+	got := getStorageHealth(t, garage.URL)
+	a, b := got.Nodes[healthNodeA], got.Nodes[healthNodeB]
+	if a == nil || a.Scrub == nil || a.Scrub.State != "throttled" || a.Scrub.Progress == nil || *a.Scrub.Progress != "12.50%" ||
+		a.Scrub.Tranquility == nil || *a.Scrub.Tranquility != 4 || a.Error != "" {
+		t.Errorf("node a = %+v scrub = %+v", a, a.Scrub)
+	}
+	// No scrub worker listed: null, and not an error.
+	if b == nil || b.Scrub != nil || b.Error != "" {
+		t.Errorf("node b = %+v", b)
+	}
+}
+
+func TestStorageHealthScrubWorkerIdleAndFanOutFailure(t *testing.T) {
+	const stats = `{"success":{"` + healthNodeA + `":{"freeform":"","blockManagerStats":{"rcEntries":0,"resyncQueueLen":0,"resyncErrors":0}}},"error":{}}`
+	const vars = `{"success":{"` + healthNodeA + `":{"scrub-corruptions_detected":"0"}},"error":{}}`
+	garage, _ := fakeHealthGarageWithWorkers(t, http.StatusOK, stats, http.StatusOK, vars,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":[{"id":3,"name":"Block scrub worker","state":"idle","errors":0,"consecutiveErrors":0,"tranquility":2,"freeform":["Last scrub completed at x"]}]},"error":{}}`)
+	got := getStorageHealth(t, garage.URL)
+	if s := got.Nodes[healthNodeA].Scrub; s == nil || s.State != "idle" || s.Progress != nil {
+		t.Errorf("scrub = %+v", s)
+	}
+	raw, _ := json.Marshal(got.Nodes[healthNodeA].Scrub)
+	if strings.Contains(string(raw), "progress") {
+		t.Errorf("progress should be omitted when absent: %s", raw)
+	}
+
+	// A new fake has a new URL, so the cache (keyed by base URL) misses.
+	garage, _ = fakeHealthGarageWithWorkers(t, http.StatusOK, stats, http.StatusOK, vars,
+		http.StatusInternalServerError, `{"code":"InternalError","message":"boom"}`)
+	got = getStorageHealth(t, garage.URL)
+	a := got.Nodes[healthNodeA]
+	if got.WorkersError != workersUnavailableMsg+": boom" || a.Scrub != nil || a.Error != "" || a.ScrubCorruptions == nil {
+		t.Errorf("got %+v node a = %+v", got, a)
 	}
 }
 

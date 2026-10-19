@@ -982,14 +982,28 @@ export async function getClusterStatistics(): Promise<ClusterStatistics> {
  * Per-node block health from GET /api/cluster/storage-health. Metrics are
  * null when the node did not answer (then `error` says why) or its Garage
  * does not report them. scrubLastCompleted is Garage's string ("never" or an
- * RFC 3339 timestamp).
+ * RFC 3339 timestamp). scrubCorruptions is a lifetime counter Garage persists
+ * and never resets: only an increase is news.
  */
 export interface NodeStorageHealth {
   resyncQueueLen: number | null
   resyncErrors: number | null
   scrubCorruptions: number | null
   scrubLastCompleted: string | null
+  /** The node's "Block scrub worker", or null when ListWorkers did not report it. */
+  scrub: ScrubWorkerStatus | null
   error?: string
+}
+
+/**
+ * Live scrub worker state. state is "busy" / "idle" / "done" / "throttled"
+ * (Garage's throttled object flattened); progress is Garage's percentage
+ * string ("42.00%"), present while a scrub runs or is paused.
+ */
+export interface ScrubWorkerStatus {
+  state: string
+  progress?: string
+  tranquility?: number
 }
 
 /**
@@ -1002,6 +1016,8 @@ export interface StorageHealth {
   nodes: Record<string, NodeStorageHealth>
   statsError?: string
   varsError?: string
+  /** ListWorkers fan-out failed; every node's scrub is null. */
+  workersError?: string
 }
 
 export async function getStorageHealth(): Promise<StorageHealth> {

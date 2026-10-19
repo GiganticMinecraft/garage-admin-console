@@ -283,7 +283,7 @@ const TUNABLE_VARIABLES: TunableVariable[] = [
 const READONLY_VARIABLES: { name: string; label: string }[] = [
   { name: 'scrub-last-completed', label: 'Scrub 最終完了' },
   { name: 'scrub-next-run', label: 'Scrub 次回予定' },
-  { name: 'scrub-corruptions_detected', label: 'Scrub 破損検出数' },
+  { name: 'scrub-corruptions_detected', label: 'Scrub 破損検出数 (累積)' },
   { name: 'lifecycle-last-completed', label: 'ライフサイクル最終完了' },
 ]
 
@@ -433,13 +433,8 @@ function WorkerVariablesCard({ nodeId, vars }: { nodeId: string; vars: WorkerVar
       <div className="grid grid-cols-2 gap-3 border-t pt-4 md:grid-cols-4">
         {READONLY_VARIABLES.filter((v) => vars[v.name] !== undefined).map((v) => (
           <Field key={v.name} label={v.label}>
-            <span
-              className={
-                v.name === 'scrub-corruptions_detected' && vars[v.name] !== '0' ? 'text-destructive' : undefined
-              }
-            >
-              {formatVariableValue(v.name, vars[v.name])}
-            </span>
+            {/* scrub-corruptions_detected is a lifetime counter: not colored as a current problem. */}
+            <span>{formatVariableValue(v.name, vars[v.name])}</span>
           </Field>
         ))}
         {others.map(([k, v]) => (
