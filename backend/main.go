@@ -113,8 +113,6 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 			r.Get("/workers", handleListNodeWorkers(garageAdmin))
 		})
 
-		r.Get("/api/metrics", handleMaintenanceMetrics(garageAdmin))
-
 		r.Get("/api/s3/connection", handleS3Connection())
 	})
 

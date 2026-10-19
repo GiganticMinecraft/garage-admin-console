@@ -20,7 +20,7 @@ import {
 const StorageCharts = lazy(() => import('@/components/storage-charts'))
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
 import { formatBytes, formatCount, formatDateTime, formatUsage, usagePercent } from '@/lib/format'
-import { nodeDisplayName } from '@/lib/nodes'
+import { isStorageNode, nodeDisplayName } from '@/lib/nodes'
 import { describeState } from '@/lib/workers'
 import { pollEvery } from '@/lib/polling'
 import { RefreshIndicator } from '@/components/refresh-indicator'
@@ -556,14 +556,6 @@ function ScrubStatusRow({ h }: { h: NodeStorageHealth }) {
   )
 }
 
-/**
- * Nodes that hold blocks: a current role with capacity, or draining (role
- * removed in a newer layout but still holding data, which is exactly when
- * its resync queue matters).
- */
-function isStorageNode(node: ClusterNode): boolean {
-  return node.role ? node.role.capacity != null : node.draining
-}
 
 /** Error text for one node: its own error, else the failed fan-out(s), else "no answer". */
 function nodeHealthError(health: StorageHealth, node: ClusterNode): string | undefined {

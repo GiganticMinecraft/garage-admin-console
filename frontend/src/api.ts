@@ -740,8 +740,33 @@ export interface PurgeBlocksResult {
   versionsDeleted: number
 }
 
-export async function listBlockErrors(): Promise<BlockError[]> {
-  return fetchJSON('/blocks/errors')
+/**
+ * GET /api/blocks/errors. `items` holds the block errors of every node that
+ * answered; `checkedNodes` the nodes whose answer was read completely;
+ * `nodeErrors` maps each node that did not answer (or answered something
+ * unreadable) to the reason. Empty items mean "no block errors" only when
+ * nodeErrors is empty and checkedNodes is not.
+ */
+export interface BlockErrorsResponse {
+  items: BlockError[]
+  checkedNodes: string[]
+  nodeErrors: Record<string, string>
+}
+
+export async function listBlockErrors(): Promise<BlockErrorsResponse> {
+  return normalizeBlockErrors(await fetchJSON<unknown>('/blocks/errors'))
+}
+
+/**
+ * Accepts the pre-#400 bare array as well, so a new bundle served by an old
+ * backend during a rollout still renders. The array says nothing about which
+ * nodes were checked, so checkedNodes stays empty (the UI then refuses to
+ * call it "no errors").
+ */
+export function normalizeBlockErrors(data: unknown): BlockErrorsResponse {
+  if (Array.isArray(data)) return { items: data as BlockError[], checkedNodes: [], nodeErrors: {} }
+  const d = (data ?? {}) as Partial<BlockErrorsResponse>
+  return { items: d.items ?? [], checkedNodes: d.checkedNodes ?? [], nodeErrors: d.nodeErrors ?? {} }
 }
 
 export async function getBlockInfo(blockHash: string): Promise<MultiResponse<BlockInfo>> {
@@ -789,23 +814,6 @@ export async function launchRepair(
     method: 'POST',
     body: JSON.stringify({ repairType }),
   })
-}
-
-// Maintenance metrics for the repair page.
-// resyncQueueLength / resyncErroredBlocks are summed over every node that
-// answered GetNodeStatistics; `nodes` has the breakdown and `nodeErrors` the
-// nodes that could not be reached. corruptionCounter comes from the admin
-// endpoint node's /metrics only and is null when unavailable.
-export interface MaintenanceMetrics {
-  resyncQueueLength: number
-  resyncErroredBlocks: number
-  corruptionCounter: number | null
-  nodes: { nodeId: string; resyncQueueLen: number; resyncErrors: number }[]
-  nodeErrors: Record<string, string>
-}
-
-export async function getMaintenanceMetrics(): Promise<MaintenanceMetrics> {
-  return fetchJSON('/metrics')
 }
 
 // Enriched bucket / key lists (#380)
@@ -994,7 +1002,14 @@ export interface NodeStorageHealth {
   scrubLastCompleted: string | null
   /** The node's "Block scrub worker", or null when ListWorkers did not report it. */
   scrub: ScrubWorkerStatus | null
+  /** Every problem of the node, joined and prefixed by fan-out. */
   error?: string
+  /** The same problems split by source: resync stats (GetNodeStatistics). */
+  statsError?: string
+  /** Scrub variables (GetWorkerVariable). */
+  varsError?: string
+  /** Scrub worker state (ListWorkers). */
+  workersError?: string
 }
 
 /**

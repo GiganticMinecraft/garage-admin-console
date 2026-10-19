@@ -310,3 +310,46 @@ func TestStorageHealthIntegration(t *testing.T) {
 		t.Errorf("statistics status = %d body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Empty MultiResponses observed no node: the answer must say so (no nodes,
+// no fan-out error) so the repair page can show "判定不可" instead of 0.
+func TestStorageHealthEmptyFanOutHasNoNodes(t *testing.T) {
+	garage, _ := fakeHealthGarage(t,
+		http.StatusOK, `{"success":{},"error":{}}`,
+		http.StatusOK, `{"success":{},"error":{}}`,
+	)
+	got := getStorageHealth(t, garage.URL)
+	if len(got.Nodes) != 0 || got.StatsError != "" || got.VarsError != "" || got.WorkersError != "" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+// The repair page reads resync stats from storage-health; /api/metrics is gone.
+func TestMaintenanceMetricsEndpointRemoved(t *testing.T) {
+	garage, _ := fakeHealthGarage(t, http.StatusOK, `{"success":{},"error":{}}`, http.StatusOK, `{"success":{},"error":{}}`)
+	rec := newNodeTestClient(t, garage.URL).do(http.MethodGet, "/api/metrics", "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /api/metrics status = %d, want 404", rec.Code)
+	}
+}
+
+// Per-node problems are also split by fan-out, so a card about one metric
+// can cite only the reason that concerns it.
+func TestStorageHealthSplitsNodeErrorsByFanOut(t *testing.T) {
+	garage, _ := fakeHealthGarageWithWorkers(t,
+		http.StatusOK, `{"success":{"`+healthNodeA+`":{"blockManagerStats":{"resyncQueueLen":1,"resyncErrors":0}}},"error":{"`+healthNodeB+`":"stats down"}}`,
+		http.StatusOK, `{"success":{"`+healthNodeB+`":{"scrub-corruptions_detected":"2"}},"error":{"`+healthNodeA+`":"vars down"}}`,
+		http.StatusOK, `{"success":{},"error":{"`+healthNodeA+`":"workers down"}}`,
+	)
+	got := getStorageHealth(t, garage.URL)
+	a, b := mustHealthNode(t, got, healthNodeA), mustHealthNode(t, got, healthNodeB)
+	if a.StatsError != "" || a.VarsError != "vars down" || a.WorkersError != "workers down" {
+		t.Errorf("a = %+v", a)
+	}
+	if b.StatsError != "stats down" || b.VarsError != "" || b.WorkersError != "" {
+		t.Errorf("b = %+v", b)
+	}
+	if !strings.Contains(a.Error, "worker 変数: vars down") || !strings.Contains(a.Error, "worker 一覧: workers down") {
+		t.Errorf("combined error = %q", a.Error)
+	}
+}
