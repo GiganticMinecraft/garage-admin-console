@@ -9,10 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// handleListKeys proxies GET /api/keys to Garage GET /v2/ListKeys.
-func handleListKeys(garageAdmin *GarageAdminClient) http.HandlerFunc {
-	return proxyGarageGET(garageAdmin, "/v2/ListKeys")
-}
+// handleListKeys (GET /api/keys) lives in handler_lists.go.
 
 // handleCreateKey proxies POST /api/keys to Garage POST /v2/CreateKey.
 func handleCreateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
@@ -31,6 +28,9 @@ func handleCreateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		ct := resp.Header.Get("Content-Type")
 		if ct == "" {
 			ct = "application/json"
+		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
 		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
@@ -64,6 +64,9 @@ func handleGetKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		if ct == "" {
 			ct = "application/json"
 		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
+		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
@@ -90,6 +93,9 @@ func handleUpdateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		if ct == "" {
 			ct = "application/json"
 		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
+		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
@@ -114,6 +120,9 @@ func handleDeleteKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		ct := resp.Header.Get("Content-Type")
 		if ct == "" {
 			ct = "application/json"
+		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
 		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)

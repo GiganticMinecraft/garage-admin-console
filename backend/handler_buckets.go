@@ -10,10 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// handleListBuckets proxies GET /api/buckets to Garage GET /v2/ListBuckets.
-func handleListBuckets(garageAdmin *GarageAdminClient) http.HandlerFunc {
-	return proxyGarageGET(garageAdmin, "/v2/ListBuckets")
-}
+// handleListBuckets (GET /api/buckets) lives in handler_lists.go.
 
 // handleCreateBucket proxies POST /api/buckets to Garage POST /v2/CreateBucket.
 func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
@@ -30,6 +27,9 @@ func handleCreateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		ct := resp.Header.Get("Content-Type")
 		if ct == "" {
 			ct = "application/json"
+		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
 		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
@@ -56,6 +56,9 @@ func handleGetBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		if ct == "" {
 			ct = "application/json"
 		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
+		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
@@ -81,6 +84,9 @@ func handleUpdateBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		if ct == "" {
 			ct = "application/json"
 		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
+		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
@@ -105,6 +111,9 @@ func handleDeleteBucket(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		ct := resp.Header.Get("Content-Type")
 		if ct == "" {
 			ct = "application/json"
+		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
 		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
@@ -145,6 +154,9 @@ func handleGrantBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		ct := resp.Header.Get("Content-Type")
 		if ct == "" {
 			ct = "application/json"
+		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
 		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
@@ -189,6 +201,9 @@ func handleRevokeBucketKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		ct := resp.Header.Get("Content-Type")
 		if ct == "" {
 			ct = "application/json"
+		}
+		if resp.StatusCode < 300 && r.Method != http.MethodGet {
+			invalidateListCaches()
 		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(resp.StatusCode)
