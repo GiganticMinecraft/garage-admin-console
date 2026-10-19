@@ -23,8 +23,10 @@ type nodeBlockStats struct {
 // that answered GetNodeStatistics; Nodes carries the per-node breakdown and
 // NodeErrors the nodes that could not be reached, so the UI can flag partial
 // data. CorruptionCounter only exists as a Prometheus metric, which Garage
-// serves per node, so it reflects the node behind the admin endpoint and is
-// null when /metrics is unavailable (e.g. metrics_token is configured).
+// serves per node, so it reflects the node behind the admin endpoint. It is 0
+// when /metrics answered but has never exported the counter (OTel registers
+// it lazily), and null when /metrics was unavailable (e.g. metrics_token is
+// configured) or could not be read.
 type maintenanceMetrics struct {
 	ResyncQueueLength int64             `json:"resyncQueueLength"`
 	ResyncErrored     int64             `json:"resyncErroredBlocks"`
@@ -71,10 +73,11 @@ func aggregateNodeStatistics(multi nodeStatisticsMulti) maintenanceMetrics {
 }
 
 // parseCorruptionCounter extracts block_corruption_counter from Prometheus text.
-// Returns nil when the metric is absent.
-func parseCorruptionCounter(scanner *bufio.Scanner) *float64 {
+// Returns 0 when the body was read fully but the metric is absent, and an error
+// when the body could not be read to the end (the value is then unknown).
+func parseCorruptionCounter(scanner *bufio.Scanner) (float64, error) {
 	const prefix = "block_corruption_counter"
-	var result *float64
+	var result float64
 	for scanner.Scan() {
 		line := scanner.Text()
 		if len(line) == 0 || line[0] == '#' || !strings.HasPrefix(line, prefix) {
@@ -93,11 +96,13 @@ func parseCorruptionCounter(scanner *bufio.Scanner) *float64 {
 			continue
 		}
 		if val, err := strconv.ParseFloat(strings.TrimSpace(rest[1:]), 64); err == nil {
-			v := val
-			result = &v
+			result = val
 		}
 	}
-	return result
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	return result, nil
 }
 
 // handleMaintenanceMetrics serves GET /api/metrics for the repair page.
@@ -134,7 +139,11 @@ func handleMaintenanceMetrics(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			slog.WarnContext(r.Context(), "garage /metrics unavailable", "error", err)
 		} else {
 			if mresp.StatusCode == http.StatusOK {
-				result.CorruptionCounter = parseCorruptionCounter(bufio.NewScanner(mresp.Body))
+				if v, err := parseCorruptionCounter(bufio.NewScanner(mresp.Body)); err != nil {
+					slog.WarnContext(r.Context(), "failed to read garage /metrics body", "error", err)
+				} else {
+					result.CorruptionCounter = &v
+				}
 			} else {
 				slog.WarnContext(r.Context(), "garage /metrics returned non-200", "status", mresp.StatusCode)
 			}

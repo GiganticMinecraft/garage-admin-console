@@ -10,9 +10,11 @@ import (
 
 // workerEntry is one worker from one node, tagged with the node it runs on.
 // Worker IDs are per-node counters, so (nodeId, id) is the unique key.
+// The wire shape is produced by MarshalJSON (raw worker fields + nodeId);
+// nodeID and id are only used for sorting.
 type workerEntry struct {
-	NodeID string `json:"nodeId"`
-	ID     int64  `json:"id"`
+	nodeID string
+	id     int64
 	raw    map[string]any
 }
 
@@ -21,7 +23,7 @@ func (w workerEntry) MarshalJSON() ([]byte, error) {
 	for k, v := range w.raw {
 		m[k] = v
 	}
-	m["nodeId"] = w.NodeID
+	m["nodeId"] = w.nodeID
 	return json.Marshal(m)
 }
 
@@ -47,14 +49,14 @@ func flattenWorkers(success map[string][]json.RawMessage, errors map[string]stri
 			if v, ok := m["id"].(float64); ok {
 				id = int64(v)
 			}
-			out.Workers = append(out.Workers, workerEntry{NodeID: nodeID, ID: id, raw: m})
+			out.Workers = append(out.Workers, workerEntry{nodeID: nodeID, id: id, raw: m})
 		}
 	}
 	sort.SliceStable(out.Workers, func(i, j int) bool {
-		if out.Workers[i].NodeID != out.Workers[j].NodeID {
-			return out.Workers[i].NodeID < out.Workers[j].NodeID
+		if out.Workers[i].nodeID != out.Workers[j].nodeID {
+			return out.Workers[i].nodeID < out.Workers[j].nodeID
 		}
-		return out.Workers[i].ID < out.Workers[j].ID
+		return out.Workers[i].id < out.Workers[j].id
 	})
 	for nodeID, msg := range errors {
 		out.Errors[nodeID] = msg

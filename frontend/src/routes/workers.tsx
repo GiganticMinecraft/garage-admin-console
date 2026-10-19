@@ -36,7 +36,8 @@ function describeState(state: WorkerState): { label: string; kind: StateKind } {
 
 interface NodeGroup {
   nodeId: string
-  label: string
+  /** Hostname when the cluster status knows it; otherwise the heading shows the ID only. */
+  hostname: string | null
   workers: Worker[]
 }
 
@@ -67,7 +68,7 @@ function WorkersPage() {
     // Backend already sorts by node ID then worker ID; keep that order.
     return [...byNode.entries()].map(([nodeId, workers]) => ({
       nodeId,
-      label: names.get(nodeId) ?? `${nodeId.slice(0, 16)}…`,
+      hostname: names.get(nodeId) ?? null,
       workers,
     }))
   }, [data, status.data])
@@ -101,10 +102,12 @@ function WorkersPage() {
         groups.map((group) => (
           <div key={group.nodeId} className="space-y-2">
             <h2 className="flex items-baseline gap-2 text-lg font-semibold">
-              {group.label}
-              <span className="font-mono text-xs font-normal text-muted-foreground">
-                {group.nodeId.slice(0, 16)}…
-              </span>
+              {group.hostname ?? <span className="font-mono">{group.nodeId.slice(0, 16)}…</span>}
+              {group.hostname && (
+                <span className="font-mono text-xs font-normal text-muted-foreground">
+                  {group.nodeId.slice(0, 16)}…
+                </span>
+              )}
               <span className="text-xs font-normal text-muted-foreground">
                 {group.workers.length} ワーカー
               </span>
