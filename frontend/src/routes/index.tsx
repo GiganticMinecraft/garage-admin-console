@@ -20,7 +20,7 @@ import {
 
 const StorageCharts = lazy(() => import('@/components/storage-charts'))
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
-import { formatBytes, formatCount, formatDateTime } from '@/lib/format'
+import { formatBytes, formatCount, formatDateTime, formatUsage, usagePercent } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 import { formatSecsAgo } from '@/lib/workers'
 import { Badge } from '@/components/ui/badge'
@@ -54,14 +54,12 @@ function ProgressBar({
   total: number
   color: string
 }) {
-  const percent = total > 0 ? (used / total) * 100 : 0
+  const percent = usagePercent(used, total)
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
         <span>{label}</span>
-        <span>
-          {formatBytes(used)} / {formatBytes(total)} ({percent.toFixed(1)}%)
-        </span>
+        <span>{formatUsage(used, total)}</span>
       </div>
       <div className="h-1.5 rounded-full bg-muted overflow-hidden">
         <div
@@ -667,10 +665,7 @@ function DashboardPage() {
 
       {status.data && (
         <Suspense fallback={<p className="text-muted-foreground">チャートを読み込み中...</p>}>
-          <StorageCharts
-            nodes={status.data.nodes}
-            incompleteAvailInfo={statistics.data?.incompleteAvailInfo === true}
-          />
+          <StorageCharts nodes={status.data.nodes} />
         </Suspense>
       )}
 

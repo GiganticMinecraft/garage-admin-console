@@ -8,6 +8,21 @@ export function formatBytes(bytes: number): string {
   return `${i === 0 ? v : v.toFixed(v < 10 ? 2 : 1)} ${UNITS[i]}`
 }
 
+/** Used bytes clamped to [0, total], so an over-reporting node never shows more than 100%. */
+export function clampUsed(used: number, total: number): number {
+  return Math.min(Math.max(used, 0), Math.max(total, 0))
+}
+
+/** Usage as a percentage in [0, 100] (0 when total is unknown or zero). */
+export function usagePercent(used: number, total: number): number {
+  return total > 0 ? (clampUsed(used, total) / total) * 100 : 0
+}
+
+/** "132.8 GiB / 3.97 TiB (3.3%)", with used clamped to total. */
+export function formatUsage(used: number, total: number): string {
+  return `${formatBytes(clampUsed(used, total))} / ${formatBytes(total)} (${usagePercent(used, total).toFixed(1)}%)`
+}
+
 const dateTimeFormat = new Intl.DateTimeFormat('ja-JP', {
   year: 'numeric',
   month: '2-digit',

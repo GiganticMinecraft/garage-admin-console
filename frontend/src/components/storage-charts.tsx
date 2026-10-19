@@ -1,11 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import EChartsReactCore from 'echarts-for-react/lib/core'
 import * as echarts from 'echarts/core'
 import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ClusterNode, PartitionUsage } from '@/api'
-import { formatBytes } from '@/lib/format'
+import { clampUsed, formatBytes, formatUsage, usagePercent } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
 
@@ -38,6 +38,10 @@ const LABEL_TEXT = '#52525b' // zinc-600
 const GRID_LINE = 'rgba(113, 113, 122, 0.2)'
 // Surface-coloured edge that leaves a 2px gap between touching segments.
 const SURFACE = '#ffffff'
+const LABEL_FONT_SIZE = 12
+// Below Tailwind's `sm` breakpoint the bars drop their end labels (the
+// tooltip still carries the numbers) so the bars keep usable width.
+const NARROW_QUERY = '(max-width: 639px)'
 
 const TITLES: Record<PartitionKind, string> = {
   data: 'データパーティション',
@@ -58,24 +62,51 @@ interface Usage {
 }
 
 function toUsage(used: number, total: number): Usage {
-  return { used, free: Math.max(total - used, 0), total, percent: total > 0 ? (used / total) * 100 : 0 }
+  const u = clampUsed(used, total)
+  return { used: u, free: Math.max(total - u, 0), total, percent: usagePercent(u, total) }
 }
 
 function partitionUsage(p: PartitionUsage): Usage {
-  return toUsage(Math.max(p.total - p.available, 0), p.total)
+  return toUsage(p.total - p.available, p.total)
 }
 
-function usageLabel(u: Usage): string {
-  return `${formatBytes(u.used)} / ${formatBytes(u.total)} (${u.percent.toFixed(1)}%)`
+// Tooltips are rendered as HTML; hostnames come from the cluster and must not
+// be interpreted as markup.
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
+  )
 }
 
-function usageTooltip(title: string, u: Usage, approx = false): string {
+function usageTooltip(title: string, u: Usage): string {
   return [
-    `<b>${title}</b>`,
+    `<b>${escapeHtml(title)}</b>`,
     `使用中: ${formatBytes(u.used)} (${u.percent.toFixed(1)}%)`,
-    `空き: ${approx ? '~' : ''}${formatBytes(u.free)}`,
+    `空き: ${formatBytes(u.free)}`,
     `合計: ${formatBytes(u.total)}`,
   ].join('<br/>')
+}
+
+/** Rough rendered width of a label in px (CJK glyphs are about twice as wide). */
+function textWidth(s: string): number {
+  let w = 0
+  for (const ch of s) w += ch.charCodeAt(0) > 0xff ? LABEL_FONT_SIZE : LABEL_FONT_SIZE * 0.6
+  return Math.ceil(w)
+}
+
+function subscribeNarrow(onChange: () => void): () => void {
+  const mql = window.matchMedia(NARROW_QUERY)
+  mql.addEventListener('change', onChange)
+  return () => mql.removeEventListener('change', onChange)
+}
+
+function useNarrow(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false,
+  )
 }
 
 interface MeasuredNode {
@@ -93,23 +124,14 @@ function Swatch({ color, label }: { color: string; label: string }) {
   )
 }
 
-function ThresholdLegend() {
-  return (
-    <span className="inline-flex items-center gap-3">
-      <Swatch color={WARN_COLOR} label={`${WARN_PERCENT}% 以上`} />
-      <Swatch color={CRIT_COLOR} label={`${CRIT_PERCENT}% 以上`} />
-    </span>
-  )
-}
-
 /** Cluster-wide donut for one partition kind, with the usage in its centre. */
-function UsageDonut({ kind, u, approx }: { kind: PartitionKind; u: Usage; approx: boolean }) {
+function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
   const color = usedColor(kind, u.percent)
   const option = useMemo(
     () => ({
       tooltip: {
         trigger: 'item' as const,
-        formatter: () => usageTooltip(TITLES[kind], u, approx),
+        formatter: () => usageTooltip(TITLES[kind], u),
       },
       series: [
         {
@@ -121,13 +143,13 @@ function UsageDonut({ kind, u, approx }: { kind: PartitionKind; u: Usage; approx
           emphasis: { scale: false },
           itemStyle: { borderColor: SURFACE, borderWidth: 2 },
           data: [
-            { value: u.used, name: '使用中', itemStyle: { color } },
+            { value: u.used, name: '使用中', itemStyle: { color: usedColor(kind, u.percent) } },
             { value: u.free, name: '空き', itemStyle: { color: PALETTE[kind].free } },
           ],
         },
       ],
     }),
-    [kind, u, approx, color],
+    [kind, u],
   )
 
   return (
@@ -144,32 +166,34 @@ function UsageDonut({ kind, u, approx }: { kind: PartitionKind; u: Usage; approx
       </div>
       <div className="flex flex-wrap justify-center gap-3 text-xs text-muted-foreground">
         <Swatch color={color} label="使用中" />
-        <Swatch color={PALETTE[kind].free} label={approx ? '空き (~ 推定値)' : '空き'} />
+        <Swatch color={PALETTE[kind].free} label="空き" />
       </div>
     </div>
   )
 }
 
 /** One horizontal used + free stacked bar per node, on the panel's own scale. */
-function NodePanel({ kind, nodes }: { kind: PartitionKind; nodes: MeasuredNode[] }) {
+function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: MeasuredNode[]; narrow: boolean }) {
   const option = useMemo(() => {
-    const rows = nodes.map((n) => ({ name: n.name, u: n[kind] }))
+    const rows = nodes.map((n) => ({ name: n.name, u: n[kind], label: formatUsage(n[kind].used, n[kind].total) }))
     const maxTotal = Math.max(0, ...rows.map((r) => r.u.total))
+    // Reserve exactly the room the longest end-of-bar label needs.
+    const labelRoom = narrow ? 12 : Math.max(0, ...rows.map((r) => textWidth(r.label))) + 16
     const rowAt = (p: { dataIndex: number }) => rows[p.dataIndex]
     return {
       tooltip: {
         trigger: 'item' as const,
+        confine: true,
         formatter: (p: { dataIndex: number }) => {
           const r = rowAt(p)
           return r ? usageTooltip(r.name, r.u) : ''
         },
       },
-      // The right margin reserves room for the end-of-bar label.
-      grid: { left: 8, right: 180, top: 4, bottom: 4, containLabel: true },
+      grid: { left: 8, right: labelRoom, top: 4, bottom: 4, containLabel: true },
       xAxis: {
         type: 'value' as const,
         max: maxTotal > 0 ? maxTotal : undefined,
-        splitNumber: 3,
+        splitNumber: narrow ? 2 : 3,
         axisLabel: { color: AXIS_TEXT, formatter: (v: number) => formatBytes(v) },
         splitLine: { lineStyle: { color: GRID_LINE } },
       },
@@ -179,7 +203,7 @@ function NodePanel({ kind, nodes }: { kind: PartitionKind; nodes: MeasuredNode[]
         data: rows.map((r) => r.name),
         axisTick: { show: false },
         axisLine: { show: false },
-        axisLabel: { color: AXIS_TEXT, width: 140, overflow: 'truncate' as const },
+        axisLabel: { color: AXIS_TEXT, width: narrow ? 88 : 140, overflow: 'truncate' as const },
       },
       series: [
         {
@@ -204,19 +228,17 @@ function NodePanel({ kind, nodes }: { kind: PartitionKind; nodes: MeasuredNode[]
             borderRadius: [0, 4, 4, 0],
           },
           label: {
-            show: true,
+            show: !narrow,
             position: 'right' as const,
             color: LABEL_TEXT,
-            formatter: (p: { dataIndex: number }) => {
-              const r = rowAt(p)
-              return r ? usageLabel(r.u) : ''
-            },
+            fontSize: LABEL_FONT_SIZE,
+            formatter: (p: { dataIndex: number }) => rowAt(p)?.label ?? '',
           },
           data: rows.map((r) => r.u.free),
         },
       ],
     }
-  }, [kind, nodes])
+  }, [kind, nodes, narrow])
 
   return (
     <div className="rounded-lg border p-4">
@@ -225,7 +247,6 @@ function NodePanel({ kind, nodes }: { kind: PartitionKind; nodes: MeasuredNode[]
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <Swatch color={PALETTE[kind].used} label="使用中" />
           <Swatch color={PALETTE[kind].free} label="空き" />
-          <ThresholdLegend />
         </div>
       </div>
       <ReactEChartsCore echarts={echarts} option={option} style={{ height: 40 + nodes.length * 36 }} />
@@ -233,14 +254,8 @@ function NodePanel({ kind, nodes }: { kind: PartitionKind; nodes: MeasuredNode[]
   )
 }
 
-export default function StorageCharts({
-  nodes: allNodes,
-  incompleteAvailInfo = false,
-}: {
-  nodes: ClusterNode[]
-  /** GetClusterStatistics.incompleteAvailInfo: some nodes did not report free space. */
-  incompleteAvailInfo?: boolean
-}) {
+export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[] }) {
+  const narrow = useNarrow()
   // Nodes that are down or have no role report null partitions; chart only
   // the ones that actually have numbers.
   const nodes = useMemo<MeasuredNode[]>(
@@ -258,6 +273,7 @@ export default function StorageCharts({
       ),
     [allNodes],
   )
+  const unreported = allNodes.length - nodes.length
 
   const totals = useMemo(() => {
     const sum = (kind: PartitionKind) =>
@@ -279,25 +295,29 @@ export default function StorageCharts({
 
   return (
     <div className="space-y-3">
-      <h2 className="text-lg font-semibold">ストレージ使用状況</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">ストレージ使用状況</h2>
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <span>使用率</span>
+          <Swatch color={WARN_COLOR} label={`${WARN_PERCENT}% 以上`} />
+          <Swatch color={CRIT_COLOR} label={`${CRIT_PERCENT}% 以上`} />
+        </div>
+      </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-lg border p-4 md:row-span-2">
           <h3 className="mb-4 text-sm font-medium text-muted-foreground">全体使用率</h3>
           <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-1 xl:grid-cols-2">
-            <UsageDonut kind="data" u={totals.data} approx={incompleteAvailInfo} />
-            <UsageDonut kind="meta" u={totals.meta} approx={incompleteAvailInfo} />
+            <UsageDonut kind="data" u={totals.data} />
+            <UsageDonut kind="meta" u={totals.meta} />
           </div>
-          <div className="mt-4 flex justify-center text-xs text-muted-foreground">
-            <ThresholdLegend />
-          </div>
-          {incompleteAvailInfo && (
-            <p className="mt-2 text-center text-xs text-muted-foreground">
-              ~ 推定値: 一部のノードが空き容量を報告していないため、実際の空き容量とは異なる可能性があります
+          {unreported > 0 && (
+            <p className="mt-4 text-center text-xs text-muted-foreground">
+              {unreported} ノードは情報なしのため合計に含まれていません
             </p>
           )}
         </div>
-        <NodePanel kind="data" nodes={nodes} />
-        <NodePanel kind="meta" nodes={nodes} />
+        <NodePanel kind="data" nodes={nodes} narrow={narrow} />
+        <NodePanel kind="meta" nodes={nodes} narrow={narrow} />
       </div>
     </div>
   )
