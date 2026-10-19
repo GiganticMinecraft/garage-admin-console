@@ -310,3 +310,25 @@ func TestStorageHealthIntegration(t *testing.T) {
 		t.Errorf("statistics status = %d body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Empty MultiResponses observed no node: the answer must say so (no nodes,
+// no fan-out error) so the repair page can show "判定不可" instead of 0.
+func TestStorageHealthEmptyFanOutHasNoNodes(t *testing.T) {
+	garage, _ := fakeHealthGarage(t,
+		http.StatusOK, `{"success":{},"error":{}}`,
+		http.StatusOK, `{"success":{},"error":{}}`,
+	)
+	got := getStorageHealth(t, garage.URL)
+	if len(got.Nodes) != 0 || got.StatsError != "" || got.VarsError != "" || got.WorkersError != "" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+// The repair page reads resync stats from storage-health; /api/metrics is gone.
+func TestMaintenanceMetricsEndpointRemoved(t *testing.T) {
+	garage, _ := fakeHealthGarage(t, http.StatusOK, `{"success":{},"error":{}}`, http.StatusOK, `{"success":{},"error":{}}`)
+	rec := newNodeTestClient(t, garage.URL).do(http.MethodGet, "/api/metrics", "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /api/metrics status = %d, want 404", rec.Code)
+	}
+}

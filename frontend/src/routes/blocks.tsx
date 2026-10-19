@@ -10,6 +10,7 @@ import {
   type BlockInfo,
 } from '@/api'
 import { multiResponseToast, type MultiResponseToast } from '@/lib/multi-response'
+import { shortId } from '@/lib/format'
 import {
   Table,
   TableHeader,
@@ -128,6 +129,7 @@ function BlocksPage() {
   })
   const errors = data?.items
   const nodeErrors = Object.entries(data?.nodeErrors ?? {})
+  const checkedNodeCount = data?.checkedNodes.length ?? 0
 
   const purgeMutation = useMutation({
     mutationFn: (hashes: string[]) => purgeBlocks(hashes),
@@ -209,7 +211,7 @@ function BlocksPage() {
           <ul className="mt-1 space-y-0.5 text-muted-foreground">
             {nodeErrors.map(([nodeId, msg]) => (
               <li key={nodeId}>
-                <span className="font-mono text-xs">{nodeId.slice(0, 16)}…</span>: {msg}
+                <span className="font-mono text-xs">{shortId(nodeId)}</span>: {msg}
               </li>
             ))}
           </ul>
@@ -287,9 +289,11 @@ function BlocksPage() {
               {errors?.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
-                    {nodeErrors.length > 0
-                      ? '確認できた範囲ではブロックエラーはありません(未確認ノードあり)'
-                      : 'ブロックエラーはありません'}
+                    {checkedNodeCount === 0
+                      ? 'ブロックエラーを確認できたノードがありません'
+                      : nodeErrors.length > 0
+                        ? '確認できた範囲ではブロックエラーはありません(未確認ノードあり)'
+                        : 'ブロックエラーはありません'}
                   </TableCell>
                 </TableRow>
               )}

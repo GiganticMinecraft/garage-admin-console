@@ -4,17 +4,20 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   getClusterHealth,
   getClusterStatus,
-  getMaintenanceMetrics,
   getStorageHealth,
   launchRepair,
   listBlockErrors,
   type RepairType,
 } from '@/api'
-import type { MaintenanceMetrics } from '@/api'
 import {
+  blockErrorsCard,
   decideMaintenanceStatus,
+  nodeStatsInput,
+  resyncErrorsCard,
+  resyncQueueCard,
   scrubCorruptionCard,
-  summarizeScrubCorruptions,
+  summarizeNodeMetric,
+  type CardSpec,
   type FetchState,
 } from '@/lib/maintenance-status'
 import { multiResponseToast } from '@/lib/multi-response'
@@ -85,55 +88,6 @@ const SEVERITY_LABEL = {
   low: 'まれに使用',
   medium: '障害時に使用',
   high: '最終手段',
-}
-
-/**
- * The two resync cards. Sums cover the nodes that answered GetNodeStatistics.
- * Rendered as a fragment inside the metrics grid.
- */
-function ResyncCards({ m }: { m: MaintenanceMetrics }) {
-  const nodeCount = m.nodes.length
-  const missing = Object.keys(m.nodeErrors).length
-  if (nodeCount === 0) {
-    const hint = missing > 0
-      ? `どのノードからもブロック統計を取得できませんでした (${missing} ノード)。Garage v2.3.0 以上が必要です。`
-      : 'ブロック統計を報告しているノードがありません。'
-    return (
-      <>
-        <SignalCard title="リシンクエラー数" value="取得失敗" hint={hint} tone="warning" />
-        <SignalCard title="リシンクキュー長" value="取得失敗" hint={hint} tone="warning" />
-      </>
-    )
-  }
-  const scope = missing > 0
-    ? `${nodeCount} ノード分の合計。${missing} ノードから取得できていません。`
-    : `${nodeCount} ノード分の合計です。`
-  const perNode = (pick: (n: MaintenanceMetrics['nodes'][number]) => number) =>
-    nodeCount > 1 ? ` (${m.nodes.map((n) => `${n.nodeId.slice(0, 8)}: ${pick(n).toLocaleString()}`).join(' / ')})` : ''
-  return (
-    <>
-      <SignalCard
-        title="リシンクエラー数"
-        value={m.resyncErroredBlocks.toString()}
-        hint={
-          (m.resyncErroredBlocks > 0
-            ? 'リシンクに失敗しているブロックがあります。ブロックエラーページで確認してください。'
-            : '正常です。') + ` ${scope}` + perNode((n) => n.resyncErrors)
-        }
-        tone={m.resyncErroredBlocks > 0 ? 'danger' : missing > 0 ? 'warning' : 'neutral'}
-      />
-      <SignalCard
-        title="リシンクキュー長"
-        value={m.resyncQueueLength.toLocaleString()}
-        hint={
-          (m.resyncQueueLength > 0
-            ? 'リシンク待ちのブロックがあります。増減の推移は Grafana で確認してください。'
-            : 'リシンク待ちはありません。') + ` ${scope}` + perNode((n) => n.resyncQueueLen)
-        }
-        tone={missing > 0 ? 'warning' : 'neutral'}
-      />
-    </>
-  )
 }
 
 /** react-query status → the decision's FetchState. */
@@ -207,20 +161,16 @@ function RepairPage() {
     ...PAGE_POLLING,
   })
 
-  const metrics = useQuery({
-    queryKey: ['maintenance', 'metrics'],
-    queryFn: getMaintenanceMetrics,
-    ...PAGE_POLLING,
-  })
-  const refreshAll = () => Promise.all([health.refetch(), blockErrors.refetch(), metrics.refetch()])
-  const updatedAt = Math.max(health.dataUpdatedAt, blockErrors.dataUpdatedAt, metrics.dataUpdatedAt)
-
-  // Same per-node scrub-corruptions_detected as the dashboard. Own key: the
-  // dashboard caches a derived shape under ['cluster', 'storage-health'].
+  // Per-node resync stats and scrub-corruptions_detected, the same source as
+  // the dashboard (one GetNodeStatistics fan-out, cached server-side). Own
+  // key: the dashboard caches a derived shape under ['cluster', 'storage-health'].
   const storageHealth = useQuery({
     queryKey: ['maintenance', 'storage-health'],
     queryFn: getStorageHealth,
+    ...PAGE_POLLING,
   })
+  const refreshAll = () => Promise.all([health.refetch(), blockErrors.refetch(), storageHealth.refetch()])
+  const updatedAt = Math.max(health.dataUpdatedAt, blockErrors.dataUpdatedAt, storageHealth.dataUpdatedAt)
 
   // Hostnames for the per-node breakdown; shares the dashboard's cache.
   const status = useQuery({
@@ -255,16 +205,28 @@ function RepairPage() {
     setConfirmOpen(true)
   }
 
-  const errorCount = blockErrors.data?.items.length ?? 0
-  const blockNodeErrorCount = Object.keys(blockErrors.data?.nodeErrors ?? {}).length
   const isClusterHealthy = health.data?.status === 'healthy'
+  const blockErrorsInput = {
+    state: fetchState(blockErrors),
+    count: blockErrors.data?.items.length ?? 0,
+    checkedNodeCount: blockErrors.data?.checkedNodes.length ?? 0,
+    nodeErrorCount: Object.keys(blockErrors.data?.nodeErrors ?? {}).length,
+  }
   const recommendation = decideMaintenanceStatus({
     health: { state: fetchState(health), status: health.data?.status },
-    blockErrors: { state: fetchState(blockErrors), count: errorCount, nodeErrorCount: blockNodeErrorCount },
-    metrics: { state: fetchState(metrics), nodeErrorCount: Object.keys(metrics.data?.nodeErrors ?? {}).length },
+    blockErrors: blockErrorsInput,
+    nodeStats: nodeStatsInput(fetchState(storageHealth), storageHealth.data),
   })
-  const corruption = storageHealth.data
-    ? scrubCorruptionCard(summarizeScrubCorruptions(storageHealth.data, nodeNames))
+  const blockErrorsSpec = blockErrorsCard(blockErrorsInput)
+
+  // Decided on data presence, not isError: a paused query (offline) has neither.
+  const sh = storageHealth.data
+  const metricCards: { title: string; spec: CardSpec }[] | null = sh
+    ? [
+        { title: 'リシンクエラー数', spec: resyncErrorsCard(summarizeNodeMetric(sh, (n) => n.resyncErrors, sh.statsError, nodeNames)) },
+        { title: 'リシンクキュー長', spec: resyncQueueCard(summarizeNodeMetric(sh, (n) => n.resyncQueueLen, sh.statsError, nodeNames)) },
+        { title: '破損検出回数 (累積)', spec: scrubCorruptionCard(summarizeNodeMetric(sh, (n) => n.scrubCorruptions, sh.varsError, nodeNames)) },
+      ]
     : null
 
   return (
@@ -312,26 +274,9 @@ function RepairPage() {
             />
             <SignalCard
               title="ブロックエラー数"
-              value={blockErrors.isError ? '取得失敗' : errorCount.toString()}
-              hint={
-                blockErrors.isError
-                  ? 'ブロックエラーの取得に失敗しました。'
-                  : (errorCount > 0
-                    ? 'エラーがあります。ブロックエラーページで内容を確認してください。'
-                    : blockNodeErrorCount > 0
-                      ? '確認できた範囲ではリシンクエラーはありません。'
-                      : 'リシンクエラーはありません。') +
-                    (blockNodeErrorCount > 0 ? ` ${blockNodeErrorCount} ノードから取得できていません。` : '')
-              }
-              tone={
-                blockErrors.isError
-                  ? 'warning'
-                  : errorCount > 0
-                    ? 'danger'
-                    : blockNodeErrorCount > 0
-                      ? 'warning'
-                      : 'neutral'
-              }
+              value={blockErrorsSpec.value}
+              hint={blockErrorsSpec.hint}
+              tone={blockErrorsSpec.tone}
             />
             <SignalCard
               title="推奨アクション"
@@ -345,33 +290,25 @@ function RepairPage() {
 
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">ブロック管理メトリクス</h2>
-        <div className="grid gap-3 md:grid-cols-3">
-          {metrics.isLoading ? (
-            <>
-              <CardSkeleton />
-              <CardSkeleton />
-            </>
-          ) : metrics.isError ? (
-            <>
-              <SignalCard title="リシンクエラー数" value="取得失敗" hint="Garage のノード統計を取得できませんでした。" tone="warning" />
-              <SignalCard title="リシンクキュー長" value="取得失敗" hint="Garage のノード統計を取得できませんでした。" tone="warning" />
-            </>
-          ) : (
-            <ResyncCards m={metrics.data!} />
-          )}
-          {storageHealth.isLoading ? (
-            <CardSkeleton />
-          ) : storageHealth.isError || !corruption ? (
-            <SignalCard
-              title="破損検出回数 (累積)"
-              value="取得失敗"
-              hint="各ノードの Scrub 情報 (scrub-corruptions_detected) を取得できませんでした。"
-              tone="warning"
-            />
-          ) : (
-            <SignalCard title="破損検出回数 (累積)" value={corruption.value} hint={corruption.hint} tone={corruption.tone} />
-          )}
-        </div>
+        {storageHealth.isLoading ? (
+          <SectionSkeleton />
+        ) : (
+          <div className="grid gap-3 md:grid-cols-3">
+            {metricCards
+              ? metricCards.map(({ title, spec }) => (
+                  <SignalCard key={title} title={title} value={spec.value} hint={spec.hint} tone={spec.tone} />
+                ))
+              : ['リシンクエラー数', 'リシンクキュー長', '破損検出回数 (累積)'].map((title) => (
+                  <SignalCard
+                    key={title}
+                    title={title}
+                    value="取得失敗"
+                    hint="Garage のノード別ストレージ情報 (/api/cluster/storage-health) を取得できませんでした。"
+                    tone="warning"
+                  />
+                ))}
+          </div>
+        )}
       </div>
 
       <div className="space-y-3">

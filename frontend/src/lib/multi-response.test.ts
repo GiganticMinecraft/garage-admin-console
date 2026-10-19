@@ -31,7 +31,7 @@ describe('summarizeMultiResponse', () => {
 describe('formatNodeFailures', () => {
   it('shortens node IDs and truncates the list', () => {
     const failed = ['aaaaaaaaaaaaaaaa1', 'b', 'c', 'd'].map((nodeId) => ({ nodeId, message: 'Not connected' }))
-    expect(formatNodeFailures(failed, 2)).toBe('aaaaaaaaaaaa…: Not connected / b: Not connected / 他 2 ノード')
+    expect(formatNodeFailures(failed, 2)).toBe('aaaaaaaaaaaaaaaa…: Not connected / b: Not connected / 他 2 ノード')
     expect(formatNodeFailures(failed.slice(1, 2))).toBe('b: Not connected')
   })
 })

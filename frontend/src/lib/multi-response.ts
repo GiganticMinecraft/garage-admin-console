@@ -1,4 +1,5 @@
 import type { MultiResponse } from '@/api'
+import { shortId } from '@/lib/format'
 
 /**
  * Outcome of a Garage MultiResponse:
@@ -33,17 +34,12 @@ export function summarizeMultiResponse<T>(resp: MultiResponse<T>): MultiResponse
   return { outcome, succeeded, failed }
 }
 
-/** First 12 characters of a node ID, as the blocks / repair pages show it. */
-export function shortNodeId(nodeId: string): string {
-  return nodeId.length > 12 ? `${nodeId.slice(0, 12)}…` : nodeId
-}
-
 /**
  * "node1…: msg / node2…: msg" for a toast or banner. Lists at most `limit`
  * nodes and summarises the rest as "他 N ノード".
  */
 export function formatNodeFailures(failed: NodeFailure[], limit = 3): string {
-  const shown = failed.slice(0, limit).map((f) => `${shortNodeId(f.nodeId)}: ${f.message}`)
+  const shown = failed.slice(0, limit).map((f) => `${shortId(f.nodeId)}: ${f.message}`)
   const rest = failed.length - shown.length
   return rest > 0 ? `${shown.join(' / ')} / 他 ${rest} ノード` : shown.join(' / ')
 }

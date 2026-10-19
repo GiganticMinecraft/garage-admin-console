@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -8,13 +9,19 @@ import (
 )
 
 // blockErrorsResponse is what GET /api/blocks/errors returns: every block
-// error from every node that answered (each tagged with "nodeId"), plus the
-// error message for each node that did not. An empty Items with a non-empty
-// NodeErrors means "nothing found on the nodes we could ask", not "no errors".
+// error from every node that answered (each tagged with "nodeId"), the nodes
+// whose answer was read completely (CheckedNodes, sorted), and the error
+// message for each node that did not answer or answered something we could
+// not read. Empty Items means "no block errors" only when NodeErrors is empty
+// and CheckedNodes is not: with no checked node nothing was observed at all.
 type blockErrorsResponse struct {
-	Items      []json.RawMessage `json:"items"`
-	NodeErrors map[string]string `json:"nodeErrors"`
+	Items        []json.RawMessage `json:"items"`
+	CheckedNodes []string          `json:"checkedNodes"`
+	NodeErrors   map[string]string `json:"nodeErrors"`
 }
+
+// blockErrorUnreadableMsg marks a node whose answer had an entry we could not decode.
+const blockErrorUnreadableMsg = "block error entry を解釈できません"
 
 // listBlockErrorsMulti is Garage's MultiResponse for ListBlockErrors:
 // success[nodeId] is a plain array of BlockError objects (Vec<BlockError>),
@@ -27,25 +34,38 @@ type listBlockErrorsMulti struct {
 // flattenBlockErrors converts the MultiResponse into a blockErrorsResponse,
 // injecting "nodeId" into each entry. Items are ordered by node ID, keeping
 // Garage's order within a node, so the table does not reshuffle on refetch.
-func flattenBlockErrors(multi listBlockErrorsMulti) blockErrorsResponse {
-	out := blockErrorsResponse{Items: []json.RawMessage{}, NodeErrors: map[string]string{}}
+// An entry that cannot be decoded puts its node under NodeErrors (and out of
+// CheckedNodes) instead of being dropped silently; the node's readable
+// entries are still listed.
+func flattenBlockErrors(ctx context.Context, multi listBlockErrorsMulti) blockErrorsResponse {
+	out := blockErrorsResponse{Items: []json.RawMessage{}, CheckedNodes: []string{}, NodeErrors: map[string]string{}}
 	nodeIDs := make([]string, 0, len(multi.Success))
 	for nodeID := range multi.Success {
 		nodeIDs = append(nodeIDs, nodeID)
 	}
 	sort.Strings(nodeIDs)
 	for _, nodeID := range nodeIDs {
+		complete := true
 		for _, raw := range multi.Success[nodeID] {
 			var m map[string]any
-			if err := json.Unmarshal(raw, &m); err != nil {
+			if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+				slog.ErrorContext(ctx, "cannot decode ListBlockErrors entry", "node", nodeID, "error", err)
+				complete = false
 				continue
 			}
 			m["nodeId"] = nodeID
 			enriched, err := json.Marshal(m)
 			if err != nil {
+				slog.ErrorContext(ctx, "cannot encode ListBlockErrors entry", "node", nodeID, "error", err)
+				complete = false
 				continue
 			}
 			out.Items = append(out.Items, enriched)
+		}
+		if complete {
+			out.CheckedNodes = append(out.CheckedNodes, nodeID)
+		} else {
+			out.NodeErrors[nodeID] = blockErrorUnreadableMsg
 		}
 	}
 	for nodeID, msg := range multi.Error {
@@ -86,7 +106,7 @@ func handleListBlockErrors(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(flattenBlockErrors(multi))
+		json.NewEncoder(w).Encode(flattenBlockErrors(r.Context(), multi))
 	}
 }
 

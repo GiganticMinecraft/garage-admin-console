@@ -742,12 +742,14 @@ export interface PurgeBlocksResult {
 
 /**
  * GET /api/blocks/errors. `items` holds the block errors of every node that
- * answered; `nodeErrors` maps each node that did not to Garage's message.
- * Empty items with nodeErrors means "none found where we could look", not
- * "no block errors".
+ * answered; `checkedNodes` the nodes whose answer was read completely;
+ * `nodeErrors` maps each node that did not answer (or answered something
+ * unreadable) to the reason. Empty items mean "no block errors" only when
+ * nodeErrors is empty and checkedNodes is not.
  */
 export interface BlockErrorsResponse {
   items: BlockError[]
+  checkedNodes: string[]
   nodeErrors: Record<string, string>
 }
 
@@ -800,22 +802,6 @@ export async function launchRepair(
     method: 'POST',
     body: JSON.stringify({ repairType }),
   })
-}
-
-// Maintenance metrics for the repair page.
-// resyncQueueLength / resyncErroredBlocks are summed over every node that
-// answered GetNodeStatistics; `nodes` has the breakdown and `nodeErrors` the
-// nodes that could not be reached. The scrub corruption count is not here:
-// read scrubCorruptions from getStorageHealth (persisted per node).
-export interface MaintenanceMetrics {
-  resyncQueueLength: number
-  resyncErroredBlocks: number
-  nodes: { nodeId: string; resyncQueueLen: number; resyncErrors: number }[]
-  nodeErrors: Record<string, string>
-}
-
-export async function getMaintenanceMetrics(): Promise<MaintenanceMetrics> {
-  return fetchJSON('/metrics')
 }
 
 // Enriched bucket / key lists (#380)
