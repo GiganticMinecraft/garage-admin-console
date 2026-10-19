@@ -221,14 +221,27 @@ export async function revertLayout(): Promise<void> {
 }
 
 // Buckets
+/**
+ * One row of GET /api/buckets. The stats are null when the backend could not
+ * fetch this bucket's info from Garage.
+ */
 export interface BucketListItem {
   id: string
-  globalAliases?: string[]
-  localAliases?: { alias: string; accessKeyId: string }[]
+  globalAliases: string[]
+  localAliases: { alias: string; accessKeyId: string }[]
+  created: string | null
+  objects: number | null
+  bytes: number | null
+  unfinishedMultipartUploads: number | null
+  keyCount: number | null
+  quotas: { maxSize: number | null; maxObjects: number | null } | null
 }
 
-export async function listBuckets(): Promise<BucketListItem[]> {
-  return fetchJSON('/buckets')
+/** Body of GET /api/buckets and GET /api/keys. */
+export interface ListResult<T> {
+  items: T[]
+  /** true when Garage's list limit was reached and entries may be missing. */
+  truncated: boolean
 }
 
 export async function getBucket(id: string): Promise<Record<string, unknown>> {
@@ -268,16 +281,14 @@ export async function revokeBucketKey(bucketId: string, keyId: string): Promise<
 }
 
 // Keys
+/** One row of GET /api/keys. bucketCount is null when it could not be fetched. */
 export interface KeyListItem {
   id: string
   name: string
-  created: string
+  created: string | null
   expiration: string | null
   expired: boolean
-}
-
-export async function listKeys(): Promise<KeyListItem[]> {
-  return fetchJSON('/keys')
+  bucketCount: number | null
 }
 
 export interface KeyDetail {
@@ -527,4 +538,22 @@ export interface MaintenanceMetrics {
 
 export async function getMaintenanceMetrics(): Promise<MaintenanceMetrics> {
   return fetchJSON('/metrics')
+}
+
+// Enriched bucket / key lists (#380)
+/**
+ * All buckets with usage stats. Returns `{ items, truncated }`, NOT a bare
+ * array (changed in #380): read `.items` for the rows; `truncated` is true when
+ * Garage's list limit was hit and some buckets may be missing.
+ */
+export async function listBuckets(): Promise<ListResult<BucketListItem>> {
+  return fetchJSON('/buckets')
+}
+
+/**
+ * All access keys with expiration and bucket counts. Returns
+ * `{ items, truncated }`, NOT a bare array (changed in #380): read `.items`.
+ */
+export async function listKeys(): Promise<ListResult<KeyListItem>> {
+  return fetchJSON('/keys')
 }

@@ -9,34 +9,14 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// handleListKeys proxies GET /api/keys to Garage GET /v2/ListKeys.
-func handleListKeys(garageAdmin *GarageAdminClient) http.HandlerFunc {
-	return proxyGarageGET(garageAdmin, "/v2/ListKeys")
-}
+// handleListKeys (GET /api/keys) lives in handler_lists.go.
 
 // handleCreateKey proxies POST /api/keys to Garage POST /v2/CreateKey.
 func handleCreateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		const garagePath = "/v2/CreateKey"
 		// The response carries the new secret: keep it out of caches.
 		w.Header().Set("Cache-Control", "no-store")
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		ct := resp.Header.Get("Content-Type")
-		if ct == "" {
-			ct = "application/json"
-		}
-		w.Header().Set("Content-Type", ct)
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
-		}
+		proxyGarageMutation(w, r, garageAdmin, "/v2/CreateKey", r.Body)
 	}
 }
 
@@ -77,24 +57,7 @@ func handleGetKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleUpdateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/UpdateKey?id=" + url.QueryEscape(id)
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, r.Body)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		ct := resp.Header.Get("Content-Type")
-		if ct == "" {
-			ct = "application/json"
-		}
-		w.Header().Set("Content-Type", ct)
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
-		}
+		proxyGarageMutation(w, r, garageAdmin, "/v2/UpdateKey?id="+url.QueryEscape(id), r.Body)
 	}
 }
 
@@ -102,23 +65,6 @@ func handleUpdateKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 func handleDeleteKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
-		garagePath := "/v2/DeleteKey?id=" + url.QueryEscape(id)
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, nil)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		ct := resp.Header.Get("Content-Type")
-		if ct == "" {
-			ct = "application/json"
-		}
-		w.Header().Set("Content-Type", ct)
-		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			slog.ErrorContext(r.Context(), "failed to stream garage response", "path", garagePath, "error", err)
-		}
+		proxyGarageMutation(w, r, garageAdmin, "/v2/DeleteKey?id="+url.QueryEscape(id), nil)
 	}
 }

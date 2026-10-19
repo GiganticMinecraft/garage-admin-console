@@ -65,7 +65,7 @@ func newTestGarageServer(t *testing.T) *httptest.Server {
 
 	mux.HandleFunc("/v2/ListKeys", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"accessKeyId":"key1"}]`))
+		w.Write([]byte(`[{"id":"key1","name":"key-one"}]`)) // Garage ListKeysResponseItem
 	})
 
 	mux.HandleFunc("/v2/GetKeyInfo", func(w http.ResponseWriter, r *http.Request) {
