@@ -317,8 +317,18 @@ func TestWorkerListProxy(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
 	}
-	if body := rr.Body.String(); !strings.Contains(body, "repair") {
-		t.Errorf("expected worker list, got: %s", body)
+	var body struct {
+		Workers []map[string]any  `json:"workers"`
+		Errors  map[string]string `json:"errors"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rr.Body.String())
+	}
+	if len(body.Workers) == 0 {
+		t.Fatalf("expected workers, got: %s", rr.Body.String())
+	}
+	if body.Workers[0]["nodeId"] == nil || body.Workers[0]["nodeId"] == "" {
+		t.Errorf("worker should carry nodeId: %v", body.Workers[0])
 	}
 }
 

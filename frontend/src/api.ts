@@ -253,6 +253,8 @@ export async function deleteObject(bucket: string, key: string): Promise<void> {
 export type WorkerState = string | { throttled: string }
 
 export interface Worker {
+  /** ID of the node this worker runs on (worker ids are per-node counters). */
+  nodeId: string
   id: number
   name: string
   state: WorkerState
@@ -266,7 +268,13 @@ export interface Worker {
   freeform: string[]
 }
 
-export async function listWorkers(): Promise<Worker[]> {
+export interface WorkersResponse {
+  workers: Worker[]
+  /** Nodes that failed to answer ListWorkers, keyed by node ID. */
+  errors: Record<string, string>
+}
+
+export async function listWorkers(): Promise<WorkersResponse> {
   return fetchJSON('/workers')
 }
 
@@ -368,11 +376,17 @@ export async function launchRepair(
   })
 }
 
-// Maintenance metrics (extracted from Garage /metrics)
+// Maintenance metrics for the repair page.
+// resyncQueueLength / resyncErroredBlocks are summed over every node that
+// answered GetNodeStatistics; `nodes` has the breakdown and `nodeErrors` the
+// nodes that could not be reached. corruptionCounter comes from the admin
+// endpoint node's /metrics only and is null when unavailable.
 export interface MaintenanceMetrics {
   resyncQueueLength: number
   resyncErroredBlocks: number
-  corruptionCounter: number
+  corruptionCounter: number | null
+  nodes: { nodeId: string; resyncQueueLen: number; resyncErrors: number }[]
+  nodeErrors: Record<string, string>
 }
 
 export async function getMaintenanceMetrics(): Promise<MaintenanceMetrics> {
