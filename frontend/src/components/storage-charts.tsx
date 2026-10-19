@@ -7,6 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import type { ClusterNode, PartitionUsage } from '@/api'
 import { formatBytes } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
+import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
 
 echarts.use([PieChart, BarChart, TooltipComponent, GridComponent, CanvasRenderer])
 
@@ -28,8 +29,8 @@ const PALETTE: Record<PartitionKind, { used: string; free: string }> = {
 }
 const WARN_COLOR = '#f59e0b' // amber-500
 const CRIT_COLOR = '#ef4444' // red-500
-const WARN_PERCENT = 80
-const CRIT_PERCENT = 90
+const WARN_PERCENT = USAGE_WARN * 100
+const CRIT_PERCENT = USAGE_CRIT * 100
 
 // Chart chrome uses neutral text colours, never the series colour.
 const AXIS_TEXT = '#71717a' // zinc-500
