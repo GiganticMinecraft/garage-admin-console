@@ -6,6 +6,7 @@ import {
   grantBucketKey,
   revokeBucketKey,
 } from '@/api'
+import { BucketSettings } from '@/components/bucket-settings'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ObjectBrowser } from '@/components/object-browser'
 import { Badge } from '@/components/ui/badge'
@@ -22,23 +23,6 @@ export const Route = createFileRoute('/buckets/$id')({
     prefix: (search.prefix as string) || undefined,
   }),
 })
-
-interface BucketDetail {
-  id: string
-  globalAliases?: string[]
-  websiteAccess?: boolean
-  websiteConfig?: { indexDocument: string; errorDocument: string } | null
-  keys?: {
-    accessKeyId: string
-    name: string
-    permissions: { read: boolean; write: boolean; owner: boolean }
-  }[]
-  objects?: number
-  bytes?: number
-  unfinishedUploads?: number
-  unfinishedUploadBytes?: number
-  quotas?: { maxSize: number | null; maxObjects: number | null }
-}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -70,7 +54,7 @@ function BucketDetailPage() {
 
   const bucket = useQuery({
     queryKey: ['bucket', id],
-    queryFn: () => getBucket(id) as unknown as Promise<BucketDetail>,
+    queryFn: () => getBucket(id),
   })
 
   // Key grant state
@@ -259,6 +243,9 @@ function BucketDetailPage() {
         prefix={prefix}
         onPrefixChange={setPrefix}
       />
+
+      {/* Bucket settings (quotas, website, CORS, lifecycle, unfinished uploads) */}
+      {data && <BucketSettings bucket={data} />}
 
       <ConfirmDialog
         open={revokeTarget !== null}
