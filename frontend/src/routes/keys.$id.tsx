@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { getKey } from '@/api'
 import { Badge } from '@/components/ui/badge'
@@ -22,15 +22,28 @@ export const Route = createFileRoute('/keys/$id')({
 
 function KeyDetailPage() {
   const { id } = Route.useParams()
-  const [showSecret, setShowSecret] = useState(false)
+  const queryClient = useQueryClient()
+  // The route component is reused across /keys/:id navigations, so the
+  // "revealed" flag is tied to the key id: a secret revealed for one key is
+  // never carried over to the next one.
+  const [revealedFor, setRevealedFor] = useState<string | null>(null)
+  const showSecret = revealedFor === id
+
+  // Evict any fetched secret from the cache when leaving this key.
+  useEffect(() => {
+    return () => {
+      queryClient.removeQueries({ queryKey: ['key', id, 'secret'] })
+    }
+  }, [id, queryClient])
 
   const key = useQuery({
     queryKey: ['key', id],
     queryFn: () => getKey(id),
   })
 
-  // The secret is fetched separately and only on demand, so it never sits in
-  // the regular query cache or gets rendered by accident.
+  // The secret is fetched separately and only on demand. Hiding it evicts
+  // the cached value (see toggleSecret), so re-showing re-authorizes against
+  // the backend instead of serving a cached copy.
   const secret = useQuery({
     queryKey: ['key', id, 'secret'],
     queryFn: () => getKey(id, { showSecretKey: true }),
@@ -38,6 +51,15 @@ function KeyDetailPage() {
     staleTime: Infinity,
     gcTime: 0,
   })
+
+  const toggleSecret = () => {
+    if (showSecret) {
+      setRevealedFor(null)
+      queryClient.removeQueries({ queryKey: ['key', id, 'secret'] })
+    } else {
+      setRevealedFor(id)
+    }
+  }
 
   const data = key.data
 
@@ -122,7 +144,7 @@ function KeyDetailPage() {
                   variant="ghost"
                   size="sm"
                   className="h-6 gap-1 px-2 text-xs"
-                  onClick={() => setShowSecret((v) => !v)}
+                  onClick={toggleSecret}
                 >
                   {showSecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                   {showSecret ? '隠す' : 'シークレットを表示'}

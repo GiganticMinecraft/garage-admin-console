@@ -424,3 +424,40 @@ func TestGetKeyForwardsShowSecretKey(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretBearingKeyResponsesAreNoStore(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/GetKeyInfo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"accessKeyId":"GK1"}`))
+	})
+	mux.HandleFunc("/v2/CreateKey", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"accessKeyId":"GK1","secretAccessKey":"s"}`))
+	})
+	garage := httptest.NewServer(mux)
+	defer garage.Close()
+	handler, store := setupTestRouter(t, garage.URL)
+
+	get := func(path string) http.Header {
+		req := authenticatedRequest(t, store, http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Header()
+	}
+	if cc := get("/api/keys/GK1?showSecretKey=true").Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("secret GET Cache-Control = %q, want no-store", cc)
+	}
+	if cc := get("/api/keys/GK1").Get("Cache-Control"); cc != "" {
+		t.Errorf("plain GET should not set Cache-Control, got %q", cc)
+	}
+
+	req := authenticatedRequest(t, store, http.MethodPost, "/api/keys", strings.NewReader(`{"name":"n"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("CreateKey Cache-Control = %q, want no-store", cc)
+	}
+}
