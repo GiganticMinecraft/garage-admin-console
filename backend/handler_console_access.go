@@ -30,6 +30,9 @@ const maxConsoleAccessBodyBytes = 1 << 10
 // changed is false when the key already had read and write.
 func handleGrantConsoleAccess(garageAdmin *GarageAdminClient, consoleKeyID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Unreachable in the real binary (newS3Client exits at startup without
+		// GARAGE_S3_ACCESS_KEY); kept for routers built without it, as in the
+		// unit tests, so an empty ID is never sent to Garage.
 		if consoleKeyID == "" {
 			writeJSONError(w, http.StatusServiceUnavailable, "the console's S3 key (GARAGE_S3_ACCESS_KEY) is not configured")
 			return

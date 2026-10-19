@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import {
   ApiError,
   MAX_BATCH_DOWNLOAD_KEYS,
@@ -30,6 +31,7 @@ import { formatBytes, formatDateTime } from '@/lib/format'
 import {
   consoleAccessView,
   emptyObjectsMessage,
+  isConsoleKeyAccessDenied,
   shouldRetryObjectList,
   type ConsoleGrantResult,
 } from '@/lib/object-browser'
@@ -521,12 +523,44 @@ export function ObjectBrowser({
     retry: (failureCount, error) => shouldRetryObjectList(failureCount, error),
   })
 
+  // --- Console key without access to this bucket ---------------------------
+  const { grantConsole } = useBucketKeyPermissionMutations()
+  const [lastConsoleGrant, setLastConsoleGrant] = useState<ConsoleGrantResult | null>(null)
+  // A grant outcome only explains the 403s that follow it. Once the listing
+  // works again it is forgotten, so a later revoke (by another operator)
+  // offers the grant again instead of blaming the key.
+  if (objects.isSuccess && lastConsoleGrant !== null) setLastConsoleGrant(null)
+  const listDenied = objects.isError && isConsoleKeyAccessDenied(objects.error)
+  const consoleKey = useConsoleKey(listDenied)
+  const accessView = consoleAccessView({
+    listError: objects.isError ? objects.error : null,
+    listErrorAt: objects.errorUpdatedAt,
+    lastGrant: lastConsoleGrant,
+    keyLookupError: consoleKey.lookupError,
+    keyExpired: consoleKey.expired,
+  })
+  // While S3 refuses the console's key, every object operation would fail
+  // the same way, so they are hidden or disabled.
+  const accessDenied = accessView !== 'list'
+  const [consoleAccessOpen, setConsoleAccessOpen] = useState(false)
+  const grantConsoleAccess = () =>
+    grantConsole.mutateAsync({ bucketId }).then(
+      (result) => setLastConsoleGrant({ changed: result.changed, at: Date.now() }),
+      (error: unknown) => {
+        setLastConsoleGrant({ error })
+        throw error
+      },
+    )
+
+  // react-query keeps the previous pages when a refetch fails: do not show
+  // (and let operators click) stale folders and objects under the 403 panel.
+  const visiblePages = accessDenied ? undefined : objects.data?.pages
   const allObjects = useMemo(
-    () => objects.data?.pages.flatMap((p) => p.objects ?? []) ?? [],
-    [objects.data],
+    () => visiblePages?.flatMap((p) => p.objects ?? []) ?? [],
+    [visiblePages],
   )
   const allPrefixes = [
-    ...new Set(objects.data?.pages.flatMap((p) => p.prefixes ?? []) ?? []),
+    ...new Set(visiblePages?.flatMap((p) => p.prefixes ?? []) ?? []),
   ]
 
   const [sortKey, setSortKey] = useState<SortKey>('name')
@@ -661,22 +695,6 @@ export function ObjectBrowser({
   })
   const tooManyForZip = selectedKeys.size > MAX_BATCH_DOWNLOAD_KEYS
 
-  // --- Console key without access to this bucket ---------------------------
-  const { grantConsole } = useBucketKeyPermissionMutations()
-  const [lastConsoleGrant, setLastConsoleGrant] = useState<ConsoleGrantResult | null>(null)
-  const accessView = objects.isError
-    ? consoleAccessView(objects.error, objects.errorUpdatedAt, lastConsoleGrant)
-    : 'list'
-  // While S3 refuses the console's key, every object operation would fail
-  // the same way, so they are hidden or disabled.
-  const accessDenied = accessView !== 'list'
-  const consoleKey = useConsoleKey(accessDenied)
-  const [consoleAccessOpen, setConsoleAccessOpen] = useState(false)
-  const grantConsoleAccess = () =>
-    grantConsole
-      .mutateAsync({ bucketId })
-      .then((result) => setLastConsoleGrant({ changed: result.changed, at: Date.now() }))
-
   return (
     <div className="space-y-2">
       <h2 className="text-lg font-semibold">オブジェクト</h2>
@@ -787,13 +805,41 @@ export function ObjectBrowser({
             コンソールのキーに read/write を付与
           </Button>
         </div>
+      ) : accessView === 'key-expired' ? (
+        <div className="space-y-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+          <p className="font-medium text-destructive">
+            コンソールのキー（<span className="break-all">{consoleKey.label}</span>）は有効期限切れです
+          </p>
+          <p className="text-muted-foreground">
+            {consoleKey.expiration ? `有効期限: ${formatDateTime(consoleKey.expiration)}。` : ''}
+            キーの詳細ページで有効期限を延長するか、期限なしにしてください。権限を付与し直しても解決しません。
+          </p>
+          {consoleKey.accessKeyId && (
+            <Link
+              to="/keys/$id"
+              params={{ id: consoleKey.accessKeyId }}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              キーの詳細を開く
+            </Link>
+          )}
+        </div>
+      ) : accessView === 'key-missing' ? (
+        <div className="space-y-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+          <p className="font-medium text-destructive">
+            コンソールのキー（<span className="break-all">{consoleKey.label}</span>）が Garage に存在しません
+          </p>
+          <p className="text-muted-foreground">
+            キーが削除された可能性があります。コンソールに設定されたキー（GARAGE_S3_ACCESS_KEY / GARAGE_S3_SECRET_KEY）を、存在するキーに設定し直してください。権限を付与しても解決しません。
+          </p>
+        </div>
       ) : accessView === 'key-invalid' ? (
         <div className="space-y-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
           <p className="font-medium text-destructive">
             コンソールのキー（<span className="break-all">{consoleKey.label}</span>）にはこのバケットの read / write 権限がありますが、S3 へのアクセスが拒否されています
           </p>
           <p className="text-muted-foreground">
-            キー自体（認証情報）が無効になっている可能性があります。キーが削除されていないか、コンソールに設定されたシークレットキー（GARAGE_S3_SECRET_KEY）が正しいかを確認してください。権限を付与し直しても解決しません。
+            キー自体（認証情報）が無効になっている可能性があります。コンソールに設定されたシークレットキー（GARAGE_S3_SECRET_KEY）が正しいかを確認してください。権限を付与し直しても解決しません。
           </p>
           <p className="break-all text-xs text-muted-foreground">{objects.error?.message}</p>
         </div>
@@ -872,7 +918,7 @@ export function ObjectBrowser({
               {sortedObjects.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                    {emptyObjectsMessage(allPrefixes.length)}
+                    {emptyObjectsMessage(allPrefixes.length, objects.hasNextPage)}
                   </TableCell>
                 </TableRow>
               )}

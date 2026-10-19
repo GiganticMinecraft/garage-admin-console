@@ -25,5 +25,9 @@ export function useConsoleKey(enabled: boolean) {
   return {
     accessKeyId,
     label: consoleKeyLabel(accessKeyId, key.data?.name),
+    /** GetKeyInfo failure, e.g. 404 NoSuchAccessKey when the key was deleted. */
+    lookupError: key.error,
+    expired: key.data?.expired === true,
+    expiration: key.data?.expiration ?? null,
   }
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
 )
@@ -42,7 +41,6 @@ func s3ConnectionInfoFromEnv() s3ConnectionInfo {
 func handleS3Connection() http.HandlerFunc {
 	info := s3ConnectionInfoFromEnv()
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(info)
+		writeJSON(w, info)
 	}
 }
