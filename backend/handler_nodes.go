@@ -320,9 +320,13 @@ func handleLaunchNodeRepair(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxNodeRequestBody))
-		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "request body too large or unreadable")
+		body, ok := readRequestBody(w, r, maxNodeRequestBody)
+		if !ok {
+			return
+		}
+		// A per-node destructive repair still looks parents up on the other
+		// nodes, so a disconnected or syncing peer is just as dangerous (see repair_guard.go).
+		if !guardDestructiveRepair(r.Context(), w, garageAdmin, body) {
 			return
 		}
 		proxyGarageRequest(w, r, garageAdmin, http.MethodPost, "/v2/LaunchRepairOperation?node="+url.QueryEscape(id), bytes.NewReader(body))

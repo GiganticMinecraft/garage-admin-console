@@ -5,12 +5,14 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   createMetadataSnapshot,
+  getClusterHealth,
   getClusterStatus,
   getNode,
   getNodeStats,
   getNodeWorkerVariables,
   launchNodeRepair,
   listNodeWorkers,
+  listWorkers,
   setNodeWorkerVariable,
   type MultiResponse,
   type NodeInfo,
@@ -20,6 +22,15 @@ import {
   type WorkerVariables,
 } from '@/api'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
+import {
+  DESTRUCTIVE_REPAIR_NOTE,
+  assertRepairAllowed,
+  evaluateRepairGuard,
+  guardInputsFrom,
+  isDestructiveRepair,
+  repairGuardHint,
+} from '@/lib/repair-guard'
+import { PAGE_POLLING } from '@/lib/polling'
 import { formatBytes } from '@/lib/format'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
 import { STATE_RANK, describeState, formatSecsAgo, persistentErrorsLabel } from '@/lib/workers'
@@ -478,8 +489,24 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
   const [snapshotAll, setSnapshotAll] = useState(false)
   const choice = REPAIR_CHOICES.find((c) => c.key === choiceKey) ?? REPAIR_CHOICES[0]
 
+  // Same gate as the cluster-wide page (and the backend): a destructive repair
+  // on one node still looks parents up on the other nodes, so a disconnected
+  // or syncing peer is just as dangerous.
+  // Only polled while a destructive operation is selected: the cluster-wide
+  // ListWorkers fan-out is not worth running for a page that just shows stats.
+  const gated = isDestructiveRepair(choice.value)
+  const health = useQuery({ queryKey: ['cluster', 'health'], queryFn: getClusterHealth, ...PAGE_POLLING, enabled: gated })
+  const workers = useQuery({ queryKey: ['workers'], queryFn: listWorkers, ...PAGE_POLLING, enabled: gated })
+  const status = useQuery({ queryKey: ['cluster', 'status'], queryFn: getClusterStatus, enabled: gated })
+  const guard = evaluateRepairGuard(choice.value, guardInputsFrom(health, workers, status))
+
   const repair = useMutation({
+    // The re-check is part of the mutation so its pending state covers it.
     mutationFn: async (c: RepairChoice) => {
+      await assertRepairAllowed(c.value, async () => {
+        const [h, w, st] = await Promise.all([health.refetch(), workers.refetch(), status.refetch()])
+        return guardInputsFrom(h, w, st)
+      })
       reportMulti(await launchNodeRepair(nodeId, c.value), c.label)
     },
     onError: (error) => toast.error(`修復操作に失敗しました: ${error.message}`),
@@ -519,7 +546,8 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
           <Button
             size="sm"
             variant={choice.high ? 'destructive' : 'default'}
-            disabled={repair.isPending}
+            disabled={repair.isPending || !guard.allowed}
+            title={guard.allowed ? undefined : repairGuardHint(guard)}
             onClick={() => setRepairOpen(true)}
           >
             このノードで実行
@@ -527,6 +555,12 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
         </div>
         <p className="text-sm text-muted-foreground">{choice.description}</p>
         {choice.caution && <p className="text-sm text-amber-700 dark:text-amber-500">注意: {choice.caution}</p>}
+        {isDestructiveRepair(choice.value) && <p className="text-sm text-muted-foreground">{DESTRUCTIVE_REPAIR_NOTE}</p>}
+        {!guard.allowed && (
+          <p className="text-sm text-amber-700 dark:text-amber-500" role="status">
+            実行不可: {repairGuardHint(guard)}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2 border-t pt-4">

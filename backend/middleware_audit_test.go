@@ -58,7 +58,8 @@ func newAuditGarage(t *testing.T, gotBody *string) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v2/GetClusterHealth":
-			w.Write([]byte(`{"status":"healthy"}`))
+			// Complete counters: the repair guard refuses an incomplete answer.
+			w.Write([]byte(`{"status":"healthy","knownNodes":1,"connectedNodes":1,"storageNodes":1,"storageNodesUp":1,"partitions":256,"partitionsQuorum":256,"partitionsAllOk":256}`))
 		default:
 			w.Write([]byte(`{"success":{"n1":null},"error":{}}`))
 		}

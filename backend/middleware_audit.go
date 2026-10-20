@@ -166,31 +166,20 @@ func extractRepairType(body []byte, complete bool) map[string]any {
 	if !complete {
 		return nil
 	}
-	var req struct {
-		RepairType json.RawMessage `json:"repairType"`
-	}
-	if json.Unmarshal(body, &req) != nil || len(req.RepairType) == 0 {
+	name, k, sub, ok := decodeRepairType(body)
+	if !ok {
 		return nil
 	}
-	var s string
-	if json.Unmarshal(req.RepairType, &s) == nil {
-		if auditSafeToken.MatchString(s) {
-			return map[string]any{"repairType": s}
+	if name != "" {
+		if auditSafeToken.MatchString(name) {
+			return map[string]any{"repairType": name}
 		}
 		return nil
 	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal(req.RepairType, &obj) != nil || len(obj) != 1 {
+	if !auditSafeToken.MatchString(k) || !auditSafeToken.MatchString(sub) {
 		return nil
 	}
-	for k, v := range obj {
-		var sub string
-		if !auditSafeToken.MatchString(k) || json.Unmarshal(v, &sub) != nil || !auditSafeToken.MatchString(sub) {
-			return nil
-		}
-		return map[string]any{"repairType": k + ":" + sub}
-	}
-	return nil
+	return map[string]any{"repairType": k + ":" + sub}
 }
 
 // extractWorkerVariable returns {"variable": name, "allNodes": bool} for a

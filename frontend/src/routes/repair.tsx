@@ -7,12 +7,14 @@ import {
   getStorageHealth,
   launchRepair,
   listBlockErrors,
+  listWorkers,
   type RepairType,
 } from '@/api'
 import {
   blockErrorsCard,
   blockErrorsCoverage,
   decideMaintenanceStatus,
+  fetchState,
   nodeStatsInput,
   resyncErrorsCard,
   resyncQueueCard,
@@ -20,7 +22,6 @@ import {
   staleCard,
   summarizeNodeMetric,
   type CardSpec,
-  type FetchState,
 } from '@/lib/maintenance-status'
 import { showMultiResponseToast } from '@/lib/multi-response'
 import { nonStorageNodeIds } from '@/lib/nodes'
@@ -30,6 +31,14 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
+import {
+  DESTRUCTIVE_REPAIR_NOTE,
+  assertRepairAllowed,
+  evaluateRepairGuard,
+  guardInputsFrom,
+  isDestructiveRepair,
+  repairGuardHint,
+} from '@/lib/repair-guard'
 import { PAGE_POLLING } from '@/lib/polling'
 import { RefreshIndicator } from '@/components/refresh-indicator'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -49,7 +58,7 @@ const PLAYBOOKS: {
     steps: [
       { text: 'レイアウトの適用後、数時間待ってリシンクが収まらなければ「ブロック整合性検証」を実行' },
       { text: 'エラーが残る場合はブロックエラーページで対象を確認', link: { to: '/blocks', label: 'ブロックエラー' } },
-      { text: '必要なら purge してから blockRefs / blockRc を実行' },
+      { text: '全ストレージノードが稼働し全パーティションのレプリカが揃っていることを確認し、必要なら purge してから blockRefs / blockRc を実行' },
     ],
   },
   {
@@ -57,6 +66,7 @@ const PLAYBOOKS: {
     summary: 'まずどのブロックが失敗しているか確認します。',
     steps: [
       { text: 'ブロックエラーページでエラーの詳細を確認', link: { to: '/blocks', label: 'ブロックエラー' } },
+      { text: 'ストレージノードが切断中なら先に復旧を待つ。切断中に blockRefs / versions を実行すると、到達できないだけの親を「存在しない」と誤判定して生きたデータを削除扱いにする (2026-10-19 の障害)' },
       { text: '復旧不能なブロックは purge し、その後 blockRefs / blockRc を実行' },
       { text: 'キューが空にならない場合のみ「リシンクキューのクリア」を検討' },
     ],
@@ -74,9 +84,9 @@ const PLAYBOOKS: {
     title: '大規模障害からの復旧',
     summary: '広範囲の整合性確認が必要な場合の手順です。',
     steps: [
-      { text: 'メタデータの異常が疑われるなら「テーブル修復」を実行' },
+      { text: 'まず全ストレージノードの接続を回復させ、「テーブル修復」で同期を終える (sync / Merkle のキューが空になるのを待つ)' },
       { text: 'データの再配置には「ブロック整合性検証」を実行' },
-      { text: 'バージョンやブロック参照の不整合があれば個別の修復を追加' },
+      { text: 'バージョンやブロック参照の不整合があれば個別の修復を追加。いずれも全ストレージノード稼働・全パーティション揃い・テーブル同期が idle のときだけ実行できる' },
     ],
   },
 ]
@@ -91,11 +101,6 @@ const SEVERITY_LABEL = {
   low: 'まれに使用',
   medium: '障害時に使用',
   high: '最終手段',
-}
-
-/** react-query status → the decision's FetchState. */
-function fetchState(q: { isPending: boolean; isError: boolean }): FetchState {
-  return q.isError ? 'error' : q.isPending ? 'pending' : 'success'
 }
 
 function SignalCard({
@@ -172,8 +177,16 @@ function RepairPage() {
     queryFn: getStorageHealth,
     ...PAGE_POLLING,
   })
-  const refreshAll = () => Promise.all([health.refetch(), blockErrors.refetch(), storageHealth.refetch()])
-  const updatedAt = Math.max(health.dataUpdatedAt, blockErrors.dataUpdatedAt, storageHealth.dataUpdatedAt)
+  // Table sync / Merkle / insert workers: a destructive repair must not run
+  // while any storage node is still converging its tables (see repair-guard).
+  const workers = useQuery({
+    queryKey: ['workers'],
+    queryFn: listWorkers,
+    ...PAGE_POLLING,
+  })
+  const refreshAll = () =>
+    Promise.all([health.refetch(), blockErrors.refetch(), storageHealth.refetch(), workers.refetch()])
+  const updatedAt = Math.max(health.dataUpdatedAt, blockErrors.dataUpdatedAt, storageHealth.dataUpdatedAt, workers.dataUpdatedAt)
 
   // Hostnames for the per-node breakdown, and which nodes hold no blocks
   // (gateways are left out of block-level coverage); shares the dashboard's cache.
@@ -187,8 +200,20 @@ function RepairPage() {
   )
   const skip = useMemo(() => nonStorageNodeIds(status.data?.nodes), [status.data])
 
+  const guardFor = (repairType: RepairType) => evaluateRepairGuard(repairType, guardInputsFrom(health, workers, status))
+  // Fresh inputs for the pre-launch re-check (polling pauses in background tabs).
+  const refetchGuardInputs = async () => {
+    const [h, w, st] = await Promise.all([health.refetch(), workers.refetch(), status.refetch()])
+    return guardInputsFrom(h, w, st)
+  }
+
   const mutation = useMutation({
-    mutationFn: (repairType: RepairType) => launchRepair(repairType),
+    // The re-check is part of the mutation so its pending state covers it:
+    // the dialog cannot be cancelled or re-submitted while it runs.
+    mutationFn: async (repairType: RepairType) => {
+      await assertRepairAllowed(repairType, refetchGuardInputs)
+      return launchRepair(repairType)
+    },
     onSuccess: (resp) => {
       showMultiResponseToast(resp, {
         action: '操作',
@@ -357,8 +382,15 @@ function RepairPage() {
 
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">修復操作</h2>
+        <p className="text-sm text-muted-foreground">
+          メタデータを削除扱いにする操作 (バージョン修復・ブロック参照修復・ブロック参照カウント修復・マルチパートアップロード修復) は、
+          全ストレージノードが稼働し、全パーティションのレプリカが揃い、テーブルの sync ワーカーが idle のときだけ実行できます (サーバー側でも同じ条件で拒否します)。
+          ノード切断中や同期中に実行すると、到達できないだけの親を「存在しない」と誤判定して生きたデータを削除扱いにします。
+        </p>
         <div className="grid gap-3">
-          {REPAIR_OPERATIONS.map((op) => (
+          {REPAIR_OPERATIONS.map((op) => {
+            const guard = guardFor(op.value)
+            return (
             <div key={op.value} className="rounded-lg border p-4 space-y-3">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="space-y-2">
@@ -371,12 +403,18 @@ function RepairPage() {
                 <Button
                   size="sm"
                   variant={op.severity === 'high' ? 'destructive' : 'default'}
-                  disabled={mutation.isPending}
+                  disabled={mutation.isPending || !guard.allowed}
+                  title={guard.allowed ? undefined : repairGuardHint(guard)}
                   onClick={() => requestRepair(op.value, op.label, op.severity)}
                 >
                   実行
                 </Button>
               </div>
+              {!guard.allowed && (
+                <p className="text-sm text-amber-700 dark:text-amber-500" role="status">
+                  実行不可: {repairGuardHint(guard)}
+                </p>
+              )}
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-md bg-muted/40 p-3">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">いつ使うか</p>
@@ -385,10 +423,12 @@ function RepairPage() {
                 <div className="rounded-md bg-muted/40 p-3">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">注意</p>
                   <p className="mt-1 text-sm">{op.caution}</p>
+                  {isDestructiveRepair(op.value) && <p className="mt-1 text-sm">{DESTRUCTIVE_REPAIR_NOTE}</p>}
                 </div>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -428,7 +468,9 @@ function RepairPage() {
         description={
           pendingSeverity === 'high'
             ? 'この操作は最終手段です。ブロックエラーページで原因を確認し、必要な purge を済ませたうえで実行してください。'
-            : 'この操作を全ノードに対して実行します。クラスタの負荷が一時的に上がる可能性があります。'
+            : pendingRepairType && isDestructiveRepair(pendingRepairType)
+              ? 'この操作は親が見つからないメタデータを削除扱いにします。実行前にクラスタとワーカーの状態を取り直して確認します。全ノードに対して実行し、クラスタの負荷が一時的に上がる可能性があります。'
+              : 'この操作を全ノードに対して実行します。クラスタの負荷が一時的に上がる可能性があります。'
         }
         onConfirm={() => {
           if (pendingRepairType) return mutation.mutateAsync(pendingRepairType)
