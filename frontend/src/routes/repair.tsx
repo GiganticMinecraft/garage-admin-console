@@ -35,11 +35,10 @@ import {
   DESTRUCTIVE_REPAIR_NOTE,
   assertRepairAllowed,
   evaluateRepairGuard,
+  guardInputsFrom,
   isDestructiveRepair,
   repairGuardHint,
-  type GuardInputs,
 } from '@/lib/repair-guard'
-import { isStorageNode } from '@/lib/nodes'
 import { PAGE_POLLING } from '@/lib/polling'
 import { RefreshIndicator } from '@/components/refresh-indicator'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -87,7 +86,7 @@ const PLAYBOOKS: {
     steps: [
       { text: 'まず全ストレージノードの接続を回復させ、「テーブル修復」で同期を終える (sync / Merkle のキューが空になるのを待つ)' },
       { text: 'データの再配置には「ブロック整合性検証」を実行' },
-      { text: 'バージョンやブロック参照の不整合があれば個別の修復を追加。いずれも全ストレージノード稼働・全パーティション揃いのときだけ実行できる' },
+      { text: 'バージョンやブロック参照の不整合があれば個別の修復を追加。いずれも全ストレージノード稼働・全パーティション揃い・テーブル同期が idle のときだけ実行できる' },
     ],
   },
 ]
@@ -201,26 +200,11 @@ function RepairPage() {
   )
   const skip = useMemo(() => nonStorageNodeIds(status.data?.nodes), [status.data])
 
-  const storageNodeIds = useMemo(
-    () => (status.data ? status.data.nodes.filter(isStorageNode).map((n) => n.id) : undefined),
-    [status.data],
-  )
-  const guardInputs: GuardInputs = {
-    health: { state: fetchState(health), data: health.data },
-    workers: { state: fetchState(workers), data: workers.data },
-    storageNodeIds,
-    nodeNames,
-  }
-  const guardFor = (repairType: RepairType) => evaluateRepairGuard(repairType, guardInputs)
+  const guardFor = (repairType: RepairType) => evaluateRepairGuard(repairType, guardInputsFrom(health, workers, status))
   // Fresh inputs for the pre-launch re-check (polling pauses in background tabs).
-  const refetchGuardInputs = async (): Promise<GuardInputs> => {
+  const refetchGuardInputs = async () => {
     const [h, w, st] = await Promise.all([health.refetch(), workers.refetch(), status.refetch()])
-    return {
-      health: { state: fetchState(h), data: h.data },
-      workers: { state: fetchState(w), data: w.data },
-      storageNodeIds: st.data ? st.data.nodes.filter(isStorageNode).map((n) => n.id) : undefined,
-      nodeNames,
-    }
+    return guardInputsFrom(h, w, st)
   }
 
   const mutation = useMutation({
@@ -399,8 +383,8 @@ function RepairPage() {
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">修復操作</h2>
         <p className="text-sm text-muted-foreground">
-          メタデータを削除扱いにする操作 (バージョン修復・ブロック参照修復・ブロック参照カウント修復・ブロック整合性検証・マルチパートアップロード修復) は、
-          全ストレージノードが稼働し、全パーティションのレプリカが揃い、テーブルの同期ワーカーが idle のときだけ実行できます (サーバー側でも同じ条件で拒否します)。
+          メタデータを削除扱いにする操作 (バージョン修復・ブロック参照修復・ブロック参照カウント修復・マルチパートアップロード修復) は、
+          全ストレージノードが稼働し、全パーティションのレプリカが揃い、テーブルの sync ワーカーが idle のときだけ実行できます (サーバー側でも同じ条件で拒否します)。
           ノード切断中や同期中に実行すると、到達できないだけの親を「存在しない」と誤判定して生きたデータを削除扱いにします。
         </p>
         <div className="grid gap-3">

@@ -28,7 +28,8 @@ const statusBody = `{"nodes":[
   {"id":"ggg","hostname":"gateway","draining":false,"role":{"zone":"dc1","capacity":null,"tags":[]}}]}`
 
 func idleWorkers() string {
-	ws := `[{"id":1,"name":"object sync","state":"idle","queueLength":null},{"id":2,"name":"version sync","state":"idle"},{"id":3,"name":"block_ref sync","state":"idle"},{"id":4,"name":"object Merkle","state":"idle"},{"id":5,"name":"block_ref queue","state":"idle","queueLength":0},{"id":6,"name":"Block scrub worker","state":"busy"},{"id":7,"name":"block_ref GC","state":"idle","queueLength":39292}]`
+	// Merkle / insert-queue workers busy under write load must not matter.
+	ws := `[{"id":1,"name":"object sync","state":"idle","queueLength":null},{"id":2,"name":"version sync","state":"idle"},{"id":3,"name":"block_ref sync","state":"idle"},{"id":8,"name":"multipart_upload sync","state":"idle"},{"id":4,"name":"object Merkle","state":"busy"},{"id":5,"name":"block_ref queue","state":"busy","queueLength":3},{"id":6,"name":"Block scrub worker","state":"busy"},{"id":7,"name":"block_ref GC","state":"idle","queueLength":39292}]`
 	return `{"success":{"aaa":` + ws + `,"bbb":` + ws + `,"ccc":` + ws + `},"error":{}}`
 }
 
@@ -101,7 +102,7 @@ func TestDestructiveRepairRefusedWhileNodeDown(t *testing.T) {
 	// garage-1 is down, so it does not answer ListWorkers either.
 	c.workers = strings.Replace(idleWorkers(), `"bbb":[`, `"zzz":[`, 1)
 	c.workers = strings.Replace(c.workers, `"error":{}`, `"error":{"bbb":"Not connected: bbb"}`, 1)
-	for _, repair := range []string{"versions", "blockRefs", "blockRc", "blocks", "multipartUploads"} {
+	for _, repair := range []string{"versions", "blockRefs", "blockRc", "multipartUploads"} {
 		for _, path := range []string{"/api/repair", "/api/nodes/aaa/repair"} {
 			code, body, launched := launchRepairAgainst(t, path, `{"repairType":"`+repair+`"}`, c)
 			if code != http.StatusConflict || launched {
@@ -111,7 +112,7 @@ func TestDestructiveRepairRefusedWhileNodeDown(t *testing.T) {
 			got := decodeGuardError(t, body)
 			if got.RepairType != repair || len(got.Reasons) != 3 ||
 				got.Reasons[0] != "ストレージノードが停止中です (稼働 2 / 3)" ||
-				got.Reasons[1] != "全レプリカが揃っていないパーティションがあります (256 / 256)" ||
+				got.Reasons[1] != "全レプリカが揃っているパーティションが 0 / 256 しかありません" ||
 				!strings.Contains(got.Reasons[2], "garage-1 のワーカー状態を取得できません (Not connected: bbb)") ||
 				!strings.Contains(got.Advice, "tables repair") {
 				t.Errorf("%s: body = %s", repair, body)
@@ -130,16 +131,18 @@ func TestDestructiveRepairRefusedWhileTablesSyncing(t *testing.T) {
 		t.Fatalf("status = %d launched = %v body = %s", code, launched, body)
 	}
 	got := decodeGuardError(t, body)
-	if len(got.Reasons) != 1 || got.Reasons[0] != "テーブルの同期が進行中です (garage-1: object sync が実行中)" || !strings.Contains(got.Advice, "idle になる") {
+	if len(got.Reasons) != 1 || got.Reasons[0] != "テーブルの同期が進行中です (garage-1: object sync が実行中)" || !strings.Contains(got.Advice, "sync ワーカーが idle") {
 		t.Errorf("body = %s", body)
 	}
 }
 
-func TestDestructiveRepairRefusedWhileInsertQueueNotEmpty(t *testing.T) {
+// versions resolves multipart-upload backlinks through mpu_table, so its sync
+// worker is gated too.
+func TestDestructiveRepairRefusedWhileMultipartUploadSyncing(t *testing.T) {
 	c := healthyCluster()
-	c.workers = strings.Replace(idleWorkers(), `"ccc":[{"id":1,"name":"object sync","state":"idle","queueLength":null}`, `"ccc":[{"id":1,"name":"object sync","state":"idle"},{"id":9,"name":"version queue","state":"idle","queueLength":17}`, 1)
+	c.workers = strings.Replace(idleWorkers(), `"ccc":[{"id":1,"name":"object sync","state":"idle","queueLength":null},{"id":2,"name":"version sync","state":"idle"},{"id":3,"name":"block_ref sync","state":"idle"},{"id":8,"name":"multipart_upload sync","state":"idle"}`, `"ccc":[{"id":1,"name":"object sync","state":"idle"},{"id":8,"name":"multipart_upload sync","state":"busy"}`, 1)
 	code, body, launched := launchRepairAgainst(t, "/api/repair", `{"repairType":"versions"}`, c)
-	if code != http.StatusConflict || launched || !strings.Contains(body, "garage-2: version queue にキュー 17 件") {
+	if code != http.StatusConflict || launched || !strings.Contains(body, "garage-2: multipart_upload sync が実行中") {
 		t.Errorf("status = %d launched = %v body = %s", code, launched, body)
 	}
 }
@@ -150,7 +153,7 @@ func TestDestructiveRepairIgnoresGatewayNodes(t *testing.T) {
 	c := healthyCluster()
 	c.health = `{"status":"healthy","knownNodes":4,"connectedNodes":3,"storageNodes":3,"storageNodesUp":3,"partitions":256,"partitionsQuorum":256,"partitionsAllOk":256}`
 	c.workers = strings.Replace(idleWorkers(), `"error":{}`, `"error":{"ggg":"Not connected: ggg"}`, 1)
-	code, body, launched := launchRepairAgainst(t, "/api/repair", `{"repairType":"blocks"}`, c)
+	code, body, launched := launchRepairAgainst(t, "/api/repair", `{"repairType":"blockRc"}`, c)
 	if code != http.StatusOK || !launched {
 		t.Errorf("status = %d launched = %v body = %s", code, launched, body)
 	}
@@ -162,7 +165,7 @@ func TestDestructiveRepairRefusedWhilePartitionNotReplicated(t *testing.T) {
 	c := healthyCluster()
 	c.health = `{"status":"degraded","knownNodes":3,"connectedNodes":3,"storageNodes":3,"storageNodesUp":3,"partitions":256,"partitionsQuorum":256,"partitionsAllOk":250}`
 	code, body, launched := launchRepairAgainst(t, "/api/repair", `{"repairType":"versions"}`, c)
-	if code != http.StatusConflict || launched || !strings.Contains(body, "(6 / 256)") {
+	if code != http.StatusConflict || launched || !strings.Contains(body, "250 / 256 しかありません") {
 		t.Errorf("status = %d launched = %v body = %s", code, launched, body)
 	}
 }
@@ -187,12 +190,13 @@ func TestDestructiveRepairRefusedWhenHealthIncomplete(t *testing.T) {
 	}
 }
 
-// Sync-only, read-only and scrub operations never consult the cluster state.
+// Sync-only, read-only, resync-only (blocks) and scrub operations never
+// consult the cluster state.
 func TestNonDestructiveRepairNotGated(t *testing.T) {
 	c := healthyCluster()
 	c.health = degradedBody
 	c.workers = `{"success":{},"error":{"aaa":"down","bbb":"down","ccc":"down"}}`
-	for _, body := range []string{`{"repairType":"tables"}`, `{"repairType":"rebalance"}`, `{"repairType":"aliases"}`, `{"repairType":"clearResyncQueue"}`, `{"repairType":{"scrub":"start"}}`} {
+	for _, body := range []string{`{"repairType":"tables"}`, `{"repairType":"blocks"}`, `{"repairType":"rebalance"}`, `{"repairType":"aliases"}`, `{"repairType":"clearResyncQueue"}`, `{"repairType":{"scrub":"start"}}`} {
 		for _, path := range []string{"/api/repair", "/api/nodes/aaa/repair"} {
 			code, resp, launched := launchRepairAgainst(t, path, body, c)
 			if code != http.StatusOK || !launched {

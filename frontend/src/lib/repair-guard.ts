@@ -1,9 +1,12 @@
-import type { ClusterHealth, RepairType, ScrubCommand, Worker } from '@/api'
-import type { FetchState } from '@/lib/maintenance-status'
+import type { ClusterHealth, ClusterStatus, RepairType, ScrubCommand, Worker, WorkersResponse } from '@/api'
+import { fetchState, type FetchState } from '@/lib/maintenance-status'
+import { isStorageNode, nodeDisplayName } from '@/lib/nodes'
 import { describeState } from '@/lib/workers'
 
 /**
- * Repairs that mark metadata as deleted or delete block files. They decide
+ * Repairs that mark metadata as deleted or recompute the reference counts
+ * that drive block deletion ("blocks" is not one: it only queues blocks for
+ * resync, src/garage/repair/online.rs). They decide
  * "this version / block_ref has no parent" by looking the parent up on the
  * storage nodes that hold it; while one is disconnected, or still receiving
  * table entries after reconnecting, that lookup can be answered by a replica
@@ -19,7 +22,6 @@ export const DESTRUCTIVE_REPAIRS: ReadonlySet<Exclude<RepairType, { scrub: Scrub
   'versions',
   'blockRefs',
   'blockRc',
-  'blocks',
   'multipartUploads',
 ] as const)
 
@@ -27,17 +29,17 @@ export function isDestructiveRepair(repairType: RepairType): boolean {
   return typeof repairType === 'string' && (DESTRUCTIVE_REPAIRS as ReadonlySet<string>).has(repairType)
 }
 
-/** Workers whose activity means the metadata tables are still converging (same list as the backend). */
+/**
+ * The "{table} sync" workers of the tables the destructive repairs consult
+ * (same list as the backend). A busy one means a full partition sync is in
+ * progress and a replica may still lack rows. Merkle / insert-queue workers
+ * are busy under ordinary write load, so they are not gated.
+ */
 export const TABLE_SYNC_WORKERS: ReadonlySet<string> = new Set([
   'object sync',
   'version sync',
   'block_ref sync',
-  'object Merkle',
-  'version Merkle',
-  'block_ref Merkle',
-  'object queue',
-  'version queue',
-  'block_ref queue',
+  'multipart_upload sync',
 ])
 
 /** What the pages hold about the cluster: fetch state plus the data, if any. */
@@ -45,7 +47,7 @@ export interface GuardInputs {
   /** GET /api/cluster/health. */
   health: { state: FetchState; data?: Pick<ClusterHealth, 'storageNodes' | 'storageNodesUp' | 'partitions' | 'partitionsAllOk'> }
   /** GET /api/workers: every node's workers, and the nodes that did not answer. */
-  workers: { state: FetchState; data?: { workers: readonly Pick<Worker, 'nodeId' | 'name' | 'state' | 'queueLength'>[]; errors: Readonly<Record<string, string>> } }
+  workers: { state: FetchState; data?: { workers: readonly Pick<Worker, 'nodeId' | 'name' | 'state'>[]; errors: Readonly<Record<string, string>> } }
   /** IDs of the nodes holding metadata (storage / draining), from the cluster status; undefined while unknown. */
   storageNodeIds?: readonly string[]
   /** Hostnames for messages. */
@@ -53,6 +55,23 @@ export interface GuardInputs {
 }
 
 export type RepairGuard = { allowed: true } | { allowed: false; reasons: string[]; advice: string }
+
+type QueryLike<T> = { isPending: boolean; isError: boolean; data?: T }
+
+/** GuardInputs from the three queries the pages hold (render and pre-launch refetch alike). */
+export function guardInputsFrom(
+  health: QueryLike<ClusterHealth>,
+  workers: QueryLike<WorkersResponse>,
+  status: QueryLike<ClusterStatus>,
+): GuardInputs {
+  const nodes = status.data?.nodes
+  return {
+    health: { state: fetchState(health), data: health.data },
+    workers: { state: fetchState(workers), data: workers.data },
+    storageNodeIds: nodes ? nodes.filter(isStorageNode).map((n) => n.id) : undefined,
+    nodeNames: new Map((nodes ?? []).map((n) => [n.id, nodeDisplayName(n)] as const)),
+  }
+}
 
 const UNKNOWN = (what: string) => `${what}を取得できないため、安全に実行できるか判断できません`
 
@@ -86,11 +105,11 @@ export function evaluateRepairGuard(repairType: RepairType, inputs: GuardInputs)
     reasons.push(`ストレージノードが停止中です (稼働 ${h.storageNodesUp} / ${h.storageNodes})`)
   }
   if (h.partitionsAllOk < h.partitions) {
-    reasons.push(`全レプリカが揃っていないパーティションがあります (${h.partitions - h.partitionsAllOk} / ${h.partitions})`)
+    reasons.push(`全レプリカが揃っているパーティションが ${h.partitionsAllOk} / ${h.partitions} しかありません`)
   }
   const degraded = reasons.length > 0
 
-  const name = (id: string) => nodeNames?.get(id) ?? `${id.slice(0, 16)}…`
+  const name = (id: string) => nodeNames?.get(id) ?? nodeDisplayName({ id, hostname: '' })
   const syncing: string[] = []
   const answered = new Set(workers.data.workers.map((w) => w.nodeId))
   for (const id of [...storageNodeIds].sort()) {
@@ -101,14 +120,13 @@ export function evaluateRepairGuard(repairType: RepairType, inputs: GuardInputs)
     for (const w of workers.data.workers) {
       if (w.nodeId !== id || !TABLE_SYNC_WORKERS.has(w.name)) continue
       if (describeState(w.state).kind !== 'idle') syncing.push(`${name(id)}: ${w.name} が実行中`)
-      else if (w.queueLength != null && w.queueLength > 0) syncing.push(`${name(id)}: ${w.name} にキュー ${w.queueLength} 件`)
     }
   }
   if (syncing.length > 0) reasons.push(`テーブルの同期が進行中です (${syncing.join('、')})`)
   if (reasons.length === 0) return { allowed: true }
   const advice = degraded
     ? 'ストレージノードの復旧を待ち、その後「テーブル修復」で同期を終えてから実行してください。'
-    : '同期が終わる (sync / Merkle / queue ワーカーが idle になる) まで待ってから実行してください。'
+    : '同期が終わる (各テーブルの sync ワーカーが idle になる) まで待ってから実行してください。'
   return { allowed: false, reasons, advice }
 }
 
@@ -120,7 +138,7 @@ export function repairGuardHint(guard: RepairGuard): string {
 
 /** Shared caution shown on every destructive operation card. */
 export const DESTRUCTIVE_REPAIR_NOTE =
-  'この操作は親が見つからないメタデータを削除扱いにします。全ストレージノードが稼働し、全パーティションのレプリカが揃い、テーブルの同期ワーカーが idle のときだけ実行できます (サーバー側でも同じ条件で拒否します)。'
+  'この操作は親が見つからないメタデータを削除扱いにします (blockRc は参照カウントを再計算し、0 になったブロックは GC されます)。全ストレージノードが稼働し、全パーティションのレプリカが揃い、テーブルの sync ワーカーが idle のときだけ実行できます (サーバー側でも同じ条件で拒否します)。'
 
 /**
  * Re-evaluate against freshly fetched inputs right before launching: polling

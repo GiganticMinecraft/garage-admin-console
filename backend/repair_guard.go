@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // destructiveRepairs are the LaunchRepairOperation repairTypes that mark
-// metadata as deleted or delete block files. They decide "this version /
+// metadata as deleted or recompute the reference counts that drive block
+// deletion ("blocks" is not one: RepairWhat::Blocks only queues blocks for
+// resync, src/garage/repair/online.rs). They decide "this version /
 // block_ref has no parent" by looking the parent up on the storage nodes
 // holding it; while one is disconnected, or still receiving table entries
 // after reconnecting, that lookup can be answered by a replica that does not
@@ -27,18 +30,21 @@ var destructiveRepairs = map[string]bool{
 	"versions":         true,
 	"blockRefs":        true,
 	"blockRc":          true,
-	"blocks":           true,
 	"multipartUploads": true,
 }
 
-// tableSyncWorkers are the workers whose activity means the metadata tables
-// the destructive repairs consult are still converging: a full sync in
-// progress (after a reconnection or a tables repair), Merkle tree updates
-// pending, or inserts queued.
+// tableSyncWorkers are the "{table} sync" workers of the tables the
+// destructive repairs consult (versions also resolves multipart-upload
+// backlinks through mpu_table). A busy one means a full partition sync is in
+// progress: after a reconnection or a tables repair, a replica may still lack
+// rows. The Merkle and insert-queue workers are deliberately not gated: they
+// are busy whenever there is write load (src/table/{merkle,queue}.rs), which
+// would make the repairs unlaunchable on a busy cluster.
 var tableSyncWorkers = map[string]bool{
-	"object sync": true, "version sync": true, "block_ref sync": true,
-	"object Merkle": true, "version Merkle": true, "block_ref Merkle": true,
-	"object queue": true, "version queue": true, "block_ref queue": true,
+	"object sync":           true,
+	"version sync":          true,
+	"block_ref sync":        true,
+	"multipart_upload sync": true,
 }
 
 // decodeRepairType parses a LaunchRepairOperation body. Garage's RepairType
@@ -123,9 +129,8 @@ func (s clusterStatusNodes) storageNodes() []storageNode {
 
 // workerStatus is the subset of a ListWorkers entry the guard reads.
 type workerStatus struct {
-	Name        string          `json:"name"`
-	State       json.RawMessage `json:"state"`
-	QueueLength *int64          `json:"queueLength"`
+	Name  string          `json:"name"`
+	State json.RawMessage `json:"state"`
 }
 
 func (w workerStatus) idle() bool {
@@ -149,7 +154,7 @@ func destructiveRepairBlockers(h clusterHealth, nodes []storageNode, workers lis
 		v.Reasons = append(v.Reasons, fmt.Sprintf("ストレージノードが停止中です (稼働 %d / %d)", *h.StorageNodesUp, *h.StorageNodes))
 	}
 	if *h.PartitionsAllOk < *h.Partitions {
-		v.Reasons = append(v.Reasons, fmt.Sprintf("全レプリカが揃っていないパーティションがあります (%d / %d)", *h.Partitions-*h.PartitionsAllOk, *h.Partitions))
+		v.Reasons = append(v.Reasons, fmt.Sprintf("全レプリカが揃っているパーティションが %d / %d しかありません", *h.PartitionsAllOk, *h.Partitions))
 	}
 	degraded := len(v.Reasons) > 0
 	var syncing []string
@@ -170,8 +175,6 @@ func destructiveRepairBlockers(h clusterHealth, nodes []storageNode, workers lis
 			}
 			if !w.idle() {
 				syncing = append(syncing, n.name+": "+w.Name+" が実行中")
-			} else if w.QueueLength != nil && *w.QueueLength > 0 {
-				syncing = append(syncing, fmt.Sprintf("%s: %s にキュー %d 件", n.name, w.Name, *w.QueueLength))
 			}
 		}
 	}
@@ -182,7 +185,7 @@ func destructiveRepairBlockers(h clusterHealth, nodes []storageNode, workers lis
 	case degraded:
 		v.Advice = "ストレージノードの復旧を待ち、その後 tables repair で同期を終えてから実行してください"
 	case len(v.Reasons) > 0:
-		v.Advice = "同期が終わる (sync / Merkle / queue ワーカーが idle になる) まで待ってから実行してください"
+		v.Advice = "同期が終わる (各テーブルの sync ワーカーが idle になる) まで待ってから実行してください"
 	}
 	return v
 }
@@ -203,16 +206,36 @@ func guardDestructiveRepair(ctx context.Context, w http.ResponseWriter, garageAd
 		writeJSONError(w, http.StatusBadGateway, what+"を取得できないため、"+name+" を安全に実行できるか判断できません")
 		return false
 	}
-	var h clusterHealth
-	if err := garageRequestJSON(ctx, garageAdmin, http.MethodGet, "/v2/GetClusterHealth", nil, &h); err != nil || !h.complete() {
+	// The three answers are independent; fetch them together so a launch
+	// waits for the slowest, not the sum.
+	var (
+		wg                            sync.WaitGroup
+		h                             clusterHealth
+		status                        clusterStatusNodes
+		workers                       listWorkersMulti
+		healthErr, statusErr, workErr error
+	)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		healthErr = garageRequestJSON(ctx, garageAdmin, http.MethodGet, "/v2/GetClusterHealth", nil, &h)
+	}()
+	go func() {
+		defer wg.Done()
+		statusErr = garageRequestJSON(ctx, garageAdmin, http.MethodGet, "/v2/GetClusterStatus", nil, &status)
+	}()
+	go func() {
+		defer wg.Done()
+		workErr = garageRequestJSON(ctx, garageAdmin, http.MethodPost, "/v2/ListWorkers?node=*", []byte(`{}`), &workers)
+	}()
+	wg.Wait()
+	if healthErr != nil || !h.complete() {
 		return unknown("クラスタの状態")
 	}
-	var status clusterStatusNodes
-	if err := garageRequestJSON(ctx, garageAdmin, http.MethodGet, "/v2/GetClusterStatus", nil, &status); err != nil {
+	if statusErr != nil {
 		return unknown("ノードの役割")
 	}
-	var workers listWorkersMulti
-	if err := garageRequestJSON(ctx, garageAdmin, http.MethodPost, "/v2/ListWorkers?node=*", []byte(`{}`), &workers); err != nil {
+	if workErr != nil {
 		return unknown("ワーカーの状態")
 	}
 	v := destructiveRepairBlockers(h, status.storageNodes(), workers)

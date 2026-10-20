@@ -14,27 +14,22 @@ import {
   listNodeWorkers,
   listWorkers,
   setNodeWorkerVariable,
-  type ClusterHealth,
-  type ClusterStatus,
   type MultiResponse,
   type NodeInfo,
   type NodeStatistics,
   type PartitionUsage,
   type RepairType,
   type WorkerVariables,
-  type WorkersResponse,
 } from '@/api'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
 import {
   DESTRUCTIVE_REPAIR_NOTE,
   assertRepairAllowed,
   evaluateRepairGuard,
+  guardInputsFrom,
   isDestructiveRepair,
   repairGuardHint,
-  type GuardInputs,
 } from '@/lib/repair-guard'
-import { isStorageNode } from '@/lib/nodes'
-import { fetchState } from '@/lib/maintenance-status'
 import { PAGE_POLLING } from '@/lib/polling'
 import { formatBytes } from '@/lib/format'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
@@ -497,27 +492,20 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
   // Same gate as the cluster-wide page (and the backend): a destructive repair
   // on one node still looks parents up on the other nodes, so a disconnected
   // or syncing peer is just as dangerous.
-  const health = useQuery({ queryKey: ['cluster', 'health'], queryFn: getClusterHealth, ...PAGE_POLLING })
-  const workers = useQuery({ queryKey: ['workers'], queryFn: listWorkers, ...PAGE_POLLING })
-  const status = useQuery({ queryKey: ['cluster', 'status'], queryFn: getClusterStatus })
-  const toInputs = (
-    h: { isPending: boolean; isError: boolean; data?: ClusterHealth },
-    w: { isPending: boolean; isError: boolean; data?: WorkersResponse },
-    st: { data?: ClusterStatus },
-  ): GuardInputs => ({
-    health: { state: fetchState(h), data: h.data },
-    workers: { state: fetchState(w), data: w.data },
-    storageNodeIds: st.data ? st.data.nodes.filter(isStorageNode).map((n) => n.id) : undefined,
-    nodeNames: new Map((st.data?.nodes ?? []).flatMap((n) => (n.hostname ? [[n.id, n.hostname] as const] : []))),
-  })
-  const guard = evaluateRepairGuard(choice.value, toInputs(health, workers, status))
+  // Only polled while a destructive operation is selected: the cluster-wide
+  // ListWorkers fan-out is not worth running for a page that just shows stats.
+  const gated = isDestructiveRepair(choice.value)
+  const health = useQuery({ queryKey: ['cluster', 'health'], queryFn: getClusterHealth, ...PAGE_POLLING, enabled: gated })
+  const workers = useQuery({ queryKey: ['workers'], queryFn: listWorkers, ...PAGE_POLLING, enabled: gated })
+  const status = useQuery({ queryKey: ['cluster', 'status'], queryFn: getClusterStatus, enabled: gated })
+  const guard = evaluateRepairGuard(choice.value, guardInputsFrom(health, workers, status))
 
   const repair = useMutation({
     // The re-check is part of the mutation so its pending state covers it.
     mutationFn: async (c: RepairChoice) => {
       await assertRepairAllowed(c.value, async () => {
         const [h, w, st] = await Promise.all([health.refetch(), workers.refetch(), status.refetch()])
-        return toInputs(h, w, st)
+        return guardInputsFrom(h, w, st)
       })
       reportMulti(await launchNodeRepair(nodeId, c.value), c.label)
     },

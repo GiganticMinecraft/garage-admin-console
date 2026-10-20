@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { ClusterHealth } from '@/api'
+import type { ClusterHealth, ClusterStatus, WorkersResponse } from '@/api'
 import {
   DESTRUCTIVE_REPAIRS,
   assertRepairAllowed,
   evaluateRepairGuard,
+  guardInputsFrom,
   isDestructiveRepair,
   repairGuardHint,
   type GuardInputs,
@@ -21,12 +22,16 @@ const healthy: ClusterHealth = {
 }
 const nodes = ['aaa', 'bbb', 'ccc']
 const names = new Map([['aaa', 'garage-0'], ['bbb', 'garage-1'], ['ccc', 'garage-2']])
+// Merkle / insert-queue workers busy under write load must not matter.
 const idle = (nodeId: string) => [
-  { nodeId, name: 'object sync', state: 'idle', queueLength: null },
-  { nodeId, name: 'block_ref Merkle', state: 'idle', queueLength: null },
-  { nodeId, name: 'version queue', state: 'idle', queueLength: 0 },
-  { nodeId, name: 'Block scrub worker', state: 'busy', queueLength: null },
-  { nodeId, name: 'block_ref GC', state: 'idle', queueLength: 39292 },
+  { nodeId, name: 'object sync', state: 'idle' },
+  { nodeId, name: 'version sync', state: 'idle' },
+  { nodeId, name: 'block_ref sync', state: 'idle' },
+  { nodeId, name: 'multipart_upload sync', state: 'idle' },
+  { nodeId, name: 'block_ref Merkle', state: 'busy' },
+  { nodeId, name: 'version queue', state: 'busy' },
+  { nodeId, name: 'Block scrub worker', state: 'busy' },
+  { nodeId, name: 'block_ref GC', state: 'idle' },
 ]
 const ok: GuardInputs = {
   health: { state: 'success', data: healthy },
@@ -37,14 +42,14 @@ const ok: GuardInputs = {
 
 describe('isDestructiveRepair', () => {
   it('gates the repairs that mark metadata deleted or delete blocks', () => {
-    for (const t of ['versions', 'blockRefs', 'blockRc', 'blocks', 'multipartUploads'] as const) {
+    for (const t of ['versions', 'blockRefs', 'blockRc', 'multipartUploads'] as const) {
       expect(isDestructiveRepair(t)).toBe(true)
       expect(DESTRUCTIVE_REPAIRS.has(t)).toBe(true)
     }
   })
 
-  it('leaves the sync-only / read-only repairs and scrub alone', () => {
-    for (const t of ['tables', 'rebalance', 'aliases', 'clearResyncQueue'] as const) {
+  it('leaves the sync-only / read-only / resync-only repairs and scrub alone', () => {
+    for (const t of ['tables', 'blocks', 'rebalance', 'aliases', 'clearResyncQueue'] as const) {
       expect(isDestructiveRepair(t)).toBe(false)
     }
     expect(isDestructiveRepair({ scrub: 'start' })).toBe(false)
@@ -99,7 +104,7 @@ describe('evaluateRepairGuard', () => {
       allowed: false,
       reasons: [
         'ストレージノードが停止中です (稼働 2 / 3)',
-        '全レプリカが揃っていないパーティションがあります (256 / 256)',
+        '全レプリカが揃っているパーティションが 0 / 256 しかありません',
         'garage-1 のワーカー状態を取得できません (Not connected: bbb)',
       ],
       advice: 'ストレージノードの復旧を待ち、その後「テーブル修復」で同期を終えてから実行してください。',
@@ -113,22 +118,22 @@ describe('evaluateRepairGuard', () => {
     expect(g).toEqual({
       allowed: false,
       reasons: ['テーブルの同期が進行中です (garage-1: object sync が実行中)'],
-      advice: '同期が終わる (sync / Merkle / queue ワーカーが idle になる) まで待ってから実行してください。',
+      advice: '同期が終わる (各テーブルの sync ワーカーが idle になる) まで待ってから実行してください。',
     })
   })
 
-  it('blocks while a table insert queue is not empty', () => {
-    const workers = [...idle('aaa'), ...idle('bbb'), ...idle('ccc').map((w) => (w.name === 'version queue' ? { ...w, queueLength: 17 } : w))]
+  it('blocks while the multipart_upload table is syncing (versions follows its backlinks)', () => {
+    const workers = [...idle('aaa'), ...idle('bbb'), ...idle('ccc').map((w) => (w.name === 'multipart_upload sync' ? { ...w, state: 'busy' } : w))]
     const g = evaluateRepairGuard('versions', { ...ok, workers: { state: 'success', data: { workers, errors: {} } } })
     expect(g.allowed).toBe(false)
-    if (!g.allowed) expect(g.reasons).toEqual(['テーブルの同期が進行中です (garage-2: version queue にキュー 17 件)'])
+    if (!g.allowed) expect(g.reasons).toEqual(['テーブルの同期が進行中です (garage-2: multipart_upload sync が実行中)'])
   })
 
   it('does not block on a gateway or a decommissioned peer', () => {
     // knownNodes lists every peer seen; only storage nodes hold metadata, and
     // a gateway that does not answer ListWorkers is just as irrelevant.
     const gatewayDown: ClusterHealth = { ...healthy, knownNodes: 4, connectedNodes: 3 }
-    const g = evaluateRepairGuard('blocks', {
+    const g = evaluateRepairGuard('blockRc', {
       ...ok,
       health: { state: 'success', data: gatewayDown },
       workers: { state: 'success', data: { workers: nodes.flatMap(idle), errors: { ggg: 'Not connected: ggg' } } },
@@ -138,9 +143,9 @@ describe('evaluateRepairGuard', () => {
 
   it('blocks on a partially replicated partition even when every node is connected', () => {
     const partial: ClusterHealth = { ...healthy, status: 'degraded', partitionsAllOk: 250 }
-    const g = evaluateRepairGuard('blocks', { ...ok, health: { state: 'success', data: partial } })
+    const g = evaluateRepairGuard('blockRc', { ...ok, health: { state: 'success', data: partial } })
     expect(g.allowed).toBe(false)
-    if (!g.allowed) expect(g.reasons).toEqual(['全レプリカが揃っていないパーティションがあります (6 / 256)'])
+    if (!g.allowed) expect(g.reasons).toEqual(['全レプリカが揃っているパーティションが 250 / 256 しかありません'])
   })
 
   it('returns an empty hint when allowed', () => {
@@ -166,5 +171,32 @@ describe('assertRepairAllowed', () => {
       return ok
     })
     expect(calls).toBe(0)
+  })
+})
+
+describe('guardInputsFrom', () => {
+  it('maps the three queries, keeps only storage nodes and names them like the rest of the UI', () => {
+    const status: ClusterStatus = {
+      nodes: [
+        { id: 'aaa', hostname: 'garage-0', role: { zone: 'dc1', capacity: 1, tags: [] }, draining: false, isUp: true },
+        { id: 'ggg', hostname: 'gateway', role: { zone: 'dc1', capacity: null, tags: [] }, draining: false, isUp: true },
+        { id: 'ddd0000000000000dddd', hostname: null, role: null, draining: true, isUp: true },
+      ],
+    } as unknown as ClusterStatus
+    const workersData: WorkersResponse = { workers: [], errors: {} }
+    const inputs = guardInputsFrom(
+      { isPending: false, isError: false, data: healthy },
+      { isPending: false, isError: true, data: workersData },
+      { isPending: false, isError: false, data: status },
+    )
+    expect(inputs.health).toEqual({ state: 'success', data: healthy })
+    expect(inputs.workers.state).toBe('error')
+    expect(inputs.storageNodeIds).toEqual(['aaa', 'ddd0000000000000dddd'])
+    expect(inputs.nodeNames?.get('aaa')).toBe('garage-0')
+    expect(inputs.nodeNames?.get('ddd0000000000000dddd')).toBe('ddd0000000000000…')
+  })
+
+  it('leaves storage nodes unknown while the status has not loaded', () => {
+    expect(guardInputsFrom({ isPending: true, isError: false }, { isPending: true, isError: false }, { isPending: true, isError: false }).storageNodeIds).toBeUndefined()
   })
 })
