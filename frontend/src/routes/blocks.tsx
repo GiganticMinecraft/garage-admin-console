@@ -14,6 +14,7 @@ import {
 import { showMultiResponseToast } from '@/lib/multi-response'
 import { blockErrorsCoverage } from '@/lib/maintenance-status'
 import { nonStorageNodeIds } from '@/lib/nodes'
+import { blockPurgeConsequences } from '@/lib/consequences'
 import { shortId } from '@/lib/format'
 import { backlinkObject, isBlockHash, objectFolder, parseBlocksSearch } from '@/lib/inspect-object'
 import {
@@ -34,6 +35,13 @@ export const Route = createFileRoute('/blocks')({
   component: BlocksPage,
   validateSearch: parseBlocksSearch,
 })
+
+/** 確認ダイアログ用: 先頭 3 件の短縮ハッシュと残りの件数。 */
+function hashSummary(hashes: Set<string>): string {
+  const all = [...hashes]
+  const head = all.slice(0, 3).map((h) => shortId(h)).join(', ')
+  return all.length > 3 ? `${head} 他 ${all.length - 3} 件` : head
+}
 
 function formatSecsAgo(secs: number): string {
   if (secs < 60) return `${Math.floor(secs)}秒前`
@@ -356,10 +364,17 @@ function BlocksPage() {
         open={purgeDialogOpen}
         onOpenChange={setPurgeDialogOpen}
         title="ブロックのパージ"
-        description={`選択した${selectedHashes.size}件のブロックをパージします。この操作は元に戻せません。`}
+        description={`選択した${selectedHashes.size}件のブロックをパージします。`}
+        target={[
+          { label: '件数', value: `${selectedHashes.size} 件` },
+          { label: 'ブロック', value: hashSummary(selectedHashes), mono: true },
+          { label: '対象ノード', value: '全ノード' },
+        ]}
+        consequences={blockPurgeConsequences(selectedHashes.size)}
+        irreversible
         onConfirm={() => purgeMutation.mutateAsync([...selectedHashes])}
         isPending={purgeMutation.isPending}
-        confirmLabel="パージ"
+        confirmLabel={`${selectedHashes.size} 件をパージ`}
         pendingLabel="パージ中..."
       />
 
@@ -368,6 +383,10 @@ function BlocksPage() {
         onOpenChange={setResyncDialogOpen}
         title="ブロックのリシンク"
         description={`選択した${selectedHashes.size}件のブロックのリシンクを再試行します。`}
+        target={[
+          { label: '件数', value: `${selectedHashes.size} 件` },
+          { label: 'ブロック', value: hashSummary(selectedHashes), mono: true },
+        ]}
         onConfirm={() => resyncMutation.mutateAsync({ blockHashes: [...selectedHashes] })}
         isPending={resyncMutation.isPending}
         confirmLabel="リシンク"

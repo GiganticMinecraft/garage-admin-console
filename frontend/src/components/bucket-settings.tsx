@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { websiteDisableConsequences } from '@/lib/consequences'
 import { formatBytes, formatCount } from '@/lib/format'
 import { parseRulesJson, rulesToText, type JsonRules as Rules } from '@/lib/rules-json'
 import { ROUTING_RULES_EXAMPLE, parseRoutingRules } from '@/lib/website-routing-rules'
@@ -556,10 +557,25 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
             : confirm?.kind === 'insert-example'
               ? `入力中のルーティングルール (現在 ${base.ruleCount} 件) を例で置き換えます。` +
                 'そのまま保存すると現在のルールは失われます。置き換えますか？'
-              : 'Website access を無効にすると、インデックス / エラードキュメントとルーティングルールの設定は破棄され、再度有効にしても元に戻りません。無効にしますか？'
+              : 'このバケットの Website access を無効にしますか？'
         }
+        target={
+          confirm?.kind === 'disable'
+            ? [
+                { label: 'インデックス', value: base.indexDocument || '-', mono: true },
+                { label: 'エラードキュメント', value: base.errorDocument || '-', mono: true },
+                { label: 'ルーティングルール', value: `${base.ruleCount} 件` },
+              ]
+            : undefined
+        }
+        consequences={confirm?.kind === 'disable' ? websiteDisableConsequences(base.ruleCount) : undefined}
+        irreversible={confirm?.kind === 'disable'}
         confirmLabel={
-          confirm?.kind === 'clear-rules' ? '削除して保存' : confirm?.kind === 'insert-example' ? '置き換える' : '無効にする'
+          confirm?.kind === 'clear-rules'
+            ? '削除して保存'
+            : confirm?.kind === 'insert-example'
+              ? '置き換える'
+              : 'Website access を無効にする'
         }
         pendingLabel="保存中..."
         isPending={save.isPending}

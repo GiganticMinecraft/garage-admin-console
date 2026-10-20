@@ -28,6 +28,11 @@ import {
 } from '@/components/ui/table'
 import { useBucketKeyPermissionMutations } from '@/hooks/use-bucket-key-permissions'
 import { useConsoleKey } from '@/hooks/use-console-access'
+import {
+  bulkObjectDeleteConsequences,
+  objectDeleteConsequences,
+  prefixDeleteConsequences,
+} from '@/lib/consequences'
 import { formatBytes, formatDateTime } from '@/lib/format'
 import {
   consoleAccessView,
@@ -996,7 +1001,14 @@ export function ObjectBrowser({
         open={deleteObjectTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteObjectTarget(null) }}
         title="オブジェクトの削除"
-        description={`「${deleteObjectTarget}」を削除しますか？この操作は取り消せません。`}
+        description={`「${deleteObjectTarget}」を削除しますか？`}
+        target={[
+          { label: 'バケット', value: bucketName ?? bucketId },
+          { label: 'キー', value: deleteObjectTarget ?? '', mono: true },
+        ]}
+        consequences={objectDeleteConsequences()}
+        irreversible
+        confirmLabel="オブジェクトを削除"
         onConfirm={() => {
           if (deleteObjectTarget) return deleteMutation.mutateAsync(deleteObjectTarget)
         }}
@@ -1007,7 +1019,14 @@ export function ObjectBrowser({
         open={bulkDeleteOpen}
         onOpenChange={setBulkDeleteOpen}
         title="選択したオブジェクトの削除"
-        description={`選択した ${selectedKeys.size} 件のオブジェクトを削除しますか？この操作は取り消せません。`}
+        description={`選択した ${selectedKeys.size} 件のオブジェクトを削除しますか？`}
+        target={[
+          { label: 'バケット', value: bucketName ?? bucketId },
+          { label: '件数', value: `${selectedKeys.size} 件` },
+        ]}
+        consequences={bulkObjectDeleteConsequences(selectedKeys.size)}
+        irreversible
+        confirmLabel={`${selectedKeys.size} 件を削除`}
         onConfirm={() => bulkDeleteMutation.mutateAsync([...selectedKeys])}
         isPending={bulkDeleteMutation.isPending}
       />
@@ -1020,10 +1039,25 @@ export function ObjectBrowser({
           prefixDeleteTarget
             ? prefixDeleteTarget.count === 0
               ? `「${prefixDeleteTarget.prefix}」で始まるオブジェクトはありません。`
-              : `「${prefixDeleteTarget.prefix}」で始まる ${prefixDeleteTarget.count}${prefixDeleteTarget.truncated ? ' 件以上' : ' 件'}のオブジェクト（${formatBytes(prefixDeleteTarget.bytes)}${prefixDeleteTarget.truncated ? ' 以上' : ''}）を削除しますか？サブフォルダも含まれます。この操作は取り消せません。` +
-                (prefixDeleteTarget.truncated ? ' 1 回の操作で削除できるのは上限件数までです。' : '')
+              : `「${prefixDeleteTarget.prefix}」以下のオブジェクトを削除しますか？`
             : ''
         }
+        target={
+          prefixDeleteTarget
+            ? [
+                { label: 'バケット', value: bucketName ?? bucketId },
+                { label: 'プレフィックス', value: prefixDeleteTarget.prefix, mono: true },
+                {
+                  label: '対象',
+                  value: `${prefixDeleteTarget.count}${prefixDeleteTarget.truncated ? ' 件以上' : ' 件'} / ${formatBytes(prefixDeleteTarget.bytes)}${prefixDeleteTarget.truncated ? ' 以上' : ''}`,
+                },
+              ]
+            : undefined
+        }
+        consequences={prefixDeleteTarget ? prefixDeleteConsequences(prefixDeleteTarget) : undefined}
+        irreversible={!!prefixDeleteTarget && prefixDeleteTarget.count > 0}
+        confirmDisabled={!prefixDeleteTarget || prefixDeleteTarget.count === 0}
+        confirmLabel="プレフィックス以下を削除"
         onConfirm={() => {
           if (prefixDeleteTarget && prefixDeleteTarget.count > 0)
             return prefixDeleteMutation.mutateAsync(prefixDeleteTarget.prefix)

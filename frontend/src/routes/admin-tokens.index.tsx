@@ -39,9 +39,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ALL_SCOPE, escalationMessage, isFullScope, scopeScore } from '@/lib/admin-scopes'
+import { ALL_SCOPE, escalationMessage, isFullScope, scopeLabel, scopeScore } from '@/lib/admin-scopes'
 import { expirationBody, expirationFromIso, expirationValid } from '@/lib/expiration'
 import type { ExpirationValue } from '@/lib/expiration'
+import { adminTokenDeleteConsequences } from '@/lib/consequences'
 import { formatDateTime } from '@/lib/format'
 import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
@@ -247,9 +248,21 @@ function AdminTokensPage() {
         title="管理トークンの削除"
         description={
           deleteTarget && isCurrentToken(deleteTarget)
-            ? `「${deleteTarget.name}」はこのコンソール自身が使っているトークンです。削除するとコンソールが Garage を操作できなくなります。本当に削除しますか？`
-            : `管理トークン「${deleteTarget?.name || deleteTarget?.id}」を削除しますか？このトークンを使っているクライアントは直ちに認証できなくなります。この操作は取り消せません。`
+            ? `「${deleteTarget.name}」はこのコンソール自身が使っているトークンです。本当に削除しますか？`
+            : `管理トークン「${deleteTarget?.name || deleteTarget?.id}」を削除しますか？`
         }
+        target={
+          deleteTarget
+            ? [
+                { label: '名前', value: deleteTarget.name || '(名前なし)' },
+                { label: 'ID', value: deleteTarget.id ?? '-', mono: true },
+                { label: '許可エンドポイント', value: scopeLabel(deleteTarget.scope) },
+              ]
+            : undefined
+        }
+        consequences={deleteTarget ? adminTokenDeleteConsequences(isCurrentToken(deleteTarget)) : undefined}
+        irreversible
+        confirmLabel={deleteTarget && isCurrentToken(deleteTarget) ? 'それでもトークンを削除' : 'トークンを削除'}
         onConfirm={() => {
           if (deleteTarget?.id) return deleteMutation.mutateAsync(deleteTarget.id)
         }}

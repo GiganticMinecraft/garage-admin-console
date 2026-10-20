@@ -31,6 +31,11 @@ import {
   repairGuardHint,
 } from '@/lib/repair-guard'
 import { PAGE_POLLING } from '@/lib/polling'
+import {
+  metadataSnapshotConsequences,
+  repairConsequences,
+  workerVariableAllNodesConsequences,
+} from '@/lib/consequences'
 import { formatBytes } from '@/lib/format'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
 import { STATE_RANK, describeState, formatSecsAgo, persistentErrorsLabel } from '@/lib/workers'
@@ -312,6 +317,8 @@ function WorkerVariablesCard({ nodeId, vars }: { nodeId: string; vars: WorkerVar
   const queryClient = useQueryClient()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [allNodes, setAllNodes] = useState(false)
+  // 全ノードへの適用は確認ダイアログを挟む。
+  const [pendingAll, setPendingAll] = useState<{ variable: string; label: string; value: string } | null>(null)
 
   const mutation = useMutation({
     mutationFn: async (body: { variable: string; value: string; allNodes: boolean }) => {
@@ -415,7 +422,11 @@ function WorkerVariablesCard({ nodeId, vars }: { nodeId: string; vars: WorkerVar
                   <Button
                     size="sm"
                     disabled={!changed || !valid || mutation.isPending}
-                    onClick={() => mutation.mutate({ variable: tv.name, value: String(n), allNodes })}
+                    onClick={() =>
+                      allNodes
+                        ? setPendingAll({ variable: tv.name, label: tv.label, value: String(n) })
+                        : mutation.mutate({ variable: tv.name, value: String(n), allNodes })
+                    }
                   >
                     {allNodes ? '全ノードに適用' : '適用'}
                   </Button>
@@ -455,6 +466,31 @@ function WorkerVariablesCard({ nodeId, vars }: { nodeId: string; vars: WorkerVar
           </Field>
         ))}
       </div>
+
+      <ConfirmDialog
+        open={pendingAll !== null}
+        onOpenChange={(open) => { if (!open) setPendingAll(null) }}
+        title="Worker 変数を全ノードに適用"
+        description={pendingAll ? `${pendingAll.label} をクラスタの全ノードで ${pendingAll.value} に変更しますか？` : ''}
+        target={
+          pendingAll
+            ? [
+                { label: '変数', value: pendingAll.variable, mono: true },
+                { label: '新しい値', value: pendingAll.value },
+                { label: 'このノードの現在値', value: vars[pendingAll.variable] ?? '-' },
+                { label: '対象ノード', value: '全ノード' },
+              ]
+            : undefined
+        }
+        consequences={pendingAll ? workerVariableAllNodesConsequences(pendingAll.variable, pendingAll.value) : undefined}
+        onConfirm={() => {
+          if (pendingAll) return mutation.mutateAsync({ variable: pendingAll.variable, value: pendingAll.value, allNodes: true })
+        }}
+        isPending={mutation.isPending}
+        confirmLabel="全ノードに適用"
+        pendingLabel="適用中..."
+        confirmVariant="default"
+      />
     </div>
   )
 }
@@ -488,6 +524,7 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
   const [snapshotOpen, setSnapshotOpen] = useState(false)
   const [snapshotAll, setSnapshotAll] = useState(false)
   const choice = REPAIR_CHOICES.find((c) => c.key === choiceKey) ?? REPAIR_CHOICES[0]
+  const choiceConsequences = repairConsequences(choice.value)
 
   // Same gate as the cluster-wide page (and the backend): a destructive repair
   // on one node still looks parents up on the other nodes, so a disconnected
@@ -589,9 +626,16 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
             ? `${nodeName} で最終手段の操作を実行します。ブロックエラーページで原因を確認し、必要な purge を済ませたうえで実行してください。`
             : `${nodeName} に対してこの操作を実行します。ノードの負荷が一時的に上がる可能性があります。`
         }
+        target={[
+          { label: '操作', value: choice.label },
+          { label: '対象ノード', value: nodeName },
+          { label: 'ノード ID', value: nodeId, mono: true },
+        ]}
+        consequences={choiceConsequences}
+        irreversible={choiceConsequences !== undefined}
         onConfirm={() => repair.mutateAsync(choice)}
         isPending={repair.isPending}
-        confirmLabel="実行"
+        confirmLabel={`${choice.label}を実行`}
         pendingLabel="実行中..."
         confirmVariant={choice.high ? 'destructive' : 'default'}
       />
@@ -604,9 +648,18 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
             ? '全ノードでメタデータのスナップショットを作成します。完了までディスク I/O が増え、メタデータの容量を消費します。'
             : `${nodeName} でメタデータのスナップショットを作成します。完了までディスク I/O が増え、メタデータの容量を消費します。`
         }
+        target={
+          snapshotAll
+            ? [{ label: '対象ノード', value: '全ノード' }]
+            : [
+                { label: '対象ノード', value: nodeName },
+                { label: 'ノード ID', value: nodeId, mono: true },
+              ]
+        }
+        consequences={metadataSnapshotConsequences(snapshotAll)}
         onConfirm={() => snapshot.mutateAsync(snapshotAll)}
         isPending={snapshot.isPending}
-        confirmLabel="作成"
+        confirmLabel="スナップショットを作成"
         pendingLabel="作成中..."
         confirmVariant="default"
       />

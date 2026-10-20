@@ -23,6 +23,7 @@ import { SortableTableHead } from '@/components/sortable-table-head'
 import { formatCount, formatDateTime } from '@/lib/format'
 import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
+import { keyDeleteConsequences } from '@/lib/consequences'
 import { useDebouncedValue } from '@/lib/use-debounce'
 import { toast } from 'sonner'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -232,7 +233,18 @@ function KeysPage() {
         open={deleteTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         title="キーの削除"
-        description={`キー「${deleteTarget?.name || deleteTarget?.id}」を削除しますか？この操作は取り消せません。`}
+        description={`キー「${deleteTarget?.name || deleteTarget?.id}」を削除しますか？`}
+        target={
+          deleteTarget
+            ? [
+                { label: '名前', value: deleteTarget.name || '(名前なし)' },
+                { label: 'Access Key ID', value: deleteTarget.id, mono: true },
+              ]
+            : undefined
+        }
+        consequences={deleteTarget ? keyDeleteConsequences(deleteTarget.bucketCount) : undefined}
+        irreversible
+        confirmLabel="キーを削除"
         onConfirm={() => {
           if (deleteTarget) return deleteMutation.mutateAsync(deleteTarget.id)
         }}
