@@ -169,6 +169,10 @@ function WorkersPage() {
           </span>
         )}
       </div>
+      <p className="text-xs text-muted-foreground">
+        「稼働中 / エラー継続中のみ」は busy / throttled・キュー残あり・進捗ありのワーカーと、連続エラー中のワーカーだけを表示します。
+        回復済みの過去のエラー、累積の破損検出数、完了済み (done) のワーカーは対象外です。
+      </p>
 
       {isLoading ? (
         <p className="text-muted-foreground">読み込み中...</p>
