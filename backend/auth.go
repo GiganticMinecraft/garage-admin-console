@@ -185,6 +185,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	auditAuthEvent(r, "login", userInfo.Login)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -214,12 +215,14 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	username, _ := sess.Values[sessionKeyUser].(string)
 	sess.Options.MaxAge = -1
 	if err := sess.Save(r, w); err != nil {
 		slog.ErrorContext(r.Context(), "failed to destroy session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	auditAuthEvent(r, "logout", username)
 
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -15,8 +15,10 @@ import (
 func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.Recoverer)
+	// accessLog sits outside Recoverer so a panicking handler is still
+	// logged (and audited) with the 500 that Recoverer writes.
 	r.Use(accessLog)
+	r.Use(middleware.Recoverer)
 
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

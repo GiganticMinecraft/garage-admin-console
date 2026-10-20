@@ -16,6 +16,10 @@ import (
 //
 // Mutating requests additionally get a msg="audit" line (see
 // middleware_audit.go).
+//
+// It must be registered outside middleware.Recoverer so the 500 written for
+// a panicking handler is the status that gets logged. The lines are written
+// from a defer, so even a panic that escapes Recoverer is still logged.
 func accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
@@ -24,30 +28,47 @@ func accessLog(next http.Handler) http.Handler {
 		// Resolve the user before the handler runs: logout / callback
 		// rewrite the session cookie, and we want the caller's identity.
 		user := sessionUser(r)
-		audited := isAuditedRequest(r)
-		var detail map[string]string
-		if audited {
-			detail = auditDetail(r)
+		var audit *auditRecord
+		if isAuditedRequest(r) {
+			audit = &auditRecord{
+				user:     user,
+				detail:   auditDetail(r),
+				response: &cappedBuffer{max: maxAuditBodyBytes},
+			}
+			ww.Tee(audit.response)
 		}
+
+		completed := false
+		defer func() {
+			elapsed := time.Since(start)
+			status := ww.Status()
+			panicked := !completed
+			if panicked && status == 0 {
+				status = http.StatusInternalServerError
+			}
+
+			attrs := make([]any, 0, 16)
+			if user != "" {
+				attrs = append(attrs, "user", user)
+			}
+			attrs = append(attrs,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", status,
+				"duration_ms", elapsed.Milliseconds(),
+				"bytes", ww.BytesWritten(),
+			)
+			if panicked {
+				attrs = append(attrs, "panic", true)
+			}
+			slog.InfoContext(r.Context(), "request", attrs...)
+
+			if audit != nil {
+				logAudit(r.Context(), r, audit, status, elapsed, panicked)
+			}
+		}()
 
 		next.ServeHTTP(ww, r)
-		elapsed := time.Since(start)
-
-		attrs := make([]any, 0, 14)
-		if user != "" {
-			attrs = append(attrs, "user", user)
-		}
-		attrs = append(attrs,
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", ww.Status(),
-			"duration_ms", elapsed.Milliseconds(),
-			"bytes", ww.BytesWritten(),
-		)
-		slog.InfoContext(r.Context(), "request", attrs...)
-
-		if audited {
-			logAudit(r.Context(), r, user, ww.Status(), elapsed, detail)
-		}
+		completed = true
 	})
 }
