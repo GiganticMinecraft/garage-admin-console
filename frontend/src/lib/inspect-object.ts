@@ -1,4 +1,5 @@
 import type { BlockVersionBacklink, InspectObjectBlock, InspectObjectVersion } from '@/api'
+import { parseBucketTab, type BucketTabSearch } from '@/lib/bucket-detail-tabs'
 import { formatBytes } from '@/lib/format'
 
 /** Blocks rendered per "さらに表示" step, so objects with thousands of blocks stay responsive. */
@@ -129,17 +130,22 @@ export function isBlockHash(hash: string): boolean {
 }
 
 /**
- * validateSearch for /buckets/$id: `prefix` is the object browser folder,
- * `inspect` the key whose details are open. Keys are kept verbatim (no trim):
- * S3 keys may start or end with spaces.
+ * validateSearch for /buckets/$id: `tab` is the open tab (absent for the
+ * default objects tab), `prefix` the object browser folder, `inspect` the key
+ * whose details are open. Keys are kept verbatim (no trim): S3 keys may start
+ * or end with spaces. `inspect` only applies on the objects tab; the folder
+ * is kept on the other tabs so switching back returns to it.
  */
 export function parseBucketDetailSearch(search: Record<string, unknown>): {
+  tab?: BucketTabSearch
   prefix?: string
   inspect?: string
 } {
+  const tab = parseBucketTab(search.tab)
   return {
+    tab,
     prefix: searchString(search.prefix) || undefined,
-    inspect: searchString(search.inspect) || undefined,
+    inspect: tab ? undefined : searchString(search.inspect) || undefined,
   }
 }
 
