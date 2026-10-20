@@ -27,11 +27,11 @@ const (
 )
 
 var (
-	sessionStore  *sessions.CookieStore
-	oauthConfig   *oauth2.Config
-	githubOrg     string
-	githubTeam    string
-	githubHTTP    *http.Client
+	sessionStore *sessions.CookieStore
+	oauthConfig  *oauth2.Config
+	githubOrg    string
+	githubTeam   string
+	githubHTTP   *http.Client
 )
 
 // initAuth initialises the OAuth config, session store, and HTTP client for
