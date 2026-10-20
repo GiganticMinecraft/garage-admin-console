@@ -7,6 +7,7 @@ import {
   draftFromNode,
   draftToChange,
   groupDrafts,
+  layoutRoleRows,
   layoutTotals,
   parseTags,
   revertChangeFor,
@@ -245,7 +246,7 @@ describe('groupDrafts', () => {
   const moved = mk('m', 'node-m', role('m', 'dc1', GIB), { id: 'm', zone: 'dc3', tags: [], capacity: null })
   const unassigned = mk('u', 'node-u')
   const all = [unassigned, storB, gw, removed, added, storA, moved]
-  const summarize = (gs: ReturnType<typeof groupDrafts>) => gs.map((g) => [g.label, g.drafts.map((d) => d.id)])
+  const summarize = (gs: ReturnType<typeof groupDrafts>) => gs.map((g) => [g.label, g.rows.map((d) => d.id)])
 
   it('keeps the input order in a single group for "none"', () => {
     expect(summarize(groupDrafts(all, 'none'))).toEqual([['', ['u', 'b', 'g', 'r', 'n', 'a', 'm']]])
@@ -256,24 +257,24 @@ describe('groupDrafts', () => {
       ['dc1', ['g', 'r']],
       ['dc2', ['a', 'b']],
       ['dc3', ['m', 'n']],
-      ['未割り当て', ['u']],
+      ['ゾーン未割り当て', ['u']],
     ])
   })
 
   it('groups by zone of the applied layout when asked', () => {
     expect(summarize(groupDrafts([moved, added], 'zone', 'applied'))).toEqual([
       ['dc1', ['m']],
-      ['未割り当て', ['n']],
+      ['ゾーン未割り当て', ['n']],
     ])
   })
 
   it('groups by role in the order storage, gateway, unassigned', () => {
     expect(summarize(groupDrafts(all, 'role'))).toEqual([
-      ['storage', ['a', 'b', 'n', 'r']],
-      ['gateway', ['g', 'm']],
+      ['ストレージ', ['a', 'b', 'n', 'r']],
+      ['ゲートウェイ', ['g', 'm']],
       ['未割り当て', ['u']],
     ])
-    expect(summarize(groupDrafts([moved], 'role', 'applied'))).toEqual([['storage', ['m']]])
+    expect(summarize(groupDrafts([moved], 'role', 'applied'))).toEqual([['ストレージ', ['m']]])
   })
 
   it('groups by staged state: changed, removed, unchanged', () => {
@@ -287,7 +288,44 @@ describe('groupDrafts', () => {
 
   it('omits empty groups and handles no rows', () => {
     expect(groupDrafts([], 'zone')).toEqual([])
-    expect(summarize(groupDrafts([gw], 'role'))).toEqual([['gateway', ['g']]])
+    expect(summarize(groupDrafts([gw], 'role'))).toEqual([['ゲートウェイ', ['g']]])
+  })
+
+  it('sorts node names and zone names in natural order (garage-2 before garage-10)', () => {
+    const rows = [
+      mk('x', 'garage-10', role('x', 'zone-10', GIB)),
+      mk('y', 'garage-2', role('y', 'zone-2', GIB)),
+      mk('z', 'garage-1', role('z', 'zone-10', GIB)),
+    ]
+    expect(summarize(groupDrafts(rows, 'zone'))).toEqual([
+      ['zone-2', ['y']],
+      ['zone-10', ['z', 'x']],
+    ])
+    expect(summarize(groupDrafts(rows, 'role'))).toEqual([['ストレージ', ['z', 'y', 'x']]])
+  })
+
+  it('groups read-only current-role rows built by layoutRoleRows', () => {
+    const roles = [role('b', 'dc1', GIB), role('a', 'dc2', null), role('c', 'dc1', GIB)]
+    const staged = new Map<string, NodeRoleChange>([
+      ['b', { id: 'b', remove: true }],
+      ['c', { id: 'c', zone: 'dc3', tags: [], capacity: null }],
+    ])
+    const rows = layoutRoleRows(roles, staged, (id) => `node-${id}`)
+    expect(rows.map((r) => [r.id, r.hostname, r.staged != null, r.effective != null])).toEqual([
+      ['b', 'node-b', true, false],
+      ['a', 'node-a', false, true],
+      ['c', 'node-c', true, true],
+    ])
+    expect(summarize(groupDrafts(rows, 'change'))).toEqual([
+      ['変更あり', ['c']],
+      ['削除', ['b']],
+      ['変更なし', ['a']],
+    ])
+    // The current table groups by the applied role, not the staged one.
+    expect(summarize(groupDrafts(rows, 'zone', 'applied'))).toEqual([
+      ['dc1', ['b', 'c']],
+      ['dc2', ['a']],
+    ])
   })
 })
 

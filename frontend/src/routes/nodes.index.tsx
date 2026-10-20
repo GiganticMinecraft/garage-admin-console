@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CopyButton } from '@/components/copy-button'
+import { GroupByToggle } from '@/components/group-by-toggle'
 import { RefreshIndicator } from '@/components/refresh-indicator'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
@@ -351,20 +352,7 @@ function NodesPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="グループ化">
-        <span className="text-muted-foreground">グループ化:</span>
-        {GROUP_BY_OPTIONS.map((o) => (
-          <Button
-            key={o.value}
-            size="sm"
-            variant={groupBy === o.value ? 'default' : 'outline'}
-            aria-pressed={groupBy === o.value}
-            onClick={() => setGroupBy(o.value)}
-          >
-            {o.label}
-          </Button>
-        ))}
-      </div>
+      <GroupByToggle options={GROUP_BY_OPTIONS} value={groupBy} onChange={setGroupBy} />
 
       {status.isPending ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

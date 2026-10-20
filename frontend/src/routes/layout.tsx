@@ -34,13 +34,15 @@ import {
   draftFromNode,
   draftToChange,
   groupDrafts,
+  layoutRoleRows,
   layoutTotals,
   revertChangeFor,
-  GROUP_BY_OPTIONS,
-  type GroupBy,
-  type GroupBasis,
+  LAYOUT_GROUP_BY_OPTIONS,
+  type LayoutGroupBy,
   type RoleDraft,
+  type RowGroup,
 } from '@/lib/layout-draft'
+import { GroupByToggle } from '@/components/group-by-toggle'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/layout')({
@@ -71,50 +73,26 @@ function SummaryDiff({ before, after, format = String }: { before: number; after
   )
 }
 
-function GroupByToggle({ value, onChange }: { value: GroupBy; onChange: (v: GroupBy) => void }) {
-  return (
-    <div role="group" aria-label="グループ化" className="flex flex-wrap items-center gap-1 text-sm">
-      <span className="mr-1 text-muted-foreground">グループ化:</span>
-      {GROUP_BY_OPTIONS.map((o) => (
-        <Button
-          key={o.value}
-          type="button"
-          size="sm"
-          variant={o.value === value ? 'secondary' : 'ghost'}
-          aria-pressed={o.value === value}
-          onClick={() => onChange(o.value)}
-        >
-          {o.label}
-        </Button>
-      ))}
-    </div>
-  )
-}
-
-/** Table rows for each group, with a heading row per group unless ungrouped. */
-function GroupedRows({
-  drafts,
-  by,
-  basis,
+/** Table rows for each group, with a heading row per group (none for the single ungrouped group). */
+function GroupedRows<T>({
+  groups,
   colSpan,
   renderRow,
 }: {
-  drafts: RoleDraft[]
-  by: GroupBy
-  basis?: GroupBasis
+  groups: RowGroup<T>[]
   colSpan: number
-  renderRow: (d: RoleDraft) => ReactNode
+  renderRow: (row: T) => ReactNode
 }) {
-  return groupDrafts(drafts, by, basis).map((g) => (
+  return groups.map((g) => (
     <Fragment key={g.key}>
-      {by !== 'none' && (
+      {g.label && (
         <TableRow className="bg-muted/50 hover:bg-muted/50">
           <TableCell colSpan={colSpan} className="py-1.5 text-xs font-semibold">
-            {g.label} <span className="font-normal text-muted-foreground">({g.drafts.length})</span>
+            {g.label} <span className="font-normal text-muted-foreground">({g.rows.length})</span>
           </TableCell>
         </TableRow>
       )}
-      {g.drafts.map(renderRow)}
+      {g.rows.map(renderRow)}
     </Fragment>
   ))
 }
@@ -128,7 +106,7 @@ function LayoutPage() {
   const [redundancyN, setRedundancyN] = useState('1')
   const [showApply, setShowApply] = useState(false)
   const [showRevert, setShowRevert] = useState(false)
-  const [groupBy, setGroupBy] = useState<GroupBy>('none')
+  const [groupBy, setGroupBy] = useState<LayoutGroupBy>('none')
   // Node whose staged change the operator is about to revert.
   const [revertNodeId, setRevertNodeId] = useState<string | null>(null)
 
@@ -198,18 +176,18 @@ function LayoutPage() {
   })
 
   const data: ClusterLayout | undefined = layout.data
+  const appliedById = useMemo(() => new Map((data?.roles ?? []).map((r) => [r.id, r])), [data])
+  const stagedById = useMemo(() => new Map((data?.stagedRoleChanges ?? []).map((c) => [c.id, c])), [data])
 
   const startEditing = () => {
     if (!data) return
-    const roleById = new Map(data.roles.map((r) => [r.id, r]))
-    const stagedById = new Map(data.stagedRoleChanges.map((c) => [c.id, c]))
     const nodes = status.data?.nodes ?? []
     const known = new Set(nodes.map((n) => n.id))
-    const rows = nodes.map((n) => draftFromNode(n, roleById.get(n.id), stagedById.get(n.id)))
+    const rows = nodes.map((n) => draftFromNode(n, appliedById.get(n.id), stagedById.get(n.id)))
     // Roles or staged changes for nodes the status endpoint does not know about (e.g. gone) stay editable.
-    for (const id of new Set([...roleById.keys(), ...stagedById.keys()])) {
+    for (const id of new Set([...appliedById.keys(), ...stagedById.keys()])) {
       if (!known.has(id)) {
-        rows.push(draftFromNode({ id, hostname: null, isUp: false }, roleById.get(id), stagedById.get(id)))
+        rows.push(draftFromNode({ id, hostname: null, isUp: false }, appliedById.get(id), stagedById.get(id)))
       }
     }
     setDrafts(rows)
@@ -260,24 +238,28 @@ function LayoutPage() {
   const nextVersion = (data?.version ?? 0) + 1
   const preview = previewMutation.data ?? null
   const applied = applyMutation.data ?? null
-  const totals = data ? layoutTotals(data.roles, staged) : null
-
-  const stagedById = new Map(staged.map((c) => [c.id, c]))
-  const appliedById = new Map((data?.roles ?? []).map((r) => [r.id, r]))
-  const statusById = new Map((status.data?.nodes ?? []).map((n) => [n.id, n]))
-  // Rows of the "current roles" table: applied roles, with their staged state for grouping.
-  const currentRows = (data?.roles ?? []).map((r) =>
-    draftFromNode(
-      { id: r.id, hostname: hostnames.get(r.id) ?? null, isUp: statusById.get(r.id)?.isUp ?? false },
-      r,
-      stagedById.get(r.id),
-    ),
+  const totals = useMemo(
+    () => layoutTotals(data?.roles ?? [], data?.stagedRoleChanges ?? []),
+    [data],
   )
+  // The read-only current-roles table groups by the applied role; the edit
+  // table by the role after staged changes (what its form starts from).
+  const currentGroups = useMemo(
+    () => groupDrafts(layoutRoleRows(data?.roles ?? [], stagedById, (id) => hostnames.get(id) ?? null), groupBy, 'applied'),
+    [data, stagedById, hostnames, groupBy],
+  )
+  const draftGroups = useMemo(() => groupDrafts(drafts, groupBy), [drafts, groupBy])
   const revertChange = revertNodeId
     ? revertChangeFor({ id: revertNodeId }, appliedById.get(revertNodeId), stagedById.get(revertNodeId))
     : null
   const revertButton = (id: string) => (
-    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setRevertNodeId(id)}>
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 px-2 text-xs"
+      aria-label={`${nameOf(id)} の変更を戻す`}
+      onClick={() => setRevertNodeId(id)}
+    >
       変更を戻す
     </Button>
   )
@@ -331,31 +313,27 @@ function LayoutPage() {
                     : <span className="text-muted-foreground">なし</span>}
                 </p>
               </div>
-              {totals && (
-                <>
-                  <div>
-                    <p className="text-muted-foreground">割り当てノード数</p>
-                    <p className="font-medium">
-                      <SummaryDiff before={totals.before.assignedNodes} after={totals.after.assignedNodes} />
-                      {status.data && (
-                        <span className="ml-1 text-xs text-muted-foreground">/ 既知 {status.data.nodes.length}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">ゾーン数</p>
-                    <p className="font-medium">
-                      <SummaryDiff before={totals.before.zones} after={totals.after.zones} />
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">割り当て容量の合計</p>
-                    <p className="font-medium">
-                      <SummaryDiff before={totals.before.capacity} after={totals.after.capacity} format={formatBytes} />
-                    </p>
-                  </div>
-                </>
-              )}
+              <div>
+                <p className="text-muted-foreground">割り当てノード数</p>
+                <p className="font-medium">
+                  <SummaryDiff before={totals.before.assignedNodes} after={totals.after.assignedNodes} />
+                  {status.data && (
+                    <span className="ml-1 text-xs text-muted-foreground">/ 既知 {status.data.nodes.length}</span>
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">ゾーン数</p>
+                <p className="font-medium">
+                  <SummaryDiff before={totals.before.zones} after={totals.after.zones} />
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">割り当て容量の合計</p>
+                <p className="font-medium">
+                  <SummaryDiff before={totals.before.capacity} after={totals.after.capacity} format={formatBytes} />
+                </p>
+              </div>
             </div>
           </div>
 
@@ -399,7 +377,7 @@ function LayoutPage() {
               </div>
               <ul className="space-y-1 text-sm">
                 {staged.map((c) => {
-                  const before = data.roles.find((r) => r.id === c.id)
+                  const before = appliedById.get(c.id)
                   return (
                     <li key={c.id} className="flex flex-wrap items-baseline gap-2">
                       <span className="font-medium">{nameOf(c.id)}</span>
@@ -434,7 +412,7 @@ function LayoutPage() {
             <div className="space-y-3 rounded-lg border p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-lg font-semibold">ロールの編集</h2>
-                <GroupByToggle value={groupBy} onChange={setGroupBy} />
+                <GroupByToggle options={LAYOUT_GROUP_BY_OPTIONS} value={groupBy} onChange={setGroupBy} />
               </div>
               <p className="text-sm text-muted-foreground">
                 ここで保存しても即時反映はされません。ステージ → プレビュー → 適用の順に進みます。容量は GiB 単位で、空欄にするとゲートウェイノードになります。
@@ -451,7 +429,7 @@ function LayoutPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    <GroupedRows drafts={drafts} by={groupBy} colSpan={5} renderRow={(d) => {
+                    <GroupedRows groups={draftGroups} colSpan={5} renderRow={(d) => {
                       const name = nodeDisplayName(d)
                       return (
                         <TableRow key={d.id} className={d.remove ? 'opacity-60' : undefined}>
@@ -554,7 +532,9 @@ function LayoutPage() {
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-lg font-semibold">現在のロール (v{data.version})</h2>
-                {data.roles.length > 0 && <GroupByToggle value={groupBy} onChange={setGroupBy} />}
+                {data.roles.length > 0 && (
+                  <GroupByToggle options={LAYOUT_GROUP_BY_OPTIONS} value={groupBy} onChange={setGroupBy} />
+                )}
               </div>
               {data.roles.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -575,9 +555,9 @@ function LayoutPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      <GroupedRows drafts={currentRows} by={groupBy} basis="applied" colSpan={7} renderRow={(d) => {
-                        const role = d.applied!
-                        const change = stagedById.get(role.id)
+                      <GroupedRows groups={currentGroups} colSpan={7} renderRow={(row) => {
+                        const role = row.applied
+                        const change = row.staged
                         return (
                         <TableRow key={role.id}>
                           <TableCell>
