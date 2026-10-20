@@ -564,6 +564,49 @@ export async function listObjects(
   return fetchJSON(`/objects/${bucket}/list${qs ? '?' + qs : ''}`)
 }
 
+/** One data block of an object version (Garage InspectObjectBlock). */
+export interface InspectObjectBlock {
+  /** Part number of the part containing this block (multipart uploads). */
+  partNumber: number
+  /** Offset of this block within its part. */
+  offset: number
+  /** blake2 hash of the block's data, hex. */
+  hash: string
+  size: number
+}
+
+/**
+ * One version of an object (Garage InspectObjectVersion). Exactly one of
+ * uploading / aborted / deleteMarker is set for a non-complete version;
+ * none for a complete one. `headers` and `blocks` are omitted when empty.
+ */
+export interface InspectObjectVersion {
+  uuid: string
+  timestamp: string
+  /** Created with SSE-C encryption. */
+  encrypted: boolean
+  uploading: boolean
+  aborted: boolean
+  deleteMarker: boolean
+  /** Data stored inline in the metadata (small objects): no blocks. */
+  inline: boolean
+  size?: number | null
+  etag?: string | null
+  headers?: [string, string][]
+  blocks?: InspectObjectBlock[]
+}
+
+export interface InspectObjectResponse {
+  bucketId: string
+  key: string
+  versions: InspectObjectVersion[]
+}
+
+/** GET /api/buckets/{id}/objects/inspect: Garage InspectObject (bucket ID only, not alias). */
+export async function inspectObject(bucketId: string, key: string): Promise<InspectObjectResponse> {
+  return fetchJSON(`/buckets/${encodeURIComponent(bucketId)}/objects/inspect?key=${encodeURIComponent(key)}`)
+}
+
 export function downloadObjectUrl(bucket: string, key: string): string {
   return `${BASE}/objects/${bucket}/download?key=${encodeURIComponent(key)}`
 }

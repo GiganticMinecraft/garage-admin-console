@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listBlockErrors,
@@ -9,11 +9,13 @@ import {
   retryBlockResync,
   type BlockError,
   type BlockInfo,
+  type BlockVersion,
 } from '@/api'
 import { showMultiResponseToast } from '@/lib/multi-response'
 import { blockErrorsCoverage } from '@/lib/maintenance-status'
 import { nonStorageNodeIds } from '@/lib/nodes'
 import { shortId } from '@/lib/format'
+import { backlinkObject, isBlockHash, parseBlocksSearch } from '@/lib/inspect-object'
 import {
   Table,
   TableHeader,
@@ -30,6 +32,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/blocks')({
   component: BlocksPage,
+  validateSearch: parseBlocksSearch,
 })
 
 function formatSecsAgo(secs: number): string {
@@ -93,12 +96,13 @@ function BlockInfoPanel({ blockHash }: { blockHash: string }) {
                       </TableCell>
                       <TableCell className="text-xs">
                         {v.backlink && 'object' in v.backlink ? (
-                          <span className="font-mono">{v.backlink.object.key}</span>
+                          <span className="font-mono break-all">{v.backlink.object.key}</span>
                         ) : v.backlink && 'upload' in v.backlink ? (
                           <span className="font-mono">upload: {v.backlink.upload.uploadId.slice(0, 12)}…</span>
                         ) : (
                           <span className="text-muted-foreground">なし</span>
                         )}
+                        <BacklinkObjectLink backlink={v.backlink} />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -114,8 +118,52 @@ function BlockInfoPanel({ blockHash }: { blockHash: string }) {
   )
 }
 
+/** Link from a GetBlockInfo version to the object's details on its bucket page. */
+function BacklinkObjectLink({ backlink }: { backlink: BlockVersion['backlink'] }) {
+  const target = backlinkObject(backlink)
+  if (!target) return null
+  return (
+    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-muted-foreground">
+      <span className="font-mono" title={target.bucketId}>bucket {shortId(target.bucketId)}</span>
+      <Link
+        to="/buckets/$id"
+        params={{ id: target.bucketId }}
+        search={{ inspect: target.key }}
+        className="text-primary underline-offset-4 hover:underline"
+      >
+        オブジェクトの詳細
+      </Link>
+    </div>
+  )
+}
+
+/** Block info opened from /blocks?hash=... (e.g. from an object's details). */
+function LinkedBlockInfo({ hash }: { hash: string }) {
+  const navigate = Route.useNavigate()
+  const close = () => navigate({ search: (prev) => ({ ...prev, hash: undefined }), replace: true })
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-sm font-semibold">ブロック情報</h2>
+        <span className="font-mono text-xs break-all">{hash}</span>
+        <Button variant="link" size="sm" className="ml-auto h-auto p-0" onClick={close}>
+          閉じる
+        </Button>
+      </div>
+      {isBlockHash(hash) ? (
+        <BlockInfoPanel blockHash={hash} />
+      ) : (
+        <p className="text-destructive text-sm p-2">
+          ブロックハッシュの形式が正しくありません(64 桁の 16 進数を指定してください)
+        </p>
+      )}
+    </div>
+  )
+}
+
 function BlocksPage() {
   useDocumentTitle('ブロック')
+  const { hash: linkedHash } = Route.useSearch()
   const queryClient = useQueryClient()
   const [expandedHash, setExpandedHash] = useState<string | null>(null)
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set())
@@ -202,6 +250,8 @@ function BlocksPage() {
           </Button>
         </div>
       </div>
+
+      {linkedHash && <LinkedBlockInfo key={linkedHash} hash={linkedHash} />}
 
       {nodeErrors.length > 0 && (
         <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">

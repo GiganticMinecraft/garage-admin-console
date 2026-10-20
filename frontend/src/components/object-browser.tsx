@@ -15,6 +15,7 @@ import {
   type PrefixSummary,
 } from '@/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { ObjectInspectSheet } from '@/components/object-inspect-sheet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -471,6 +472,8 @@ export function ObjectBrowser({
   bucketName,
   prefix,
   onPrefixChange,
+  inspectKey,
+  onInspectKeyChange,
 }: {
   /** Bucket ID used in API paths. */
   bucketId: string
@@ -478,6 +481,9 @@ export function ObjectBrowser({
   bucketName?: string
   prefix: string
   onPrefixChange: (prefix: string) => void
+  /** Key whose details sheet is open (the `inspect` search param), if any. */
+  inspectKey?: string
+  onInspectKeyChange: (key: string | undefined) => void
 }) {
   const queryClient = useQueryClient()
 
@@ -900,7 +906,15 @@ export function ObjectBrowser({
                   <TableCell className="whitespace-nowrap text-right text-muted-foreground">
                     {formatDate(obj.lastModified)}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="whitespace-nowrap text-right">
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="mr-1"
+                      onClick={() => onInspectKeyChange(obj.key)}
+                    >
+                      詳細
+                    </Button>
                     <Button variant="link" size="sm" asChild className="mr-1">
                       <a href={downloadObjectUrl(bucketId, obj.key)}>ダウンロード</a>
                     </Button>
@@ -943,6 +957,13 @@ export function ObjectBrowser({
           )}
         </div>
       )}
+
+      {/* Admin API, not S3: available even when the console's key is refused. */}
+      <ObjectInspectSheet
+        bucketId={bucketId}
+        objectKey={inspectKey}
+        onClose={() => onInspectKeyChange(undefined)}
+      />
 
       <ConfirmDialog
         open={consoleAccessOpen}
