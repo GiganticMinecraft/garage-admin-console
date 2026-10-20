@@ -113,7 +113,7 @@ function SignalCard({
     tone === 'danger'
       ? 'text-destructive'
       : tone === 'warning'
-        ? 'text-amber-600'
+        ? 'text-amber-600 dark:text-amber-400'
         : 'text-foreground'
 
   return (

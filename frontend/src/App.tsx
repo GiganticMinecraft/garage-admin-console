@@ -1,3 +1,4 @@
+import { ThemeProvider } from 'next-themes'
 import { RouterProvider, createRouter, Link, useRouter, type ErrorComponentProps } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
@@ -71,11 +72,15 @@ declare module '@tanstack/react-router' {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <RouterProvider router={router} />
-      </TooltipProvider>
-    </QueryClientProvider>
+    // storageKey / attribute must match the pre-paint script in index.html,
+    // which applies the class before the bundle loads to avoid a light flash.
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem storageKey="theme" disableTransitionOnChange>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <RouterProvider router={router} />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   )
 }
 

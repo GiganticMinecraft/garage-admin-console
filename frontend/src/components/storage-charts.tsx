@@ -1,10 +1,12 @@
 import { useMemo, useSyncExternalStore } from 'react'
+import { useTheme } from 'next-themes'
 import EChartsReactCore from 'echarts-for-react/lib/core'
 import * as echarts from 'echarts/core'
 import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ClusterNode, PartitionUsage } from '@/api'
+import { chartChrome, type ChartChrome } from '@/lib/chart-theme'
 import { clampUsed, formatBytes, formatUsage, usagePercent } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
@@ -32,12 +34,9 @@ const CRIT_COLOR = '#ef4444' // red-500
 const WARN_PERCENT = USAGE_WARN * 100
 const CRIT_PERCENT = USAGE_CRIT * 100
 
-// Chart chrome uses neutral text colours, never the series colour.
-const AXIS_TEXT = '#71717a' // zinc-500
-const LABEL_TEXT = '#52525b' // zinc-600
-const GRID_LINE = 'rgba(113, 113, 122, 0.2)'
-// Surface-coloured edge that leaves a 2px gap between touching segments.
-const SURFACE = '#ffffff'
+// Chart chrome (axis / label text, grid, the surface-coloured edge that leaves
+// a gap between touching segments, tooltip box) follows the colour theme and
+// never uses the series colour; see lib/chart-theme.ts.
 const LABEL_FONT_SIZE = 12
 // Below Tailwind's `sm` breakpoint the bars drop their end labels (the
 // tooltip still carries the numbers) so the bars keep usable width.
@@ -125,11 +124,12 @@ function Swatch({ color, label }: { color: string; label: string }) {
 }
 
 /** Cluster-wide donut for one partition kind, with the usage in its centre. */
-function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
+function UsageDonut({ kind, u, chrome }: { kind: PartitionKind; u: Usage; chrome: ChartChrome }) {
   const color = usedColor(kind, u.percent)
   const option = useMemo(
     () => ({
       tooltip: {
+        ...chrome.tooltip,
         trigger: 'item' as const,
         formatter: () => usageTooltip(TITLES[kind], u),
       },
@@ -141,7 +141,7 @@ function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
           label: { show: false },
           labelLine: { show: false },
           emphasis: { scale: false },
-          itemStyle: { borderColor: SURFACE, borderWidth: 2 },
+          itemStyle: { borderColor: chrome.surface, borderWidth: 2 },
           data: [
             { value: u.used, name: '使用中', itemStyle: { color: usedColor(kind, u.percent) } },
             { value: u.free, name: '空き', itemStyle: { color: PALETTE[kind].free } },
@@ -149,7 +149,7 @@ function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
         },
       ],
     }),
-    [kind, u],
+    [kind, u, chrome],
   )
 
   return (
@@ -173,7 +173,17 @@ function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
 }
 
 /** One horizontal used + free stacked bar per node, on the panel's own scale. */
-function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: MeasuredNode[]; narrow: boolean }) {
+function NodePanel({
+  kind,
+  nodes,
+  narrow,
+  chrome,
+}: {
+  kind: PartitionKind
+  nodes: MeasuredNode[]
+  narrow: boolean
+  chrome: ChartChrome
+}) {
   const option = useMemo(() => {
     const rows = nodes.map((n) => ({ name: n.name, u: n[kind], label: formatUsage(n[kind].used, n[kind].total) }))
     const maxTotal = Math.max(0, ...rows.map((r) => r.u.total))
@@ -182,6 +192,7 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
     const rowAt = (p: { dataIndex: number }) => rows[p.dataIndex]
     return {
       tooltip: {
+        ...chrome.tooltip,
         trigger: 'item' as const,
         confine: true,
         formatter: (p: { dataIndex: number }) => {
@@ -194,8 +205,8 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
         type: 'value' as const,
         max: maxTotal > 0 ? maxTotal : undefined,
         splitNumber: narrow ? 2 : 3,
-        axisLabel: { color: AXIS_TEXT, formatter: (v: number) => formatBytes(v) },
-        splitLine: { lineStyle: { color: GRID_LINE } },
+        axisLabel: { color: chrome.axisText, formatter: (v: number) => formatBytes(v) },
+        splitLine: { lineStyle: { color: chrome.gridLine } },
       },
       yAxis: {
         type: 'category' as const,
@@ -203,7 +214,7 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
         data: rows.map((r) => r.name),
         axisTick: { show: false },
         axisLine: { show: false },
-        axisLabel: { color: AXIS_TEXT, width: narrow ? 88 : 140, overflow: 'truncate' as const },
+        axisLabel: { color: chrome.axisText, width: narrow ? 88 : 140, overflow: 'truncate' as const },
       },
       series: [
         {
@@ -213,7 +224,7 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
           barMaxWidth: 18,
           data: rows.map((r) => ({
             value: r.u.used,
-            itemStyle: { color: usedColor(kind, r.u.percent), borderColor: SURFACE, borderWidth: 1 },
+            itemStyle: { color: usedColor(kind, r.u.percent), borderColor: chrome.surface, borderWidth: 1 },
           })),
         },
         {
@@ -223,14 +234,14 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
           barMaxWidth: 18,
           itemStyle: {
             color: PALETTE[kind].free,
-            borderColor: SURFACE,
+            borderColor: chrome.surface,
             borderWidth: 1,
             borderRadius: [0, 4, 4, 0],
           },
           label: {
             show: !narrow,
             position: 'right' as const,
-            color: LABEL_TEXT,
+            color: chrome.labelText,
             fontSize: LABEL_FONT_SIZE,
             formatter: (p: { dataIndex: number }) => rowAt(p)?.label ?? '',
           },
@@ -238,7 +249,7 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
         },
       ],
     }
-  }, [kind, nodes, narrow])
+  }, [kind, nodes, narrow, chrome])
 
   return (
     <div className="rounded-lg border p-4">
@@ -256,6 +267,8 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
 
 export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[] }) {
   const narrow = useNarrow()
+  const { resolvedTheme } = useTheme()
+  const chrome = chartChrome(resolvedTheme)
   // Nodes that are down or have no role report null partitions; chart only
   // the ones that actually have numbers.
   const nodes = useMemo<MeasuredNode[]>(
@@ -307,8 +320,8 @@ export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[
         <div className="rounded-lg border p-4 md:row-span-2">
           <h3 className="mb-4 text-sm font-medium text-muted-foreground">全体使用率</h3>
           <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-1 xl:grid-cols-2">
-            <UsageDonut kind="data" u={totals.data} />
-            <UsageDonut kind="meta" u={totals.meta} />
+            <UsageDonut kind="data" u={totals.data} chrome={chrome} />
+            <UsageDonut kind="meta" u={totals.meta} chrome={chrome} />
           </div>
           {unreported > 0 && (
             <p className="mt-4 text-center text-xs text-muted-foreground">
@@ -316,8 +329,8 @@ export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[
             </p>
           )}
         </div>
-        <NodePanel kind="data" nodes={nodes} narrow={narrow} />
-        <NodePanel kind="meta" nodes={nodes} narrow={narrow} />
+        <NodePanel kind="data" nodes={nodes} narrow={narrow} chrome={chrome} />
+        <NodePanel kind="meta" nodes={nodes} narrow={narrow} chrome={chrome} />
       </div>
     </div>
   )

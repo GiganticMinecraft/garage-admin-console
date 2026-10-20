@@ -172,7 +172,7 @@ export function LayoutUpdateTracker({ roles, compact = false }: { roles: Tracker
   if (!isUpdateInFlight(h)) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <CheckCircle2 className="h-4 w-4 text-green-600" aria-hidden />
+        <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden />
         レイアウト v{h.currentVersion} は全ノードに反映済みです
       </p>
     )
@@ -182,7 +182,7 @@ export function LayoutUpdateTracker({ roles, compact = false }: { roles: Tracker
   const live = liveVersions(h)
 
   return (
-    <div className="space-y-4 rounded-lg border border-amber-300 bg-amber-50/50 p-4 dark:bg-amber-950/20">
+    <div className="space-y-4 rounded-lg border border-amber-300 bg-amber-50/50 dark:border-amber-500/40 p-4 dark:bg-amber-950/20">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">レイアウト更新中 (v{h.currentVersion})</h2>
         <span className="text-xs text-muted-foreground">5 秒ごとに自動更新</span>
@@ -239,7 +239,7 @@ export function LayoutUpdateTracker({ roles, compact = false }: { roles: Tracker
 function CompactTracker({ history: h, roles }: { history: LayoutHistory; roles: TrackerRole[] }) {
   const steps = computeSteps(h, roles)
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-amber-300 bg-amber-50/50 px-4 py-3 text-sm dark:bg-amber-950/20">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-amber-300 bg-amber-50/50 dark:border-amber-500/40 px-4 py-3 text-sm dark:bg-amber-950/20">
       <span className="font-semibold">レイアウト更新中 (v{h.currentVersion})</span>
       {steps.map((s, i) => (
         <span key={s.name} className="flex items-center gap-1" title={s.hint}>
