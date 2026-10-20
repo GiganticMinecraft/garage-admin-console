@@ -1,4 +1,19 @@
+import { loginUrlFor } from '@/lib/auth'
+
 const BASE = '/api'
+
+let redirectingToLogin = false
+
+/**
+ * Send the browser to GitHub sign-in, asking to come back to the current
+ * page. Concurrent 401s (several queries expiring together) navigate once.
+ */
+function redirectToLogin(): void {
+  if (redirectingToLogin) return
+  const { pathname, search } = window.location
+  redirectingToLogin = true
+  window.location.href = loginUrlFor(pathname, search, BASE)
+}
 
 /** Error thrown for non-2xx API responses, carrying the upstream message. */
 export class ApiError extends Error {
@@ -53,7 +68,7 @@ export async function errorFromResponse(res: Response): Promise<ApiError> {
  */
 async function assertOk(res: Response): Promise<void> {
   if (res.status === 401) {
-    window.location.href = `${BASE}/auth/login`
+    redirectToLogin()
     throw new Error('Unauthorized')
   }
   if (!res.ok) throw await errorFromResponse(res)
@@ -723,7 +738,7 @@ export function uploadObject(
       // promise pending forever.
       try {
         if (xhr.status === 401) {
-          window.location.href = `${BASE}/auth/login`
+          redirectToLogin()
           reject(new Error('Unauthorized'))
           return
         }

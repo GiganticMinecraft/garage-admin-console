@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -24,7 +26,28 @@ const (
 	sessionKeyState  = "oauth_state"
 	sessionKeyUser   = "username"
 	sessionKeyAvatar = "avatar_url"
+	sessionKeyNext   = "login_next"
+	// sessionKeyIssuedAt is the unix time of the GitHub login that created
+	// the session; sessionKeyRefreshedAt is the last time the cookie was
+	// re-issued. Both are int64 seconds.
+	sessionKeyIssuedAt    = "issued_at"
+	sessionKeyRefreshedAt = "refreshed_at"
 )
+
+// Session lifetime policy. The cookie's MaxAge (3600s) is an idle timeout,
+// enforced server-side from refreshed_at as well: authMiddleware re-issues
+// the cookie at most every sessionRefreshInterval while the user keeps making
+// requests, up to sessionAbsoluteMax after login.
+const (
+	sessionRefreshInterval = 5 * time.Minute
+	sessionAbsoluteMax     = 12 * time.Hour
+	// maxLoginNextLen keeps the encrypted, base64-encoded session cookie
+	// well under securecookie's 4096-byte limit.
+	maxLoginNextLen = 1024
+)
+
+// now is the clock used by the session lifetime checks; tests replace it.
+var now = time.Now
 
 var (
 	sessionStore *sessions.CookieStore
@@ -91,7 +114,9 @@ func initAuth() {
 // ---------------------------------------------------------------------------
 
 // handleLogin generates a random state, stores it in the session, and
-// redirects the user to GitHub's OAuth authorization page.
+// redirects the user to GitHub's OAuth authorization page. An optional
+// ?next=<path> is validated with safeNextPath and kept in the session so the
+// callback can return the user to the page they were on.
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	state, err := randomState()
 	if err != nil {
@@ -100,17 +125,35 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A cookie that no longer decodes (e.g. after SESSION_SECRET rotation)
+	// must not block sign-in: Get still returns a fresh session, which the
+	// Save below writes over the stale cookie.
 	sess, err := sessionStore.Get(r, sessionName)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "failed to get session", "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+		slog.WarnContext(r.Context(), "discarding undecodable session cookie", "error", err)
 	}
 	sess.Values[sessionKeyState] = state
+	if next := safeNextPath(r.URL.Query().Get("next")); next != "" {
+		sess.Values[sessionKeyNext] = next
+	} else {
+		delete(sess.Values, sessionKeyNext)
+	}
 	if err := sess.Save(r, w); err != nil {
-		slog.ErrorContext(r.Context(), "failed to save session", "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+		// Most likely the cookie grew too large; the return path is the
+		// only optional value, so drop it and fall back to /.
+		_, hadNext := sess.Values[sessionKeyNext]
+		delete(sess.Values, sessionKeyNext)
+		if !hadNext {
+			slog.ErrorContext(r.Context(), "failed to save session", "error", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		slog.WarnContext(r.Context(), "failed to save session with next; retrying without it", "error", err)
+		if err := sess.Save(r, w); err != nil {
+			slog.ErrorContext(r.Context(), "failed to save session", "error", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	url := oauthConfig.AuthCodeURL(state)
@@ -119,13 +162,14 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleCallback is the OAuth callback handler. It verifies the state
 // parameter, exchanges the code for a token, checks org/team membership,
-// regenerates the session, and redirects to /.
+// regenerates the session, and redirects to the path saved by handleLogin
+// (or / when there is none).
 func handleCallback(w http.ResponseWriter, r *http.Request) {
+	// On a decode error Get returns an empty session; the state check below
+	// then rejects the request with 403 instead of a 500 dead end.
 	sess, err := sessionStore.Get(r, sessionName)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "failed to get session", "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+		slog.WarnContext(r.Context(), "discarding undecodable session cookie", "error", err)
 	}
 
 	// CSRF: verify state matches.
@@ -135,6 +179,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		slog.WarnContext(r.Context(), "OAuth state mismatch")
 		http.Error(w, "Forbidden: state mismatch", http.StatusForbidden)
 		return
+	}
+
+	// Take the return path out of the old session before it is discarded.
+	// It was validated in handleLogin; check again so a value written by an
+	// older build cannot become an open redirect.
+	redirectTo := "/"
+	if saved, _ := sess.Values[sessionKeyNext].(string); safeNextPath(saved) != "" {
+		redirectTo = saved
 	}
 
 	// Exchange code for token.
@@ -176,8 +228,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	// CookieStore.New decodes the existing cookie, so start from an empty
+	// map to make sure nothing (state, next, old timestamps) carries over.
+	newSess.Values = map[interface{}]interface{}{}
 	newSess.Values[sessionKeyUser] = userInfo.Login
 	newSess.Values[sessionKeyAvatar] = userInfo.AvatarURL
+	loginAt := now().Unix()
+	newSess.Values[sessionKeyIssuedAt] = loginAt
+	newSess.Values[sessionKeyRefreshedAt] = loginAt
 	newSess.Options = sessionStore.Options
 	if err := newSess.Save(r, w); err != nil {
 		slog.ErrorContext(r.Context(), "failed to save new session", "error", err)
@@ -186,7 +244,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	auditAuthEvent(r, "login", userInfo.Login)
-	http.Redirect(w, r, "/", http.StatusFound)
+	http.Redirect(w, r, redirectTo, http.StatusFound)
 }
 
 // handleMe returns the current session user info as JSON.
@@ -231,11 +289,20 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 // Middleware
 // ---------------------------------------------------------------------------
 
-// authMiddleware validates the session cookie on protected routes.
+// authMiddleware validates the session cookie on protected routes and
+// implements the sliding session:
+//   - a cookie that does not decode is cleared and the request is 401;
+//   - a session idle (no refresh) for longer than the cookie MaxAge, or older
+//     than sessionAbsoluteMax since login, is cleared and the request is 401;
+//   - otherwise, once sessionRefreshInterval has passed since refreshed_at,
+//     the cookie is re-issued (extending its MaxAge) when the handler sends
+//     its response headers, unless the handler already set the session
+//     cookie itself (e.g. logout expiring it).
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess, err := sessionStore.Get(r, sessionName)
 		if err != nil {
+			expireSessionCookie(w, r, sess)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -246,8 +313,103 @@ func authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		current := now()
+		issuedAt, hasIssued := sess.Values[sessionKeyIssuedAt].(int64)
+		// A missing refreshed_at counts as "never refreshed": it is due now.
+		refreshedAt, hasRefreshed := sess.Values[sessionKeyRefreshedAt].(int64)
+		if !hasIssued {
+			// Sessions created before issued_at existed: start the absolute
+			// limit now instead of logging everyone out on deploy.
+			issuedAt = current.Unix()
+			sess.Values[sessionKeyIssuedAt] = issuedAt
+		}
+		idle := current.Sub(time.Unix(refreshedAt, 0))
+		maxIdle := time.Duration(sessionStore.Options.MaxAge) * time.Second
+		if current.Sub(time.Unix(issuedAt, 0)) > sessionAbsoluteMax ||
+			(hasRefreshed && maxIdle > 0 && idle > maxIdle) {
+			expireSessionCookie(w, r, sess)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if !hasIssued || idle >= sessionRefreshInterval {
+			sess.Values[sessionKeyRefreshedAt] = current.Unix()
+			sw := &sessionRefreshWriter{ResponseWriter: w, r: r, sess: sess}
+			next.ServeHTTP(sw, r)
+			// A handler that wrote nothing still gets its implicit 200
+			// after returning; the headers have not gone out yet.
+			sw.refresh()
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// expireSessionCookie tells the browser to drop the session cookie.
+func expireSessionCookie(w http.ResponseWriter, r *http.Request, sess *sessions.Session) {
+	if sess == nil {
+		sess = sessions.NewSession(sessionStore, sessionName)
+		opts := *sessionStore.Options
+		sess.Options = &opts
+	}
+	sess.Options.MaxAge = -1
+	if err := sess.Save(r, w); err != nil {
+		slog.ErrorContext(r.Context(), "failed to expire session", "error", err)
+	}
+}
+
+// sessionRefreshWriter re-issues the session cookie just before the response
+// headers go out, so the handler gets the last word: if it already set the
+// session cookie (logout expiring it), no refreshed cookie is added.
+type sessionRefreshWriter struct {
+	http.ResponseWriter
+	r    *http.Request
+	sess *sessions.Session
+	done bool
+}
+
+func (sw *sessionRefreshWriter) refresh() {
+	if sw.done {
+		return
+	}
+	sw.done = true
+	if hasSessionSetCookie(sw.Header()) {
+		return
+	}
+	if err := sw.sess.Save(sw.r, sw.ResponseWriter); err != nil {
+		slog.ErrorContext(sw.r.Context(), "failed to refresh session", "error", err)
+	}
+}
+
+func (sw *sessionRefreshWriter) WriteHeader(code int) {
+	sw.refresh()
+	sw.ResponseWriter.WriteHeader(code)
+}
+
+func (sw *sessionRefreshWriter) Write(b []byte) (int, error) {
+	sw.refresh()
+	return sw.ResponseWriter.Write(b)
+}
+
+func (sw *sessionRefreshWriter) Flush() {
+	sw.refresh()
+	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (sw *sessionRefreshWriter) Unwrap() http.ResponseWriter { return sw.ResponseWriter }
+
+// hasSessionSetCookie reports whether h already carries a Set-Cookie for the
+// session cookie.
+func hasSessionSetCookie(h http.Header) bool {
+	for _, v := range h.Values("Set-Cookie") {
+		if strings.HasPrefix(v, sessionName+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // csrfMiddleware protects mutation requests (POST/PUT/DELETE).
@@ -387,6 +549,36 @@ func checkTeamMembership(ctx context.Context, accessToken, username string) erro
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// safeNextPath returns raw if it is a same-origin path that is safe to
+// redirect to after login, or "" otherwise. Accepted values start with a
+// single "/", carry no scheme or host, contain no control characters or
+// backslashes, are at most maxLoginNextLen bytes, and are not under /api/
+// (the callback must land on a SPA page, not an API endpoint).
+func safeNextPath(raw string) string {
+	if raw == "" || len(raw) > maxLoginNextLen || raw[0] != '/' {
+		return ""
+	}
+	if strings.HasPrefix(raw, "//") || strings.ContainsRune(raw, '\\') {
+		return ""
+	}
+	for _, c := range raw {
+		if c < 0x20 || c == 0x7f {
+			return ""
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
+		return ""
+	}
+	// Compare on the cleaned, decoded path so "/x/../api/..." or
+	// "/%61pi/..." cannot point the redirect at the API.
+	cleaned := path.Clean(u.Path)
+	if cleaned == "/api" || strings.HasPrefix(cleaned, "/api/") {
+		return ""
+	}
+	return raw
+}
 
 // randomState generates a cryptographically random hex string for the OAuth
 // state parameter.
