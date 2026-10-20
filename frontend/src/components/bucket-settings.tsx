@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { formatBytes, formatCount } from '@/lib/format'
+import { parseRulesJson, rulesToText, type JsonRules as Rules } from '@/lib/rules-json'
+import { ROUTING_RULES_EXAMPLE, parseRoutingRules } from '@/lib/website-routing-rules'
 import { cn } from '@/lib/utils'
 
 // ---- helpers ----
@@ -54,26 +56,6 @@ function parsePositiveInt(text: string): number | null {
 /** A quota of 0 or less (or absent) is treated as unlimited. */
 function normalizeQuota(v: number | null | undefined): number | null {
   return v != null && v > 0 ? v : null
-}
-
-type Rules = Record<string, unknown>[]
-
-/** Parses a JSON array of objects, or returns an error message. */
-function parseRulesJson(text: string): { rules: Rules } | { error: string } {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text.trim() === '' ? '[]' : text)
-  } catch (e) {
-    return { error: `JSON の構文エラー: ${e instanceof Error ? e.message : String(e)}` }
-  }
-  if (!Array.isArray(parsed)) return { error: 'ルールは JSON 配列 ([...]) で指定してください' }
-  const bad = parsed.findIndex((r) => r === null || typeof r !== 'object' || Array.isArray(r))
-  if (bad >= 0) return { error: `${bad + 1} 番目の要素がオブジェクトではありません` }
-  return { rules: parsed as Rules }
-}
-
-function rulesToText(rules: unknown[] | null | undefined): string {
-  return JSON.stringify(rules ?? [], null, 2)
 }
 
 function errorMessage(error: unknown): string {
@@ -396,7 +378,10 @@ function websiteForm(s: WebsiteServer) {
   }
 }
 
-type WebsiteConfirm = { kind: 'disable' } | { kind: 'clear-rules'; body: UpdateBucketBody }
+type WebsiteConfirm =
+  | { kind: 'disable' }
+  | { kind: 'clear-rules'; body: UpdateBucketBody }
+  | { kind: 'insert-example' }
 
 function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
   const { base, form, update, resetTo } = useServerForm(websiteServer(bucket), websiteForm)
@@ -404,8 +389,12 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
   const save = useUpdateBucket(bucket.id, 'Website 設定を保存しました', (b) => resetTo(websiteServer(b)))
 
   const rulesTouched = form.rulesText !== base.rulesText
-  const parsedRules = parseRulesJson(form.rulesText)
-  const rulesError = form.enabled && 'error' in parsedRules ? parsedRules.error : null
+  // Not editable (nor sent) while website access is off: skip the parse.
+  const parsedRules = useMemo(
+    () => (form.enabled ? parseRoutingRules(form.rulesText) : null),
+    [form.enabled, form.rulesText],
+  )
+  const rulesErrors = parsedRules && 'errors' in parsedRules ? parsedRules.errors : null
   const indexError = form.enabled && form.indexDocument.trim() === '' ? 'インデックスドキュメントは必須です' : null
 
   const dirty =
@@ -425,7 +414,7 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
     }
     // Omitting routingRules keeps the current ones; only send them when edited.
     let clearsRules = false
-    if (rulesTouched && 'rules' in parsedRules) {
+    if (rulesTouched && parsedRules && 'rules' in parsedRules) {
       if (parsedRules.rules.length > 0) {
         websiteAccess.routingRules = parsedRules.rules
       } else if (base.ruleCount > 0) {
@@ -477,28 +466,6 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
               placeholder="error.html"
             />
           </div>
-          <div className="space-y-1">
-            <label className="flex items-center gap-2 text-sm font-medium" htmlFor={`${bucket.id}-routing`}>
-              ルーティングルール (JSON)
-              <Badge variant="outline">Experimental</Badge>
-            </label>
-            <textarea
-              id={`${bucket.id}-routing`}
-              value={form.rulesText}
-              onChange={(e) => update({ rulesText: e.target.value })}
-              spellCheck={false}
-              className={TEXTAREA_CLASS}
-              aria-invalid={rulesError != null}
-            />
-            {rulesError ? (
-              <p className="text-xs text-destructive">{rulesError}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                S3 の RoutingRules と同じ形式 (例: {'[{"Condition":{"KeyPrefixEquals":"old/"},"Redirect":{"ReplaceKeyPrefixWith":"new/"}}]'})。
-                変更しなければ現在のルールが維持されます。空にして保存するとすべてのルールを削除します (確認あり)。
-              </p>
-            )}
-          </div>
         </div>
       ) : (
         base.enabled && (
@@ -508,9 +475,62 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
         )
       )}
 
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-sm font-medium" htmlFor={`${bucket.id}-routing`}>
+            ルーティングルール (JSON)
+            <Badge variant="outline">Experimental</Badge>
+          </label>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">現在 {base.ruleCount} 件のルール</span>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => {
+                // Replacing existing (or edited) rules would lose them on the next save: ask first.
+                if (base.ruleCount > 0 || rulesTouched) setConfirm({ kind: 'insert-example' })
+                else update({ rulesText: rulesToText(ROUTING_RULES_EXAMPLE) })
+              }}
+              disabled={!form.enabled || save.isPending}
+            >
+              例を挿入
+            </Button>
+          </div>
+        </div>
+        <textarea
+          id={`${bucket.id}-routing`}
+          value={form.rulesText}
+          onChange={(e) => update({ rulesText: e.target.value })}
+          disabled={!form.enabled}
+          spellCheck={false}
+          className={cn(TEXTAREA_CLASS, 'disabled:cursor-not-allowed disabled:opacity-50')}
+          aria-invalid={rulesErrors != null}
+          aria-describedby={`${bucket.id}-routing-help`}
+        />
+        <div id={`${bucket.id}-routing-help`}>
+          {!form.enabled ? (
+            <p className="text-xs text-muted-foreground">
+              Website access を有効にすると編集できます。
+            </p>
+          ) : rulesErrors ? (
+            <ul className="space-y-0.5 text-xs text-destructive">
+              {rulesErrors.map((msg, i) => (
+                <li key={i}>{msg}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              S3 の RoutingRules と同じ形式です。Condition (KeyPrefixEquals / HttpErrorCodeReturnedEquals) は省略でき、
+              Redirect は必須です。変更しない限り送信されず、空の配列 [] を保存するとすべてのルールを削除します (確認あり)。
+            </p>
+          )}
+        </div>
+      </div>
+
       <CardActions
         dirty={dirty}
-        canSave={!form.enabled || (indexError == null && rulesError == null)}
+        // Untouched rules are not sent, so their errors must not block saving the rest.
+        canSave={!form.enabled || (indexError == null && (!rulesTouched || rulesErrors == null))}
         pending={save.isPending}
         error={save.error}
         onReset={() => {
@@ -523,20 +543,35 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
       <ConfirmDialog
         open={confirm !== null}
         onOpenChange={(open) => { if (!open) setConfirm(null) }}
-        title={confirm?.kind === 'clear-rules' ? 'ルーティングルールの削除' : 'Website access の無効化'}
+        title={
+          confirm?.kind === 'clear-rules'
+            ? 'ルーティングルールの削除'
+            : confirm?.kind === 'insert-example'
+              ? 'ルーティングルールの例の挿入'
+              : 'Website access の無効化'
+        }
         description={
           confirm?.kind === 'clear-rules'
             ? `ルーティングルールを ${base.ruleCount} 件すべて削除しますか？`
-            : 'Website access を無効にすると、インデックス / エラードキュメントとルーティングルールの設定は破棄され、再度有効にしても元に戻りません。無効にしますか？'
+            : confirm?.kind === 'insert-example'
+              ? `入力中のルーティングルール (現在 ${base.ruleCount} 件) を例で置き換えます。` +
+                'そのまま保存すると現在のルールは失われます。置き換えますか？'
+              : 'Website access を無効にすると、インデックス / エラードキュメントとルーティングルールの設定は破棄され、再度有効にしても元に戻りません。無効にしますか？'
         }
-        confirmLabel={confirm?.kind === 'clear-rules' ? '削除して保存' : '無効にする'}
+        confirmLabel={
+          confirm?.kind === 'clear-rules' ? '削除して保存' : confirm?.kind === 'insert-example' ? '置き換える' : '無効にする'
+        }
         pendingLabel="保存中..."
         isPending={save.isPending}
-        onConfirm={() =>
-          save.mutateAsync(
+        onConfirm={() => {
+          if (confirm?.kind === 'insert-example') {
+            update({ rulesText: rulesToText(ROUTING_RULES_EXAMPLE) })
+            return
+          }
+          return save.mutateAsync(
             confirm?.kind === 'clear-rules' ? confirm.body : { websiteAccess: { enabled: false } },
           )
-        }
+        }}
       />
     </SettingsCard>
   )
