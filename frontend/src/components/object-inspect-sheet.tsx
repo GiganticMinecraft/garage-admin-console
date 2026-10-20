@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ApiError, inspectObject, type InspectObjectVersion } from '@/api'
+import { ApiError, inspectObject, type InspectObjectResponse, type InspectObjectVersion } from '@/api'
 import { CopyButton } from '@/components/copy-button'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -158,27 +158,33 @@ export function ObjectInspectSheet({
   onClose: () => void
 }) {
   const open = objectKey !== undefined
-  const query = useQuery({
-    queryKey: ['inspectObject', bucketId, objectKey],
-    queryFn: () => inspectObject(bucketId, objectKey!),
-    enabled: open,
+  // Keep rendering the last key while the sheet slides out, so its content
+  // does not go blank the moment objectKey becomes undefined.
+  const [shownKey, setShownKey] = useState(objectKey)
+  if (objectKey !== undefined && objectKey !== shownKey) setShownKey(objectKey)
+  const query = useQuery<InspectObjectResponse, Error>({
+    queryKey: ['inspectObject', bucketId, shownKey],
+    queryFn: () => inspectObject(bucketId, shownKey!),
+    enabled: open && shownKey !== undefined,
     // 404 (object gone) and 400 will not change on retry.
-    retry: (failureCount, error) => shouldRetryObjectList(failureCount, error),
+    retry: shouldRetryObjectList,
   })
   const data = query.data
-  const notFound = query.error instanceof ApiError && query.error.status === 404
+  // Only Garage's NoSuchKey means the object is gone: a bare 404 can also be
+  // a backend that does not have this route yet.
+  const notFound = query.error instanceof ApiError && query.error.code === 'NoSuchKey'
 
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) onClose() }}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
         <SheetHeader className="pr-10">
           <SheetTitle>オブジェクトの詳細</SheetTitle>
-          <SheetDescription className="break-all font-mono text-xs">{objectKey}</SheetDescription>
+          <SheetDescription>Garage が保持しているバージョンとデータブロック</SheetDescription>
         </SheetHeader>
         <div className="space-y-4 px-4 pb-6">
           <div className="grid grid-cols-1 gap-3">
             <Field label="キー">
-              {objectKey !== undefined && <CopyableMono value={objectKey} label="キーをコピー" />}
+              {shownKey !== undefined && <CopyableMono value={shownKey} label="キーをコピー" />}
             </Field>
             <Field label="バケット ID">
               <CopyableMono value={data?.bucketId ?? bucketId} label="バケット ID をコピー" />

@@ -3,16 +3,13 @@ package main
 import (
 	"net/http"
 	"net/url"
-	"regexp"
-
-	"github.com/go-chi/chi/v5"
 )
 
-// bucketIDPattern matches a full Garage bucket ID: 32 bytes, hex encoded.
-// InspectObject only takes an ID (Garage's parse_bucket_id hex-decodes it into
-// a 32-byte UUID), never a global or local alias, so anything else is rejected
-// here instead of being sent upstream.
-var bucketIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+// bucketIDHexLen is the length of a full Garage bucket ID: 32 bytes, hex
+// encoded. InspectObject only takes an ID (Garage's parse_bucket_id
+// hex-decodes it into a 32-byte UUID), never a global or local alias, so
+// anything else is rejected here instead of being sent upstream.
+const bucketIDHexLen = 64
 
 // handleInspectObject proxies GET /api/buckets/{id}/objects/inspect?key=... to
 // Garage GET /v2/InspectObject?bucketId=...&key=..., which returns the object's
@@ -21,9 +18,8 @@ var bucketIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 // bucket ID that has no such object) stays a 404 (NoSuchKey).
 func handleInspectObject(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		if !bucketIDPattern.MatchString(id) {
-			writeJSONError(w, http.StatusBadRequest, "invalid bucket id: must be a 64-character hex bucket ID (aliases are not accepted)")
+		id, ok := exactHexIDParam(w, r, "bucket", bucketIDHexLen)
+		if !ok {
 			return
 		}
 		key := r.URL.Query().Get("key")

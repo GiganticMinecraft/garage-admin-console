@@ -15,7 +15,7 @@ import { showMultiResponseToast } from '@/lib/multi-response'
 import { blockErrorsCoverage } from '@/lib/maintenance-status'
 import { nonStorageNodeIds } from '@/lib/nodes'
 import { shortId } from '@/lib/format'
-import { backlinkObject, isBlockHash, parseBlocksSearch } from '@/lib/inspect-object'
+import { backlinkObject, isBlockHash, objectFolder, parseBlocksSearch } from '@/lib/inspect-object'
 import {
   Table,
   TableHeader,
@@ -128,7 +128,7 @@ function BacklinkObjectLink({ backlink }: { backlink: BlockVersion['backlink'] }
       <Link
         to="/buckets/$id"
         params={{ id: target.bucketId }}
-        search={{ inspect: target.key }}
+        search={{ prefix: objectFolder(target.key) || undefined, inspect: target.key }}
         className="text-primary underline-offset-4 hover:underline"
       >
         オブジェクトの詳細

@@ -30,11 +30,12 @@ export function versionState(v: Pick<InspectObjectVersion, 'uploading' | 'aborte
 
 /**
  * Where the version's data lives. Inline versions keep their data in the
- * object metadata and have no blocks; a delete marker has no data at all; an
- * upload that has not stored a part yet (or an aborted one) may have none. A
- * complete block-backed version listing no block means Garage found no
- * version entry for it (version_table miss), which is not the same as
- * "empty".
+ * object metadata and have no blocks; a delete marker has no data at all. A
+ * multipart upload in progress stores each part as its own Version entry,
+ * which InspectObject does not follow, so its blocks are simply not listed
+ * here (not "no blocks"). An aborted upload may have none left. A complete
+ * block-backed version listing no block means Garage found no version entry
+ * for it (version_table miss), which is not the same as "empty".
  */
 export function versionStorageLabel(
   v: Pick<InspectObjectVersion, 'inline' | 'deleteMarker' | 'uploading' | 'aborted' | 'blocks'>,
@@ -43,7 +44,8 @@ export function versionStorageLabel(
   if (v.inline) return 'インライン(ブロックなし)'
   const n = v.blocks?.length ?? 0
   if (n > 0) return `${n.toLocaleString('ja-JP')} ブロック`
-  if (v.uploading || v.aborted) return 'ブロックなし'
+  if (v.uploading) return 'アップロード中のパートはここには表示されません(未完了マルチパートの統計を参照)'
+  if (v.aborted) return 'ブロックなし'
   return 'ブロック情報なし'
 }
 
@@ -106,15 +108,13 @@ export function nextBlockLimit(current: number, total: number): number {
 
 /**
  * Reads a search param as a string. TanStack Router JSON-parses search
- * values, so a hand-typed `?x=123` arrives as a number: numbers and booleans
- * are turned back into strings, anything else (objects, arrays) is dropped.
- * The router re-quotes JSON-like strings when it builds a URL itself, so
- * links made inside the app round-trip exactly.
+ * values, so a hand-typed `?x=007` arrives as the number 7: turning it back
+ * into a string would name a different key, so anything that is not a string
+ * is dropped. The router re-quotes JSON-like strings when it builds a URL
+ * itself, so links made inside the app round-trip exactly.
  */
 function searchString(value: unknown): string | undefined {
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  return undefined
+  return typeof value === 'string' ? value : undefined
 }
 
 /** validateSearch for /blocks: `hash` opens that block's info. */
@@ -141,6 +141,11 @@ export function parseBucketDetailSearch(search: Record<string, unknown>): {
     prefix: searchString(search.prefix) || undefined,
     inspect: searchString(search.inspect) || undefined,
   }
+}
+
+/** The folder (prefix up to the last "/") holding a key; '' at the bucket root. */
+export function objectFolder(key: string): string {
+  return key.slice(0, key.lastIndexOf('/') + 1)
 }
 
 /**

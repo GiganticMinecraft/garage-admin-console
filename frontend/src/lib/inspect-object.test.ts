@@ -7,6 +7,7 @@ import {
   encryptionLabel,
   isBlockHash,
   nextBlockLimit,
+  objectFolder,
   parseBlocksSearch,
   parseBucketDetailSearch,
   shortHash,
@@ -44,8 +45,8 @@ describe('versionStorageLabel', () => {
     expect(versionStorageLabel({ ...base, blocks: [] })).toBe('ブロック情報なし')
     expect(versionStorageLabel({ ...base, blocks: Array(1234).fill(block) })).toBe('1,234 ブロック')
   })
-  it('treats an upload without parts as having no blocks yet', () => {
-    expect(versionStorageLabel({ ...base, uploading: true })).toBe('ブロックなし')
+  it('does not call an in-progress multipart upload empty: its parts are separate versions', () => {
+    expect(versionStorageLabel({ ...base, uploading: true })).toContain('アップロード中のパートはここには表示されません')
     expect(versionStorageLabel({ ...base, aborted: true })).toBe('ブロックなし')
     expect(versionStorageLabel({ ...base, uploading: true, blocks: [block] })).toBe('1 ブロック')
   })
@@ -111,8 +112,8 @@ describe('search params', () => {
     expect(parseBlocksSearch({ hash: '' })).toEqual({ hash: undefined })
     expect(parseBlocksSearch({ hash: ` ${HASH.toUpperCase()} ` })).toEqual({ hash: HASH })
     expect(parseBlocksSearch({ hash: { a: 1 } })).toEqual({ hash: undefined })
-    // The router JSON-parses hand-typed values.
-    expect(parseBlocksSearch({ hash: 123 })).toEqual({ hash: '123' })
+    // The router JSON-parses hand-typed values; a number is not a hash string.
+    expect(parseBlocksSearch({ hash: 123 })).toEqual({ hash: undefined })
   })
 
   it('validates block hashes', () => {
@@ -128,8 +129,17 @@ describe('search params', () => {
       inspect: ' dir/x y.json ',
     })
     expect(parseBucketDetailSearch({ inspect: '' })).toEqual({ prefix: undefined, inspect: undefined })
-    expect(parseBucketDetailSearch({ inspect: 42, prefix: true })).toEqual({ prefix: 'true', inspect: '42' })
+    // `?inspect=007` arrives as 7: String(7) would be another key, so it is dropped.
+    expect(parseBucketDetailSearch({ inspect: 7, prefix: true })).toEqual({ prefix: undefined, inspect: undefined })
     expect(parseBucketDetailSearch({ inspect: ['a'] })).toEqual({ prefix: undefined, inspect: undefined })
+  })
+})
+
+describe('objectFolder', () => {
+  it('returns the prefix up to the last slash', () => {
+    expect(objectFolder('a/b/c.json')).toBe('a/b/')
+    expect(objectFolder('root.json')).toBe('')
+    expect(objectFolder('dir/')).toBe('dir/')
   })
 })
 
