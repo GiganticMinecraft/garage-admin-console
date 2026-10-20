@@ -90,6 +90,12 @@ docker build -t garage-admin-console-backend backend/
 docker build -t garage-admin-console-frontend frontend/
 ```
 
+## Observability
+
+### 監査ログ
+
+backend は stderr に JSON (slog) でログを出す。全リクエストに `msg="request"` の行 (`user`, `method`, `path`, `status`, `duration_ms`, `bytes`, `trace_id`, `span_id`) が出て、`user` はセッションの GitHub ログイン名 (未認証なら省略)。加えて変更系リクエスト (POST / PUT / PATCH / DELETE。`/api/auth/*` のログイン・ログアウトは除く) ごとに `msg="audit"` の INFO 行が出る。フィールドは `user`、`method`、`path`、`route` (chi のルートパターン。例 `/api/buckets/{id}/keys/{kid}`)、`status`、`duration_ms`、`trace_id`、`params` (URL パラメータ)、`query` (`node` / `id` / `key` / `prefix` / `delimiter` だけの許可リスト)、`detail` (`/api/repair` と `/api/nodes/{id}/repair` は `repairType`。Scrub は `scrub:start` の形。`/api/nodes/{id}/worker-variables` は変数名 `variable` だけ)。リクエストボディ (`detail` 用に先頭 4 KiB だけ読む例外を除く)、Authorization / Cookie ヘッダ、トークンやシークレットは記録しない。Pod が入れ替わってもログは Loki に残るので、`{<backend Pod のセレクタ>} | json | msg="audit"` のように `msg="audit"` で絞れば「誰がいつどのリソースを変更したか」を追える。
+
 ## Deployment
 
 K8s manifests are managed in [seichi_infra](https://github.com/GiganticMinecraft/seichi_infra) under `seichi-onp-k8s/manifests/seichi-kubernetes/apps/cluster-wide-apps/garage-admin/`.
