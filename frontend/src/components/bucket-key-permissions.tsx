@@ -9,6 +9,7 @@ import { PermissionBadges, PermissionFields } from '@/components/bucket-permissi
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useBucketKeyPermissionMutations } from '@/hooks/use-bucket-key-permissions'
+import { permissionRevokeConsequences } from '@/lib/consequences'
 import { DEFAULT_GRANT, hasAnyPermission } from '@/lib/permissions'
 
 /** One entry of GetBucketInfo's `keys`. */
@@ -165,7 +166,21 @@ export function BucketKeyPermissions({ bucketId, bucketLabel, keys }: BucketKeyP
         }}
         title="キーの取り消し"
         description={`キー「${revokeTarget?.name || revokeTarget?.accessKeyId}」のこのバケットに対する read / write / owner をすべて取り消しますか？`}
-        confirmLabel="取り消し"
+        target={
+          revokeTarget
+            ? [
+                { label: 'キー', value: revokeTarget.name || '(名前なし)' },
+                { label: 'Access Key ID', value: revokeTarget.accessKeyId, mono: true },
+                { label: 'バケット', value: bucketLabel },
+              ]
+            : undefined
+        }
+        consequences={
+          revokeTarget
+            ? permissionRevokeConsequences(revokeTarget.permissions, revokeTarget.bucketLocalAliases?.length ?? 0)
+            : undefined
+        }
+        confirmLabel="権限を取り消す"
         pendingLabel="取り消し中..."
         onConfirm={() => {
           if (revokeTarget) return revoke.mutateAsync({ bucketId, keyId: revokeTarget.accessKeyId })

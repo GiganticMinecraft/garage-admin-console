@@ -23,6 +23,7 @@ import {
   summarizeNodeMetric,
   type CardSpec,
 } from '@/lib/maintenance-status'
+import { repairConsequences } from '@/lib/consequences'
 import { showMultiResponseToast } from '@/lib/multi-response'
 import { nonStorageNodeIds } from '@/lib/nodes'
 import { Button } from '@/components/ui/button'
@@ -206,6 +207,8 @@ function RepairPage() {
     const [h, w, st] = await Promise.all([health.refetch(), workers.refetch(), status.refetch()])
     return guardInputsFrom(h, w, st)
   }
+
+  const pendingConsequences = pendingRepairType ? repairConsequences(pendingRepairType) : undefined
 
   const mutation = useMutation({
     // The re-check is part of the mutation so its pending state covers it:
@@ -472,11 +475,17 @@ function RepairPage() {
               ? 'この操作は親が見つからないメタデータを削除扱いにします。実行前にクラスタとワーカーの状態を取り直して確認します。全ノードに対して実行し、クラスタの負荷が一時的に上がる可能性があります。'
               : 'この操作を全ノードに対して実行します。クラスタの負荷が一時的に上がる可能性があります。'
         }
+        target={[
+          { label: '操作', value: pendingLabel },
+          { label: '対象ノード', value: '全ノード' },
+        ]}
+        consequences={pendingConsequences}
+        irreversible={pendingConsequences !== undefined}
         onConfirm={() => {
           if (pendingRepairType) return mutation.mutateAsync(pendingRepairType)
         }}
         isPending={mutation.isPending}
-        confirmLabel="実行"
+        confirmLabel={`${pendingLabel}を実行`}
         pendingLabel="実行中..."
         confirmVariant={pendingSeverity === 'high' ? 'destructive' : 'default'}
       />

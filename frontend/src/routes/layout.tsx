@@ -28,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { LayoutPreview } from '@/components/layout-preview'
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
+import { layoutApplyConsequences, layoutRevertConsequences } from '@/lib/consequences'
 import { formatBytes } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 import {
@@ -601,8 +602,14 @@ function LayoutPage() {
         open={showApply}
         onOpenChange={setShowApply}
         title={`レイアウト v${nextVersion} の適用`}
-        description="ステージ中の変更を適用します。パーティションの再配置が始まり、クラスタの負荷が一時的に上がります。進捗はこのページの「レイアウト更新中」トラッカーで確認できます。完了後もデータブロックのリシンクには数時間かかることがあります。"
-        confirmLabel="適用"
+        description="ステージ中の変更を適用します。進捗はこのページの「レイアウト更新中」トラッカーで確認できます。"
+        target={[
+          { label: 'バージョン', value: `v${data?.version ?? 0} → v${nextVersion}` },
+          { label: 'ステージ中の変更', value: `${stagedCount} 件` },
+        ]}
+        consequences={layoutApplyConsequences(nextVersion)}
+        irreversible
+        confirmLabel={`v${nextVersion} を適用`}
         pendingLabel="適用中..."
         confirmVariant="default"
         onConfirm={() => applyMutation.mutateAsync(nextVersion)}
@@ -612,8 +619,10 @@ function LayoutPage() {
         open={showRevert}
         onOpenChange={setShowRevert}
         title="ステージ中の変更の取り消し"
-        description="ステージ中のロール変更とパラメータ変更を全て破棄します。適用済みのレイアウトには影響しません。"
-        confirmLabel="取り消す"
+        description="ステージ中の変更を取り消しますか？"
+        target={[{ label: 'ステージ中の変更', value: `${stagedCount} 件` }]}
+        consequences={layoutRevertConsequences()}
+        confirmLabel="ステージ中の変更を破棄"
         pendingLabel="取り消し中..."
         onConfirm={() => revertMutation.mutateAsync()}
         isPending={revertMutation.isPending}

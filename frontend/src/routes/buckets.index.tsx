@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/table'
 import { LocalNameBadge } from '@/components/local-name-badge'
 import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
+import { bucketDeleteConsequences, bucketHasObjects } from '@/lib/consequences'
 import { formatBytes, formatCount, formatDateTime, shortId } from '@/lib/format'
 import { sortRows, timeValue, useSort } from '@/lib/sort'
 import type { SortValue } from '@/lib/sort'
@@ -295,7 +296,20 @@ function BucketsPage() {
         open={deleteTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         title="バケットの削除"
-        description={`バケット「${deleteTarget ? bucketDisplayLabel(nameOf(deleteTarget)) : ''}」を削除しますか？この操作は取り消せません。`}
+        description={`バケット「${deleteTarget ? bucketDisplayLabel(nameOf(deleteTarget)) : ''}」を削除しますか？`}
+        target={
+          deleteTarget
+            ? [
+                { label: '名前', value: bucketDisplayLabel(nameOf(deleteTarget)) },
+                { label: 'ID', value: deleteTarget.id, mono: true },
+                { label: 'オブジェクト', value: `${formatCount(deleteTarget.objects)} 件 / ${deleteTarget.bytes === null ? '-' : formatBytes(deleteTarget.bytes)}` },
+              ]
+            : undefined
+        }
+        consequences={deleteTarget ? bucketDeleteConsequences(deleteTarget) : undefined}
+        irreversible
+        confirmDisabled={deleteTarget ? bucketHasObjects(deleteTarget) : false}
+        confirmLabel="バケットを削除"
         onConfirm={() => {
           if (deleteTarget) return deleteMutation.mutateAsync(deleteTarget.id)
         }}

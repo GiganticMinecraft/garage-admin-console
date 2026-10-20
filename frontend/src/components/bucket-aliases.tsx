@@ -18,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { aliasRemoveConsequences } from '@/lib/consequences'
 import { shortId } from '@/lib/format'
 
 /** One alias of the bucket, global or in a key's local namespace. */
@@ -148,9 +149,7 @@ export function BucketAliases({ bucket }: BucketAliasesProps) {
     ? (removeTarget.kind === 'global'
         ? `グローバルエイリアス「${removeTarget.alias}」を削除しますか？`
         : `キー「${removeTarget.keyName || removeTarget.accessKeyId}」のローカルエイリアス「${removeTarget.alias}」を削除しますか？`) +
-      (removingLastGlobal
-        ? ' これはこのバケット最後のグローバルエイリアスです。削除するとグローバルな名前ではアクセスできなくなり、ローカルエイリアスを持つキーからしか名前で参照できなくなります。'
-        : '')
+      (removingLastGlobal ? ' これはこのバケット最後のグローバルエイリアスです。' : '')
     : ''
 
   return (
@@ -282,7 +281,24 @@ export function BucketAliases({ bucket }: BucketAliasesProps) {
         }}
         title={removingLastGlobal ? '最後のグローバルエイリアスの削除' : 'エイリアスの削除'}
         description={removeDescription}
-        confirmLabel={removingLastGlobal ? 'それでも削除' : '削除'}
+        target={
+          removeTarget
+            ? [
+                { label: '種類', value: removeTarget.kind === 'global' ? 'グローバルエイリアス' : 'ローカルエイリアス' },
+                { label: 'エイリアス', value: removeTarget.alias, mono: true },
+                ...(removeTarget.kind === 'local'
+                  ? [{ label: 'キー', value: `${removeTarget.keyName || '(名前なし)'} (${shortId(removeTarget.accessKeyId)})` }]
+                  : []),
+                { label: 'バケット ID', value: bucket.id, mono: true },
+              ]
+            : undefined
+        }
+        consequences={
+          removeTarget
+            ? aliasRemoveConsequences({ kind: removeTarget.kind, lastGlobal: removingLastGlobal })
+            : undefined
+        }
+        confirmLabel={removingLastGlobal ? 'それでもエイリアスを削除' : 'エイリアスを削除'}
         onConfirm={() => {
           if (removeTarget) return remove.mutateAsync(rowTarget(removeTarget))
         }}
