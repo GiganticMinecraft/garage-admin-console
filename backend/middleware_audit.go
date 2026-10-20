@@ -350,6 +350,11 @@ func extractPermissions(body []byte, complete bool) map[string]any {
 // extractImportedKeyID returns {"accessKeyId": ...} for the POST
 // /api/keys/import body, so the audit line says which key was imported (the
 // route has no {id}). The secretAccessKey in the same body is never decoded.
+//
+// The ID is recorded only if it looks like an access key ID (auditKeyIDToken),
+// so a secret pasted into the ID field by mistake does not reach the log:
+// the 32-character cap excludes Garage (64 hex) and AWS-style (40 chars)
+// secrets, as well as anything containing "/" or "+".
 func extractImportedKeyID(body []byte, complete bool) map[string]any {
 	if !complete {
 		return nil
@@ -357,11 +362,15 @@ func extractImportedKeyID(body []byte, complete bool) map[string]any {
 	var req struct {
 		AccessKeyID string `json:"accessKeyId"`
 	}
-	if json.Unmarshal(body, &req) != nil || req.AccessKeyID == "" {
+	if json.Unmarshal(body, &req) != nil || !auditKeyIDToken.MatchString(req.AccessKeyID) {
 		return nil
 	}
-	return map[string]any{"accessKeyId": truncateUTF8(req.AccessKeyID, auditMaxValueBytes)}
+	return map[string]any{"accessKeyId": req.AccessKeyID}
 }
+
+// auditKeyIDToken matches access key IDs that are safe to log: Garage's own
+// ("GK" + 24 hex, 26 chars) and other usual IDs (AWS: 20 chars).
+var auditKeyIDToken = regexp.MustCompile(`^[A-Za-z0-9._-]{8,32}$`)
 
 // cappedBuffer keeps the first max bytes written to it and remembers whether
 // more were written. Write never fails, so it is safe as a response tee.

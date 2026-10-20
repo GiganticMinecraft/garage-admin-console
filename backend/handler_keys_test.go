@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -14,25 +15,41 @@ const (
 	testImportSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
 
-// newImportKeyGarage fakes POST /v2/ImportKey. It records the forwarded body
-// and answers with status / body.
-func newImportKeyGarage(t *testing.T, status int, respBody string, gotBody *string, calls *int) *httptest.Server {
+// importKeyGarage fakes POST /v2/ImportKey. It records the forwarded body and
+// the number of calls, and answers with a fixed status / body.
+type importKeyGarage struct {
+	*httptest.Server
+	mu    sync.Mutex
+	body  string
+	calls int
+}
+
+func newImportKeyGarage(t *testing.T, status int, respBody string) *importKeyGarage {
 	t.Helper()
+	g := &importKeyGarage{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/ImportKey", func(w http.ResponseWriter, r *http.Request) {
-		*calls++
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
 		b, _ := io.ReadAll(r.Body)
-		*gotBody = string(b)
+		g.mu.Lock()
+		g.calls++
+		g.body = string(b)
+		g.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		w.Write([]byte(respBody))
 	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
+	g.Server = httptest.NewServer(mux)
+	t.Cleanup(g.Close)
+	return g
+}
+
+func (g *importKeyGarage) got() (string, int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.body, g.calls
 }
 
 func doImportKey(t *testing.T, garageURL, body string) *httptest.ResponseRecorder {
@@ -46,18 +63,17 @@ func doImportKey(t *testing.T, garageURL, body string) *httptest.ResponseRecorde
 	return rec
 }
 
-func TestImportKeyForwardsAndStripsSecret(t *testing.T) {
-	var got string
-	var calls int
-	// Garage v2.4.1 answers GetKeyInfoResponse; include a secret to check the
-	// backend never passes one through.
-	resp := `{"accessKeyId":"` + testImportKeyID + `","name":"migrated","secretAccessKey":"` + testImportSecret + `","expired":false,"permissions":{"createBucket":false},"buckets":[]}`
-	garage := newImportKeyGarage(t, http.StatusOK, resp, &got, &calls)
+func TestImportKeyForwards(t *testing.T) {
+	// The shape Garage v2.4.1 answers (checked against a real instance): no
+	// secretAccessKey.
+	resp := `{"accessKeyId":"` + testImportKeyID + `","created":"2026-10-20T02:19:08.657Z","name":"migrated","expiration":null,"expired":false,"permissions":{"createBucket":false},"buckets":[]}`
+	garage := newImportKeyGarage(t, http.StatusOK, resp)
 
-	rec := doImportKey(t, garage.URL, `{"accessKeyId":"`+testImportKeyID+`","secretAccessKey":"`+testImportSecret+`","name":"migrated"}`)
+	rec := doImportKey(t, garage.URL, `{"accessKeyId":"`+testImportKeyID+`","secretAccessKey":"`+testImportSecret+`","name":"  migrated "}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
+	got, calls := garage.got()
 	if calls != 1 {
 		t.Fatalf("garage calls = %d, want 1", calls)
 	}
@@ -78,22 +94,21 @@ func TestImportKeyForwardsAndStripsSecret(t *testing.T) {
 	if out["accessKeyId"] != testImportKeyID || out["name"] != "migrated" {
 		t.Errorf("response = %v", out)
 	}
-	if _, ok := out["secretAccessKey"]; ok || strings.Contains(rec.Body.String(), testImportSecret) {
+	if strings.Contains(rec.Body.String(), testImportSecret) {
 		t.Errorf("response must not carry the secret: %s", rec.Body.String())
 	}
 }
 
-func TestImportKeyEmptyNameIsOmitted(t *testing.T) {
-	var got string
-	var calls int
-	garage := newImportKeyGarage(t, http.StatusOK, `{"accessKeyId":"`+testImportKeyID+`","name":"Imported key"}`, &got, &calls)
-
-	rec := doImportKey(t, garage.URL, `{"accessKeyId":"`+testImportKeyID+`","secretAccessKey":"`+testImportSecret+`","name":""}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(got, `"name":null`) {
-		t.Errorf("empty name should be forwarded as null, got %q", got)
+func TestImportKeyBlankNameIsOmitted(t *testing.T) {
+	for _, name := range []string{`""`, `"   "`, `"\t\n"`} {
+		garage := newImportKeyGarage(t, http.StatusOK, `{"accessKeyId":"`+testImportKeyID+`","name":"Imported key"}`)
+		rec := doImportKey(t, garage.URL, `{"accessKeyId":"`+testImportKeyID+`","secretAccessKey":"`+testImportSecret+`","name":`+name+`}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("name %s: status = %d body %s", name, rec.Code, rec.Body.String())
+		}
+		if got, _ := garage.got(); !strings.Contains(got, `"name":null`) {
+			t.Errorf("name %s should be forwarded as null, got %q", name, got)
+		}
 	}
 }
 
@@ -109,14 +124,12 @@ func TestImportKeyRejectsMalformedPair(t *testing.T) {
 		{"secret non-ASCII", `{"accessKeyId":"` + testImportKeyID + `","secretAccessKey":"0123456789abcdefあいう"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var got string
-			var calls int
-			garage := newImportKeyGarage(t, http.StatusOK, `{}`, &got, &calls)
+			garage := newImportKeyGarage(t, http.StatusOK, `{}`)
 			rec := doImportKey(t, garage.URL, tc.body)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400 (body %s)", rec.Code, rec.Body.String())
 			}
-			if calls != 0 {
+			if _, calls := garage.got(); calls != 0 {
 				t.Errorf("malformed body must not reach Garage")
 			}
 			if strings.Contains(rec.Body.String(), testImportSecret) {
@@ -127,10 +140,8 @@ func TestImportKeyRejectsMalformedPair(t *testing.T) {
 }
 
 func TestImportKeyForwardsKeyAlreadyExists(t *testing.T) {
-	var got string
-	var calls int
 	garageErr := `{"code":"KeyAlreadyExists","message":"Key ` + testImportKeyID + ` already exists in data store.","region":"garage","path":"/v2/ImportKey"}`
-	garage := newImportKeyGarage(t, http.StatusConflict, garageErr, &got, &calls)
+	garage := newImportKeyGarage(t, http.StatusConflict, garageErr)
 
 	rec := doImportKey(t, garage.URL, `{"accessKeyId":"`+testImportKeyID+`","secretAccessKey":"`+testImportSecret+`"}`)
 	if rec.Code != http.StatusConflict {
@@ -154,9 +165,7 @@ func TestValidateImportKeyAcceptsGarageRules(t *testing.T) {
 }
 
 func TestAudit_ImportKeyRecordsAccessKeyIDOnly(t *testing.T) {
-	var got string
-	var calls int
-	garage := newImportKeyGarage(t, http.StatusOK, `{"accessKeyId":"`+testImportKeyID+`","name":"n"}`, &got, &calls)
+	garage := newImportKeyGarage(t, http.StatusOK, `{"accessKeyId":"`+testImportKeyID+`","name":"n"}`)
 	handler, store := setupTestRouter(t, garage.URL)
 	buf := captureLogs(t)
 
@@ -170,7 +179,7 @@ func TestAudit_ImportKeyRecordsAccessKeyIDOnly(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(got, testImportSecret) {
+	if got, _ := garage.got(); !strings.Contains(got, testImportSecret) {
 		t.Errorf("Garage did not receive the secret: %q", got)
 	}
 	audits := logLines(t, buf, "audit")
@@ -183,5 +192,27 @@ func TestAudit_ImportKeyRecordsAccessKeyIDOnly(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), testImportSecret) {
 		t.Errorf("secret leaked into logs:\n%s", buf.String())
+	}
+}
+
+func TestExtractImportedKeyIDSkipsSecretLikeValues(t *testing.T) {
+	for _, id := range []string{
+		testImportSecret, // Garage secret pasted into the ID field
+		"wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", // AWS-style secret
+		"0123456789abcdef0123456789abcdef0",        // 33 chars: over the cap
+		"GK123",                                    // too short
+		"GK0123 456789",                            // not a token
+		"",
+	} {
+		b, _ := json.Marshal(map[string]string{"accessKeyId": id, "secretAccessKey": testImportSecret})
+		if d := extractImportedKeyID(b, true); d != nil {
+			t.Errorf("extractImportedKeyID(%q) = %v, want nil", id, d)
+		}
+	}
+	for _, id := range []string{testImportKeyID, "AKIAIOSFODNN7EXAMPLE"} {
+		b, _ := json.Marshal(map[string]string{"accessKeyId": id})
+		if d := extractImportedKeyID(b, true); d["accessKeyId"] != id {
+			t.Errorf("extractImportedKeyID(%q) = %v", id, d)
+		}
 	}
 }

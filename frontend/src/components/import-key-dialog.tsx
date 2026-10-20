@@ -161,7 +161,7 @@ function ImportKeyForm({
               setTouched((t) => ({ ...t, secretAccessKey: true }))
             }}
             className="font-mono"
-            autoComplete="new-password"
+            autoComplete="off"
             spellCheck={false}
             aria-invalid={secretError ? true : undefined}
             aria-describedby={`${id}-secret-msg`}

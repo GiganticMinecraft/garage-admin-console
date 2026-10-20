@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -65,9 +66,9 @@ func validateImportKey(req importKeyRequest) string {
 // handleImportKey proxies POST /api/keys/import to Garage POST /v2/ImportKey,
 // which imports an existing access key / secret pair (migration from another
 // cluster). The body is validated first (400 on a malformed pair). Garage
-// answers GetKeyInfoResponse without the secret; secretAccessKey is stripped
-// anyway, since the operator already holds it. Non-2xx answers (e.g. 409
-// KeyAlreadyExists) are forwarded as-is.
+// v2.4.1 answers GetKeyInfoResponse without the secret (verified against a
+// real instance). Non-2xx answers (e.g. 409 KeyAlreadyExists) are forwarded
+// as-is.
 func handleImportKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -84,38 +85,20 @@ func handleImportKey(garageAdmin *GarageAdminClient) http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, msg)
 			return
 		}
-		if req.Name != nil && *req.Name == "" {
-			// Let Garage apply its default name ("Imported key").
-			req.Name = nil
+		if req.Name != nil {
+			if name := strings.TrimSpace(*req.Name); name == "" {
+				// Let Garage apply its default name ("Imported key").
+				req.Name = nil
+			} else {
+				req.Name = &name
+			}
 		}
 		body, err := json.Marshal(req)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "cannot encode request")
 			return
 		}
-
-		const garagePath = "/v2/ImportKey"
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, bytes.NewReader(body))
-		if err != nil {
-			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			forwardResponse(w, r, resp, garagePath)
-			return
-		}
-		invalidateListCaches()
-
-		var info map[string]json.RawMessage
-		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-			slog.ErrorContext(r.Context(), "invalid garage response", "path", garagePath, "error", err)
-			writeJSONError(w, http.StatusBadGateway, "invalid response from Garage")
-			return
-		}
-		delete(info, "secretAccessKey")
-		writeJSON(w, info)
+		proxyGarageMutation(w, r, garageAdmin, "/v2/ImportKey", bytes.NewReader(body))
 	}
 }
 
