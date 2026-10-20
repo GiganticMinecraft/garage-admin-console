@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +12,36 @@ import (
 	"strings"
 	"testing"
 )
+
+// updateGolden rewrites testdata/console_scope.json: go test -run TestConsoleScopeGolden -update
+var updateGolden = flag.Bool("update", false, "rewrite testdata golden files")
+
+// consoleScopeGolden is consoleScope as JSON. The frontend tests import it, so
+// they check the list the backend actually serves without parsing Go source.
+const consoleScopeGolden = "testdata/console_scope.json"
+
+func TestConsoleScopeGolden(t *testing.T) {
+	want, err := json.MarshalIndent(consoleScope, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, '\n')
+	if *updateGolden {
+		if err := os.MkdirAll(filepath.Dir(consoleScopeGolden), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(consoleScopeGolden, want, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(consoleScopeGolden)
+	if err != nil {
+		t.Fatalf("%v (regenerate with: go test -run TestConsoleScopeGolden -update)", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("%s is out of date; regenerate with: go test -run TestConsoleScopeGolden -update", consoleScopeGolden)
+	}
+}
 
 // garageV2Call matches a Garage Admin API v2 path literal such as "/v2/GetClusterHealth.
 var garageV2Call = regexp.MustCompile(`"/v2/([A-Za-z]+)`)

@@ -1,22 +1,18 @@
 import { describe, expect, it } from 'vitest'
-// The backend's console scope constant, read as text so the tests below run
-// against the list GET /api/admin-tokens/console-scope actually serves.
-import consoleScopeGo from '../../../backend/console_scope.go?raw'
+// Golden copy of the backend's consoleScope (kept in sync by
+// TestConsoleScopeGolden), so the tests below run against the list
+// GET /api/admin-tokens/console-scope actually serves.
+import backendConsoleScope from '../../../backend/testdata/console_scope.json'
 import {
   ALL_ADMIN_ENDPOINTS,
   ESCALATION_WARNING,
   PRIVILEGE_ESCALATION_ENDPOINTS,
+  SCOPE_EXEMPT_ENDPOINTS,
   consolePresetScope,
   escalationMessage,
   scopeCoversConsole,
   scopeEscalates,
 } from './admin-scopes'
-
-function backendConsoleScope(): string[] {
-  const body = /var consoleScope = \[\]string\{([\s\S]*?)\n\}/.exec(consoleScopeGo)?.[1]
-  if (!body) throw new Error('consoleScope not found in backend/console_scope.go')
-  return [...body.matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1])
-}
 
 describe('scopeEscalates', () => {
   it('flags *', () => {
@@ -59,6 +55,10 @@ describe('escalationMessage', () => {
 })
 
 describe('consolePresetScope', () => {
+  it('drops scope-exempt GetCurrentAdminTokenInfo', () => {
+    expect(consolePresetScope(['GetCurrentAdminTokenInfo', 'ListAdminTokens'])).toEqual(['ListAdminTokens'])
+  })
+
   it('drops * and the escalation endpoints and keeps the editor order', () => {
     expect(consolePresetScope(['UpdateAdminToken', 'ListBuckets', '*', 'GetClusterStatus', 'CreateAdminToken'])).toEqual([
       'GetClusterStatus',
@@ -71,10 +71,10 @@ describe('consolePresetScope', () => {
   })
 
   describe('with the backend console scope', () => {
-    const backend = backendConsoleScope()
+    const backend: string[] = backendConsoleScope
     const preset = consolePresetScope(backend)
 
-    it('reads a non-trivial list from backend/console_scope.go', () => {
+    it('reads a non-trivial list from the backend golden file', () => {
       expect(backend.length).toBeGreaterThan(10)
       expect(backend).toContain('GetClusterHealth')
     })
@@ -86,7 +86,7 @@ describe('consolePresetScope', () => {
 
     it('keeps every other backend endpoint', () => {
       const dropped = backend.filter((e) => !preset.includes(e))
-      expect(dropped.sort()).toEqual([...PRIVILEGE_ESCALATION_ENDPOINTS].sort())
+      expect(dropped.sort()).toEqual([...PRIVILEGE_ESCALATION_ENDPOINTS, ...SCOPE_EXEMPT_ENDPOINTS].sort())
     })
 
     it('only uses endpoints the scope editor can show', () => {
@@ -105,6 +105,10 @@ describe('scopeCoversConsole', () => {
 
   it('treats * as covering', () => {
     expect(scopeCoversConsole(['*'], consoleScope)).toEqual({ covers: true, missing: [] })
+  })
+
+  it('does not require GetCurrentAdminTokenInfo', () => {
+    expect(scopeCoversConsole(['ListBuckets', 'GetClusterHealth'], [...consoleScope, 'GetCurrentAdminTokenInfo']).covers).toBe(true)
   })
 
   it('does not require the escalation endpoints', () => {

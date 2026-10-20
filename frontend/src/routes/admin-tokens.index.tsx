@@ -365,6 +365,11 @@ function CreateAdminTokenDialog({
       // only in the page's one-time dialog state. Errors stay visible.
       if (created) setTimeout(() => mutation.reset(), 0)
     },
+    // The escalation confirmation stays open over the form on failure, so
+    // also report it where it is visible.
+    onError: (err) => {
+      toast.error(`管理トークンの作成に失敗しました: ${err.message}`)
+    },
   })
 
   const canSubmit = name.trim() !== '' && expirationValid(expiration) && scope.length > 0 && !mutation.isPending
@@ -441,6 +446,7 @@ function CreateAdminTokenDialog({
           isPending={mutation.isPending}
           confirmLabel="作成"
           pendingLabel="作成中..."
+          confirmVariant="default"
         />
       </DialogContent>
     </Dialog>

@@ -177,16 +177,24 @@ export function escalationMessage(scope: readonly string[]): string | null {
 }
 
 /**
+ * Endpoints Garage allows for every valid token regardless of its scope
+ * (`src/api/admin/api_server.rs`), so a scope never needs to list them.
+ */
+export const SCOPE_EXEMPT_ENDPOINTS: readonly string[] = ['GetCurrentAdminTokenInfo']
+
+/**
  * The 「コンソール用スコープ」 preset: what the console backend calls
- * (`GET /api/admin-tokens/console-scope`) minus `*` and the escalation
- * endpoints, so the preset never amounts to `*`. Known endpoints keep the
+ * (`GET /api/admin-tokens/console-scope`) minus `*`, the escalation endpoints
+ * (so the preset never amounts to `*`) and the scope-exempt endpoints. Known endpoints keep the
  * editor's category order; names the editor does not list come last, sorted.
  * A token with this scope cannot create admin tokens or change their settings
  * from the console.
  */
 export function consolePresetScope(consoleScope: readonly string[]): string[] {
   const wanted = new Set(
-    consoleScope.filter((e) => e !== ALL_SCOPE && !PRIVILEGE_ESCALATION_ENDPOINTS.includes(e)),
+    consoleScope.filter(
+      (e) => e !== ALL_SCOPE && !PRIVILEGE_ESCALATION_ENDPOINTS.includes(e) && !SCOPE_EXEMPT_ENDPOINTS.includes(e),
+    ),
   )
   const known = ALL_ADMIN_ENDPOINTS.filter((e) => wanted.has(e))
   const knownSet = new Set(known)
@@ -203,7 +211,8 @@ export interface ConsoleCoverage {
 /**
  * Whether a scope grants everything in the console preset
  * (`consolePresetScope(consoleScope)`); `*` always does. The escalation
- * endpoints are not required: the preset leaves them out on purpose.
+ * endpoints are not required (the preset leaves them out on purpose), nor
+ * are the scope-exempt ones.
  */
 export function scopeCoversConsole(scope: readonly string[], consoleScope: readonly string[]): ConsoleCoverage {
   if (isFullScope(scope)) return { covers: true, missing: [] }

@@ -189,13 +189,19 @@ function EditAdminTokenForm({
       if (isCurrent) queryClient.invalidateQueries({ queryKey: ['admin-tokens', 'current'] })
       toast.success('管理トークンを更新しました')
     },
+    // The escalation confirmation stays open over the form on failure, so
+    // also report it where it is visible.
+    onError: (err) => {
+      toast.error(`管理トークンの更新に失敗しました: ${err.message}`)
+    },
   })
 
   const canSave =
     dirty && name.trim() !== '' && expirationValid(expiration) && scope.length > 0 && !mutation.isPending
-  // Saving a changed scope that amounts to * goes through a confirmation.
+  // Saving a scope change that newly amounts to * goes through a
+  // confirmation; narrowing an already escalating token does not.
   const [confirmEscalation, setConfirmEscalation] = useState(false)
-  const escalation = scopeDirty ? escalationMessage(scope) : null
+  const escalation = scopeDirty && !scopeEscalates(token.scope).escalates ? escalationMessage(scope) : null
 
   const reset = () => {
     setName(token.name)
@@ -262,6 +268,7 @@ function EditAdminTokenForm({
         isPending={mutation.isPending}
         confirmLabel="保存"
         pendingLabel="保存中..."
+        confirmVariant="default"
       />
     </>
   )
