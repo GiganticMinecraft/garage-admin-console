@@ -747,7 +747,7 @@ function NodeDetailPage() {
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Link to="/" className="hover:underline">ダッシュボード</Link>
         <span>/</span>
-        <span>ノード</span>
+        <Link to="/nodes" className="hover:underline">ノード</Link>
         <span>/</span>
         <span>{title}</span>
       </div>

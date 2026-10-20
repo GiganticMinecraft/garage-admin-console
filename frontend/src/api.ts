@@ -139,6 +139,23 @@ export async function getClusterStatus(): Promise<ClusterStatus> {
   return fetchJSON('/cluster/status')
 }
 
+/** One entry of Garage's ConnectClusterNodesResponse, at the position of the peer it answers for. */
+export interface ConnectNodeResult {
+  success: boolean
+  error: string | null
+}
+
+/**
+ * Ask Garage to connect to `<node_id>@<addr:port>` peers (ConnectClusterNodes).
+ * A 200 does not mean every connection succeeded: check each entry.
+ */
+export async function connectClusterNodes(nodes: string[]): Promise<ConnectNodeResult[]> {
+  return fetchJSON('/cluster/connect', {
+    method: 'POST',
+    body: JSON.stringify({ nodes }),
+  })
+}
+
 // Cluster layout (mirrors Garage's GetClusterLayoutResponse)
 export interface LayoutNodeRole {
   id: string

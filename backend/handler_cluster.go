@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 )
 
 // proxyGarageGET is a helper that proxies a GET request to the Garage Admin API
@@ -108,4 +112,110 @@ func handleSkipDeadNodes(garageAdmin *GarageAdminClient) http.HandlerFunc {
 // plus the freeform text. It is returned as-is.
 func handleClusterStatistics(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return proxyGarageGET(garageAdmin, "/v2/GetClusterStatistics")
+}
+
+// maxConnectNodes caps how many peers one connect request may name.
+const maxConnectNodes = 10
+
+// maxConnectBodyBytes bounds the connect request body; ten 64-hex IDs with
+// addresses fit comfortably.
+const maxConnectBodyBytes = 16 << 10
+
+// connectPeerPattern is the `<node_id>@<addr:port>` form printed by
+// `garage node id`: a full 64-hex node ID, then a host (name, IPv4 or
+// bracketed IPv6) and a port.
+var connectPeerPattern = regexp.MustCompile(`^[0-9a-f]{64}@[^\s@]+:[0-9]+$`)
+
+// connectNodesRequest is the body of POST /api/cluster/connect.
+type connectNodesRequest struct {
+	Nodes []string `json:"nodes"`
+}
+
+// connectNodeResult is one entry of Garage's ConnectClusterNodesResponse,
+// at the same position as the peer it answers for.
+type connectNodeResult struct {
+	Success bool    `json:"success"`
+	Error   *string `json:"error"`
+}
+
+// validateConnectNodes checks the peer list and returns a message for the
+// first problem found, or "" when the list is acceptable.
+func validateConnectNodes(nodes []string) string {
+	if len(nodes) == 0 {
+		return "nodes must contain at least one entry"
+	}
+	if len(nodes) > maxConnectNodes {
+		return fmt.Sprintf("nodes must contain at most %d entries", maxConnectNodes)
+	}
+	for i, n := range nodes {
+		if !connectPeerPattern.MatchString(n) {
+			return fmt.Sprintf("nodes[%d] must be <64-hex node id>@<host>:<port>", i)
+		}
+	}
+	return ""
+}
+
+// handleConnectNodes handles POST /api/cluster/connect by calling Garage
+// POST /v2/ConnectClusterNodes. Body: {"nodes": ["<id>@<addr:port>", ...]}.
+// Garage answers 200 even when some connections fail, with one
+// {success, error} entry per peer in request order; that array is returned
+// in the same order so the UI can show each line's result. An answer whose
+// length differs from the request cannot be matched to the peers and
+// becomes a 502. A non-200 answer from Garage is forwarded as-is.
+func handleConnectNodes(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, ok := readRequestBody(w, r, maxConnectBodyBytes)
+		if !ok {
+			return
+		}
+		var req connectNodesRequest
+		if err := json.Unmarshal(data, &req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if msg := validateConnectNodes(req.Nodes); msg != "" {
+			writeJSONError(w, http.StatusBadRequest, msg)
+			return
+		}
+		body, err := json.Marshal(req.Nodes)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "cannot encode request")
+			return
+		}
+
+		const garagePath = "/v2/ConnectClusterNodes"
+		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, bytes.NewReader(body))
+		if err != nil {
+			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			forwardResponse(w, r, resp, garagePath)
+			return
+		}
+
+		var results []connectNodeResult
+		if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+			slog.ErrorContext(r.Context(), "failed to decode ConnectClusterNodes response", "error", err)
+			writeJSONError(w, http.StatusBadGateway, "cannot decode Garage response")
+			return
+		}
+		if len(results) != len(req.Nodes) {
+			slog.ErrorContext(r.Context(), "ConnectClusterNodes answered a different number of peers", "requested", len(req.Nodes), "answered", len(results))
+			writeJSONError(w, http.StatusBadGateway, "Garage response does not match the requested nodes")
+			return
+		}
+		for i, res := range results {
+			if !res.Success {
+				msg := ""
+				if res.Error != nil {
+					msg = *res.Error
+				}
+				slog.WarnContext(r.Context(), "ConnectClusterNodes failed for peer", "index", i, "error", msg)
+			}
+		}
+		writeJSON(w, results)
+	}
 }
