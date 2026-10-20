@@ -13,21 +13,20 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
 import { formatBytes, formatCount } from '@/lib/format'
+import { parseBucketDetailSearch } from '@/lib/inspect-object'
 import { toast } from 'sonner'
 import { Copy, Check } from 'lucide-react'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/buckets/$id')({
   component: BucketDetailPage,
-  validateSearch: (search: Record<string, unknown>): { prefix?: string } => ({
-    prefix: (search.prefix as string) || undefined,
-  }),
+  validateSearch: parseBucketDetailSearch,
 })
 
 function BucketDetailPage() {
   useDocumentTitle('バケット詳細')
   const { id } = Route.useParams()
-  const { prefix: rawPrefix } = Route.useSearch()
+  const { prefix: rawPrefix, inspect } = Route.useSearch()
   const prefix = rawPrefix ?? ''
   const navigate = useNavigate()
   const setPrefix = useCallback(
@@ -36,6 +35,18 @@ function BucketDetailPage() {
         to: '/buckets/$id',
         params: { id },
         search: { prefix: newPrefix || undefined },
+        replace: true,
+      })
+    },
+    [navigate, id],
+  )
+  // Opening / closing the details keeps the folder the user is in.
+  const setInspect = useCallback(
+    (key: string | undefined) => {
+      navigate({
+        to: '/buckets/$id',
+        params: { id },
+        search: (prev) => ({ ...prev, inspect: key }),
         replace: true,
       })
     },
@@ -153,6 +164,8 @@ function BucketDetailPage() {
         bucketName={data?.globalAliases?.[0]}
         prefix={prefix}
         onPrefixChange={setPrefix}
+        inspectKey={inspect}
+        onInspectKeyChange={setInspect}
       />
 
       {/* Bucket settings (quotas, website, CORS, lifecycle, unfinished uploads) */}

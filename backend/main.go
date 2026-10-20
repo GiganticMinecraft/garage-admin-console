@@ -65,6 +65,7 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 			r.Post("/{id}/aliases", handleAddBucketAlias(garageAdmin))
 			r.Delete("/{id}/aliases/{alias}", handleRemoveBucketAlias(garageAdmin))
 			r.Post("/{id}/console-access", handleGrantConsoleAccess(garageAdmin, consoleKeyIDFromEnv()))
+			r.Get("/{id}/objects/inspect", handleInspectObject(garageAdmin))
 		})
 
 		r.Route("/api/keys", func(r chi.Router) {

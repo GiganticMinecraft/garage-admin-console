@@ -65,6 +65,18 @@ func hexIDParam(w http.ResponseWriter, r *http.Request, what string, also ...str
 	return "", false
 }
 
+// exactHexIDParam validates the {id} URL parameter as exactly length hex
+// characters (a full ID, not a prefix or an alias) and writes a JSON 400 on
+// failure.
+func exactHexIDParam(w http.ResponseWriter, r *http.Request, what string, length int) (string, bool) {
+	id := chi.URLParam(r, "id")
+	if len(id) == length && hexIDPattern.MatchString(id) {
+		return id, true
+	}
+	writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid %s id: must be %d hex characters", what, length))
+	return "", false
+}
+
 // readRequestBody reads a request body bounded to limit bytes. It writes a
 // JSON 413 when the body is too large (400 when unreadable) and returns false.
 func readRequestBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
