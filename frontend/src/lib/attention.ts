@@ -10,6 +10,7 @@ import type {
   S3Connection,
   StorageHealth,
 } from '@/api'
+import type { BucketTabSearch } from '@/lib/bucket-detail-tabs'
 import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
 import { formatCount } from '@/lib/format'
 import { isStorageNode, nodeDisplayName } from '@/lib/nodes'
@@ -43,9 +44,14 @@ export interface AttentionInputs {
 
 export type AttentionSeverity = 'danger' | 'warning'
 
-/** Where an item links to: a detail page (with its ID) or a list page. */
+/**
+ * Where an item links to: a detail page (with its ID) or a list page. A
+ * bucket link may open a tab of the bucket page, so the card the item is
+ * about is visible on arrival.
+ */
 export type AttentionLink =
-  | { to: '/nodes/$id' | '/keys/$id' | '/admin-tokens/$id' | '/buckets/$id'; id: string }
+  | { to: '/nodes/$id' | '/keys/$id' | '/admin-tokens/$id'; id: string }
+  | { to: '/buckets/$id'; id: string; tab?: BucketTabSearch }
   | { to: '/blocks' | '/layout' | '/admin-tokens' | '/buckets' }
 
 export interface AttentionItem {
@@ -257,7 +263,8 @@ export function collectAttentionItems(inputs: AttentionInputs): AttentionResult 
     const noConsoleAccess: string[] = []
     for (const b of buckets.items) {
       const name = bucketDisplayLabel(bucketDisplayName(b.id, b.globalAliases, b.localAliases.map((a) => a.alias)))
-      const link: AttentionLink = { to: '/buckets/$id', id: b.id }
+      // The unfinished uploads card is on the settings tab.
+      const link: AttentionLink = { to: '/buckets/$id', id: b.id, tab: 'settings' }
       if (b.unfinishedMultipartUploads == null) partial = true
       else if (b.unfinishedMultipartUploads >= MULTIPART_WARNING_COUNT) {
         items.push({

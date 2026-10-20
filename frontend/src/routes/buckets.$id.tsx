@@ -50,7 +50,8 @@ function BucketDetailPage() {
     [navigate, id],
   )
   // A history entry per tab, so back / forward move between tabs. The folder
-  // is kept; the object details only belong to the objects tab.
+  // is kept. The object details sheet is open only while the objects tab is
+  // shown (it is modal), so a switch always starts with it closed.
   const setTab = useCallback(
     (next: string) => {
       if (!isBucketTab(next)) return
@@ -60,7 +61,7 @@ function BucketDetailPage() {
         search: (prev) => ({
           tab: bucketTabSearch(next),
           prefix: prev.prefix,
-          inspect: next === 'objects' ? prev.inspect : undefined,
+          inspect: undefined,
         }),
       })
     },
@@ -177,7 +178,8 @@ function BucketDetailPage() {
         Every tab stays mounted (forceMount, hidden when inactive) so that an
         upload queue or an unsaved settings form survives a tab switch.
       */}
-      <Tabs value={tab} onValueChange={setTab} className="gap-4">
+      {/* manual: arrow keys only move focus, so they do not push history entries. */}
+      <Tabs value={tab} onValueChange={setTab} activationMode="manual" className="gap-4">
         <div className="max-w-full overflow-x-auto">
           <TabsList>
             <TabsTrigger value="objects">オブジェクト</TabsTrigger>
@@ -207,20 +209,28 @@ function BucketDetailPage() {
             bucketName={data?.globalAliases?.[0]}
             prefix={prefix}
             onPrefixChange={setPrefix}
-            inspectKey={tab === 'objects' ? inspect : undefined}
+            inspectKey={inspect}
             onInspectKeyChange={setInspect}
             onShowKeyPermissions={() => setTab('access')}
           />
         </TabsContent>
 
         <TabsContent value="access" forceMount className="space-y-6 data-[state=inactive]:hidden">
-          {data && <BucketAliases key={`aliases-${id}`} bucket={data} />}
-          <BucketKeyPermissions
-            key={`perms-${id}`}
-            bucketId={id}
-            bucketLabel={bucketDisplayLabel(name)}
-            keys={data?.keys}
-          />
+          {data ? (
+            <>
+              <BucketAliases key={`aliases-${id}`} bucket={data} />
+              <BucketKeyPermissions
+                key={`perms-${id}`}
+                bucketId={id}
+                bucketLabel={bucketDisplayLabel(name)}
+                keys={data.keys}
+              />
+            </>
+          ) : bucket.isError ? (
+            <p className="text-destructive">バケットの読み込みに失敗したため、アクセス権を表示できません</p>
+          ) : (
+            <p className="text-muted-foreground">読み込み中...</p>
+          )}
         </TabsContent>
 
         {/* Quotas, website, CORS, lifecycle, unfinished uploads */}

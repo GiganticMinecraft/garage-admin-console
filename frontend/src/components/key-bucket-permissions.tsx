@@ -154,6 +154,7 @@ export function KeyBucketPermissions({ keyId, keyName, buckets }: KeyBucketPermi
                         <Link
                           to="/buckets/$id"
                           params={{ id: bucket.id }}
+                          search={{ tab: 'access' }}
                           className="break-all text-primary underline-offset-4 hover:underline"
                         >
                           {nameOf(bucket).name}

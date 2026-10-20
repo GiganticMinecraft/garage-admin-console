@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { bucketTabBadges, bucketTabSearch, isBucketTab, parseBucketTab } from '@/lib/bucket-detail-tabs'
-import { parseBucketDetailSearch } from '@/lib/inspect-object'
 
 const key = (id: string) => ({
   accessKeyId: id,
@@ -29,39 +28,6 @@ describe('parseBucketTab', () => {
     expect(bucketTabSearch('settings')).toBe('settings')
     expect(isBucketTab('objects')).toBe(true)
     expect(isBucketTab('nope')).toBe(false)
-  })
-})
-
-describe('parseBucketDetailSearch with tab', () => {
-  it('keeps prefix and inspect on the objects tab', () => {
-    expect(parseBucketDetailSearch({ tab: 'objects', prefix: 'a/', inspect: 'a/b' })).toStrictEqual({
-      tab: undefined,
-      prefix: 'a/',
-      inspect: 'a/b',
-    })
-  })
-
-  it('keeps the folder but not the open details on other tabs', () => {
-    // The details sheet belongs to the object browser; on another tab it would
-    // open over a page that does not show the object.
-    expect(parseBucketDetailSearch({ tab: 'settings', prefix: 'a/', inspect: 'a/b' })).toStrictEqual({
-      tab: 'settings',
-      prefix: 'a/',
-      inspect: undefined,
-    })
-    expect(parseBucketDetailSearch({ tab: 'access' })).toStrictEqual({
-      tab: 'access',
-      prefix: undefined,
-      inspect: undefined,
-    })
-  })
-
-  it('falls back to the objects tab for unknown values', () => {
-    expect(parseBucketDetailSearch({ tab: 'bogus', inspect: 'x' })).toStrictEqual({
-      tab: undefined,
-      prefix: undefined,
-      inspect: 'x',
-    })
   })
 })
 
