@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { formatBytes, formatCount } from '@/lib/format'
+import { ROUTING_RULES_EXAMPLE, parseRoutingRules } from '@/lib/website-routing-rules'
 import { cn } from '@/lib/utils'
 
 // ---- helpers ----
@@ -404,8 +405,8 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
   const save = useUpdateBucket(bucket.id, 'Website 設定を保存しました', (b) => resetTo(websiteServer(b)))
 
   const rulesTouched = form.rulesText !== base.rulesText
-  const parsedRules = parseRulesJson(form.rulesText)
-  const rulesError = form.enabled && 'error' in parsedRules ? parsedRules.error : null
+  const parsedRules = parseRoutingRules(form.rulesText)
+  const rulesErrors = form.enabled && 'errors' in parsedRules ? parsedRules.errors : null
   const indexError = form.enabled && form.indexDocument.trim() === '' ? 'インデックスドキュメントは必須です' : null
 
   const dirty =
@@ -462,6 +463,7 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
               value={form.indexDocument}
               onChange={(e) => update({ indexDocument: e.target.value })}
               placeholder="index.html"
+              aria-label="インデックスドキュメント"
               aria-invalid={indexError != null}
             />
             {indexError && <p className="text-xs text-destructive">{indexError}</p>}
@@ -475,29 +477,8 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
               value={form.errorDocument}
               onChange={(e) => update({ errorDocument: e.target.value })}
               placeholder="error.html"
+              aria-label="エラードキュメント (任意)"
             />
-          </div>
-          <div className="space-y-1">
-            <label className="flex items-center gap-2 text-sm font-medium" htmlFor={`${bucket.id}-routing`}>
-              ルーティングルール (JSON)
-              <Badge variant="outline">Experimental</Badge>
-            </label>
-            <textarea
-              id={`${bucket.id}-routing`}
-              value={form.rulesText}
-              onChange={(e) => update({ rulesText: e.target.value })}
-              spellCheck={false}
-              className={TEXTAREA_CLASS}
-              aria-invalid={rulesError != null}
-            />
-            {rulesError ? (
-              <p className="text-xs text-destructive">{rulesError}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                S3 の RoutingRules と同じ形式 (例: {'[{"Condition":{"KeyPrefixEquals":"old/"},"Redirect":{"ReplaceKeyPrefixWith":"new/"}}]'})。
-                変更しなければ現在のルールが維持されます。空にして保存するとすべてのルールを削除します (確認あり)。
-              </p>
-            )}
           </div>
         </div>
       ) : (
@@ -508,9 +489,58 @@ function WebsiteCard({ bucket }: { bucket: BucketDetail }) {
         )
       )}
 
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <label className="flex items-center gap-2 text-sm font-medium" htmlFor={`${bucket.id}-routing`}>
+            ルーティングルール (JSON)
+            <Badge variant="outline">Experimental</Badge>
+          </label>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">現在 {base.ruleCount} 件のルール</span>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => update({ rulesText: rulesToText(ROUTING_RULES_EXAMPLE) })}
+              disabled={!form.enabled || save.isPending}
+            >
+              例を挿入
+            </Button>
+          </div>
+        </div>
+        <textarea
+          id={`${bucket.id}-routing`}
+          value={form.rulesText}
+          onChange={(e) => update({ rulesText: e.target.value })}
+          disabled={!form.enabled}
+          spellCheck={false}
+          className={cn(TEXTAREA_CLASS, 'disabled:cursor-not-allowed disabled:opacity-50')}
+          aria-label="ルーティングルール (JSON)"
+          aria-invalid={rulesErrors != null}
+          aria-describedby={`${bucket.id}-routing-help`}
+        />
+        <div id={`${bucket.id}-routing-help`}>
+          {!form.enabled ? (
+            <p className="text-xs text-muted-foreground">
+              Website access を有効にすると編集できます。
+            </p>
+          ) : rulesErrors ? (
+            <ul className="space-y-0.5 text-xs text-destructive" role="alert">
+              {rulesErrors.map((msg, i) => (
+                <li key={i}>{msg}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              S3 の RoutingRules と同じ形式です。Condition (KeyPrefixEquals / HttpErrorCodeReturnedEquals) は省略でき、
+              Redirect は必須です。変更しない限り送信されず、空の配列 [] を保存するとすべてのルールを削除します (確認あり)。
+            </p>
+          )}
+        </div>
+      </div>
+
       <CardActions
         dirty={dirty}
-        canSave={!form.enabled || (indexError == null && rulesError == null)}
+        canSave={!form.enabled || (indexError == null && rulesErrors == null)}
         pending={save.isPending}
         error={save.error}
         onReset={() => {

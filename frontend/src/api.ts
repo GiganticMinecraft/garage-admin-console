@@ -378,7 +378,25 @@ export interface BucketQuotas {
  */
 export type BucketCorsRule = Record<string, unknown>
 export type BucketLifecycleRule = Record<string, unknown>
-export type BucketRoutingRule = Record<string, unknown>
+
+/**
+ * Garage website.RoutingRule (S3 RoutingRule, Garage >= v2.3). Condition may
+ * be absent or null (unconditional rule); Garage fills HttpRedirectCode
+ * (default 302) in its responses.
+ */
+export interface BucketRoutingRule {
+  Condition?: {
+    KeyPrefixEquals?: string | null
+    HttpErrorCodeReturnedEquals?: number | null
+  } | null
+  Redirect: {
+    HostName?: string | null
+    Protocol?: string | null
+    HttpRedirectCode?: number | null
+    ReplaceKeyPrefixWith?: string | null
+    ReplaceKeyWith?: string | null
+  }
+}
 
 /** Body of GET /api/buckets/{id} (Garage GetBucketInfoResponse). */
 export interface BucketDetail {
