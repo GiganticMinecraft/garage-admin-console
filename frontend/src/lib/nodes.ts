@@ -15,6 +15,18 @@ export function isStorageNode(node: Pick<ClusterNode, 'role' | 'draining'>): boo
 }
 
 /**
+ * What a node does in the current layout. `draining` is a node removed from
+ * the layout that still holds data (Garage only reports it with role null);
+ * `unassigned` has no role and holds nothing.
+ */
+export type NodeRoleKind = 'storage' | 'gateway' | 'draining' | 'unassigned'
+
+export function nodeRoleKind(node: Pick<ClusterNode, 'role' | 'draining'>): NodeRoleKind {
+  if (node.role) return node.role.capacity != null ? 'storage' : 'gateway'
+  return node.draining ? 'draining' : 'unassigned'
+}
+
+/**
  * IDs of the nodes known to hold no blocks (gateways, nodes without a role).
  * Their block-level answers do not matter, so a gateway that is down must not
  * leave the block health "partly unchecked" forever. Nodes absent from the

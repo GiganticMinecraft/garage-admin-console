@@ -20,6 +20,7 @@ import { Route as BucketsIndexRouteImport } from './routes/buckets.index'
 import { Route as BucketsIdRouteImport } from './routes/buckets.$id'
 import { Route as KeysIndexRouteImport } from './routes/keys.index'
 import { Route as KeysIdRouteImport } from './routes/keys.$id'
+import { Route as NodesIndexRouteImport } from './routes/nodes.index'
 import { Route as NodesIdRouteImport } from './routes/nodes.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -77,6 +78,11 @@ const KeysIdRoute = KeysIdRouteImport.update({
   path: '/keys/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NodesIndexRoute = NodesIndexRouteImport.update({
+  id: '/nodes/',
+  path: '/nodes/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const NodesIdRoute = NodesIdRouteImport.update({
   id: '/nodes/$id',
   path: '/nodes/$id',
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/admin-tokens/': typeof AdminTokensIndexRoute
   '/buckets/': typeof BucketsIndexRoute
   '/keys/': typeof KeysIndexRoute
+  '/nodes/': typeof NodesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -110,6 +117,7 @@ export interface FileRoutesByTo {
   '/admin-tokens': typeof AdminTokensIndexRoute
   '/buckets': typeof BucketsIndexRoute
   '/keys': typeof KeysIndexRoute
+  '/nodes': typeof NodesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/admin-tokens/': typeof AdminTokensIndexRoute
   '/buckets/': typeof BucketsIndexRoute
   '/keys/': typeof KeysIndexRoute
+  '/nodes/': typeof NodesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/admin-tokens/'
     | '/buckets/'
     | '/keys/'
+    | '/nodes/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -155,6 +165,7 @@ export interface FileRouteTypes {
     | '/admin-tokens'
     | '/buckets'
     | '/keys'
+    | '/nodes'
   id:
     | '__root__'
     | '/'
@@ -169,6 +180,7 @@ export interface FileRouteTypes {
     | '/admin-tokens/'
     | '/buckets/'
     | '/keys/'
+    | '/nodes/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -184,6 +196,7 @@ export interface RootRouteChildren {
   AdminTokensIndexRoute: typeof AdminTokensIndexRoute
   BucketsIndexRoute: typeof BucketsIndexRoute
   KeysIndexRoute: typeof KeysIndexRoute
+  NodesIndexRoute: typeof NodesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -265,6 +278,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KeysIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/nodes/': {
+      id: '/nodes/'
+      path: '/nodes'
+      fullPath: '/nodes/'
+      preLoaderRoute: typeof NodesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/nodes/$id': {
       id: '/nodes/$id'
       path: '/nodes/$id'
@@ -288,6 +308,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminTokensIndexRoute: AdminTokensIndexRoute,
   BucketsIndexRoute: BucketsIndexRoute,
   KeysIndexRoute: KeysIndexRoute,
+  NodesIndexRoute: NodesIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
