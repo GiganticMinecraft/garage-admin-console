@@ -18,7 +18,11 @@ function ItemLink({ link, children }: { link: AttentionLink; children: React.Rea
     case '/admin-tokens/$id':
       return <Link to="/admin-tokens/$id" params={{ id: link.id }} className={LINK_CLASS}>{children}</Link>
     case '/buckets/$id':
-      return <Link to="/buckets/$id" params={{ id: link.id }} className={LINK_CLASS}>{children}</Link>
+      return (
+        <Link to="/buckets/$id" params={{ id: link.id }} search={{ tab: link.tab }} className={LINK_CLASS}>
+          {children}
+        </Link>
+      )
     default:
       return <Link to={link.to} className={LINK_CLASS}>{children}</Link>
   }

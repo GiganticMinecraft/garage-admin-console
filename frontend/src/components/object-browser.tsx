@@ -474,6 +474,7 @@ export function ObjectBrowser({
   onPrefixChange,
   inspectKey,
   onInspectKeyChange,
+  onShowKeyPermissions,
 }: {
   /** Bucket ID used in API paths. */
   bucketId: string
@@ -484,6 +485,8 @@ export function ObjectBrowser({
   /** Key whose details sheet is open (the `inspect` search param), if any. */
   inspectKey?: string
   onInspectKeyChange: (key: string | undefined) => void
+  /** Shows the bucket's key permissions (the access tab), linked from the no-permission panel. */
+  onShowKeyPermissions?: () => void
 }) {
   const queryClient = useQueryClient()
 
@@ -810,6 +813,18 @@ export function ObjectBrowser({
           >
             コンソールのキーに read/write を付与
           </Button>
+          {onShowKeyPermissions && (
+            <p>
+              <Button
+                variant="link"
+                size="sm"
+                className="h-auto p-0"
+                onClick={onShowKeyPermissions}
+              >
+                「アクセス権」タブでこのバケットのキーの権限を確認
+              </Button>
+            </p>
+          )}
         </div>
       ) : accessView === 'key-expired' ? (
         <div className="space-y-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">

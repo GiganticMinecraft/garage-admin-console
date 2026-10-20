@@ -11,6 +11,14 @@ import { ObjectBrowser } from '@/components/object-browser'
 import { LocalNameBadge } from '@/components/local-name-badge'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  bucketTabBadges,
+  bucketTabSearch,
+  DEFAULT_BUCKET_TAB,
+  isBucketTab,
+  type BucketTab,
+} from '@/lib/bucket-detail-tabs'
 import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
 import { formatBytes, formatCount } from '@/lib/format'
 import { parseBucketDetailSearch } from '@/lib/inspect-object'
@@ -26,7 +34,8 @@ export const Route = createFileRoute('/buckets/$id')({
 function BucketDetailPage() {
   useDocumentTitle('バケット詳細')
   const { id } = Route.useParams()
-  const { prefix: rawPrefix, inspect } = Route.useSearch()
+  const { tab: rawTab, prefix: rawPrefix, inspect } = Route.useSearch()
+  const tab: BucketTab = rawTab ?? DEFAULT_BUCKET_TAB
   const prefix = rawPrefix ?? ''
   const navigate = useNavigate()
   const setPrefix = useCallback(
@@ -34,8 +43,26 @@ function BucketDetailPage() {
       navigate({
         to: '/buckets/$id',
         params: { id },
-        search: { prefix: newPrefix || undefined },
+        search: (prev) => ({ tab: prev.tab, prefix: newPrefix || undefined }),
         replace: true,
+      })
+    },
+    [navigate, id],
+  )
+  // A history entry per tab, so back / forward move between tabs. The folder
+  // is kept. The object details sheet is open only while the objects tab is
+  // shown (it is modal), so a switch always starts with it closed.
+  const setTab = useCallback(
+    (next: string) => {
+      if (!isBucketTab(next)) return
+      navigate({
+        to: '/buckets/$id',
+        params: { id },
+        search: (prev) => ({
+          tab: bucketTabSearch(next),
+          prefix: prev.prefix,
+          inspect: undefined,
+        }),
       })
     },
     [navigate, id],
@@ -63,6 +90,7 @@ function BucketDetailPage() {
   const localAliases = data?.keys?.flatMap((k) => k.bucketLocalAliases ?? []) ?? []
   const aliasCount = (data?.globalAliases?.length ?? 0) + localAliases.length
   const name = bucketDisplayName(data?.id ?? id, data?.globalAliases, localAliases)
+  const badges = bucketTabBadges(data)
 
   const handleCopyId = useCallback(async () => {
     try {
@@ -146,30 +174,76 @@ function BucketDetailPage() {
         </div>
       ) : null}
 
-      {/* Global / local aliases */}
-      {data && <BucketAliases key={`aliases-${id}`} bucket={data} />}
+      {/*
+        Every tab stays mounted (forceMount, hidden when inactive) so that an
+        upload queue or an unsaved settings form survives a tab switch.
+      */}
+      {/* manual: arrow keys only move focus, so they do not push history entries. */}
+      <Tabs value={tab} onValueChange={setTab} activationMode="manual" className="gap-4">
+        <div className="max-w-full overflow-x-auto">
+          <TabsList>
+            <TabsTrigger value="objects">オブジェクト</TabsTrigger>
+            <TabsTrigger value="access">
+              アクセス権
+              {badges.access !== undefined && (
+                <Badge variant="secondary" className="px-1.5" title="このバケットに権限を持つキーの数">
+                  {formatCount(badges.access)}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="settings">
+              設定
+              {badges.settings !== undefined && (
+                <Badge variant="outline" className="px-1.5" title="未完了のマルチパートアップロード">
+                  未完了 {formatCount(badges.settings)}
+                </Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
-      {/* Key Permissions */}
-      <BucketKeyPermissions
-        key={`perms-${id}`}
-        bucketId={id}
-        bucketLabel={bucketDisplayLabel(name)}
-        keys={data?.keys}
-      />
+        <TabsContent value="objects" forceMount className="data-[state=inactive]:hidden">
+          <ObjectBrowser
+            key={`objects-${id}`}
+            bucketId={id}
+            bucketName={data?.globalAliases?.[0]}
+            prefix={prefix}
+            onPrefixChange={setPrefix}
+            inspectKey={inspect}
+            onInspectKeyChange={setInspect}
+            onShowKeyPermissions={() => setTab('access')}
+          />
+        </TabsContent>
 
-      {/* Object Browser */}
-      <ObjectBrowser
-        key={`objects-${id}`}
-        bucketId={id}
-        bucketName={data?.globalAliases?.[0]}
-        prefix={prefix}
-        onPrefixChange={setPrefix}
-        inspectKey={inspect}
-        onInspectKeyChange={setInspect}
-      />
+        <TabsContent value="access" forceMount className="space-y-6 data-[state=inactive]:hidden">
+          {data ? (
+            <>
+              <BucketAliases key={`aliases-${id}`} bucket={data} />
+              <BucketKeyPermissions
+                key={`perms-${id}`}
+                bucketId={id}
+                bucketLabel={bucketDisplayLabel(name)}
+                keys={data.keys}
+              />
+            </>
+          ) : bucket.isError ? (
+            <p className="text-destructive">バケットの読み込みに失敗したため、アクセス権を表示できません</p>
+          ) : (
+            <p className="text-muted-foreground">読み込み中...</p>
+          )}
+        </TabsContent>
 
-      {/* Bucket settings (quotas, website, CORS, lifecycle, unfinished uploads) */}
-      {data && <BucketSettings key={`settings-${id}`} bucket={data} />}
+        {/* Quotas, website, CORS, lifecycle, unfinished uploads */}
+        <TabsContent value="settings" forceMount className="data-[state=inactive]:hidden">
+          {data ? (
+            <BucketSettings key={`settings-${id}`} bucket={data} />
+          ) : bucket.isError ? (
+            <p className="text-destructive">バケットの読み込みに失敗したため、設定を表示できません</p>
+          ) : (
+            <p className="text-muted-foreground">読み込み中...</p>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

@@ -279,6 +279,17 @@ describe('collectAttentionItems', () => {
     ).toEqual(['multipart:b10'])
   })
 
+  it('links the multipart warning to the bucket settings tab', () => {
+    const { items } = collectAttentionItems(
+      inputs({ buckets: ok({ items: [bucket('b10', { unfinishedMultipartUploads: 10 })], truncated: false }) }),
+    )
+    expect(items.find((i) => i.id === 'multipart:b10')?.link).toEqual({
+      to: '/buckets/$id',
+      id: 'b10',
+      tab: 'settings',
+    })
+  })
+
   it('aggregates buckets where the console key lacks read or write into one line', () => {
     const r = collectAttentionItems(
       inputs({
