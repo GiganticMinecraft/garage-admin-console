@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 // Golden copy of the backend's consoleScope (kept in sync by
 // TestConsoleScopeGolden), so the tests below run against the list
 // GET /api/admin-tokens/console-scope actually serves.
-import backendConsoleScope from '../../../backend/testdata/console_scope.json'
+import backendConsoleScope from './console-scope.golden.json'
 import {
   ALL_ADMIN_ENDPOINTS,
   ESCALATION_WARNING,

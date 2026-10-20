@@ -13,12 +13,12 @@ import (
 	"testing"
 )
 
-// updateGolden rewrites testdata/console_scope.json: go test -run TestConsoleScopeGolden -update
+// updateGolden rewrites ../frontend/src/lib/console-scope.golden.json: go test -run TestConsoleScopeGolden -update
 var updateGolden = flag.Bool("update", false, "rewrite testdata golden files")
 
 // consoleScopeGolden is consoleScope as JSON. The frontend tests import it, so
 // they check the list the backend actually serves without parsing Go source.
-const consoleScopeGolden = "testdata/console_scope.json"
+const consoleScopeGolden = "../frontend/src/lib/console-scope.golden.json"
 
 func TestConsoleScopeGolden(t *testing.T) {
 	want, err := json.MarshalIndent(consoleScope, "", "  ")

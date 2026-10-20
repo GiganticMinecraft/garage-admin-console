@@ -42,6 +42,7 @@ var consoleScope = []string{
 	"GetNodeInfo",
 	"GetNodeStatistics",
 	"GetWorkerVariable",
+	"ImportKey",
 	"InspectObject",
 	"LaunchRepairOperation",
 	"ListAdminTokens",
