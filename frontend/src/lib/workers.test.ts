@@ -8,6 +8,7 @@ import {
   isDisabledWorker,
   isNoteworthyWorker,
   matchesWorkerSearch,
+  persistentErrorsLabel,
 } from './workers'
 
 function worker(overrides: Partial<Worker> = {}): Worker {
@@ -72,7 +73,6 @@ describe('isNoteworthyWorker', () => {
 
   it.each<[string, Partial<Worker>]>([
     ['consecutive errors', { errors: 2, consecutiveErrors: 2 }],
-    ['persistent errors', { persistentErrors: 3 }],
     ['busy', { state: 'busy' }],
     ['throttled', { state: { throttled: { durationSecs: 2 } } }],
     ['a queue', { queueLength: 5 }],
@@ -86,10 +86,43 @@ describe('isNoteworthyWorker', () => {
     expect(isNoteworthyWorker(recovered)).toBe(false)
   })
 
+  it('ignores an idle scrub worker whose cumulative corruption count stays non-zero', () => {
+    // Production shape after a scrub finished (garage-0 / garage-2): persistentErrors is
+    // Garage's corruptions_detected, a persisted total that never resets.
+    const finishedScrub = worker({
+      name: 'Block scrub worker',
+      state: 'idle',
+      consecutiveErrors: 0,
+      queueLength: 0,
+      progress: null,
+      persistentErrors: 19,
+    })
+    expect(isNoteworthyWorker(finishedScrub)).toBe(false)
+  })
+
+  it('still flags a running scrub worker by its state and progress', () => {
+    expect(isNoteworthyWorker(worker({ name: 'Block scrub worker', state: 'busy', persistentErrors: 19 }))).toBe(true)
+    expect(isNoteworthyWorker(worker({ name: 'Block scrub worker', progress: '12.34%', persistentErrors: 19 }))).toBe(
+      true,
+    )
+  })
+
   it('ignores an empty queue, zero persistent errors, empty progress and done', () => {
     expect(
       isNoteworthyWorker(worker({ queueLength: 0, persistentErrors: 0, progress: '', state: 'done' })),
     ).toBe(false)
+  })
+})
+
+describe('persistentErrorsLabel', () => {
+  it('calls the scrub worker value the cumulative corruption count', () => {
+    expect(persistentErrorsLabel(scrubWithErrors)).toBe('破損検出数 (累積)')
+    expect(persistentErrorsLabel(worker({ name: 'block SCRUB worker' }))).toBe('破損検出数 (累積)')
+  })
+
+  it('keeps the generic label for other workers', () => {
+    expect(persistentErrorsLabel(worker())).toBe('永続エラー')
+    expect(persistentErrorsLabel(disabledResync)).toBe('永続エラー')
   })
 })
 
@@ -134,7 +167,7 @@ describe('filterAndSortWorkers', () => {
 
   it('keeps only noteworthy workers', () => {
     const rows = filterAndSortWorkers(all, { ...DEFAULT_WORKER_FILTER, onlyNoteworthy: true })
-    expect(rows).toEqual([otherNode, scrubWithErrors])
+    expect(rows).toEqual([otherNode])
   })
 
   it('restricts to one node', () => {

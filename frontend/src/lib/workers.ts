@@ -40,20 +40,33 @@ export function isDisabledWorker(w: Worker): boolean {
 
 /**
  * true when the worker needs a look right now: failing (consecutive errors),
- * persistent errors, an active state, a non-empty queue or reported progress.
+ * an active state, a non-empty queue or reported progress.
  * The cumulative `errors` / `lastError` are not counted: Garage never resets
  * them, so a worker that recovered long ago would stay listed forever.
+ * `persistentErrors` is not counted either: in Garage v2.4.1 the block scrub
+ * worker reports `corruptions_detected` there (src/block/repair.rs), a
+ * persisted all-time total that is never reset, so an idle scrub worker would
+ * stay listed forever after a single corruption was found.
  */
 export function isNoteworthyWorker(w: Worker): boolean {
   const { kind } = describeState(w.state)
   return (
     w.consecutiveErrors > 0 ||
-    (w.persistentErrors != null && w.persistentErrors > 0) ||
     kind === 'busy' ||
     kind === 'throttled' ||
     (w.queueLength != null && w.queueLength > 0) ||
     (w.progress != null && w.progress !== '')
   )
+}
+
+/**
+ * Label for `persistentErrors`. For the block scrub worker Garage v2.4.1
+ * reports `corruptions_detected` there (src/block/repair.rs), the all-time
+ * count of corrupted blocks found by scrubs, so it gets the same wording as
+ * the dashboard's Storage health. Any other worker keeps the generic label.
+ */
+export function persistentErrorsLabel(w: Pick<Worker, 'name'>): string {
+  return w.name.toLowerCase().includes('scrub') ? '破損検出数 (累積)' : '永続エラー'
 }
 
 export interface WorkerFilter {

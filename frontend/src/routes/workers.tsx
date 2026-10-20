@@ -7,6 +7,7 @@ import {
   describeState,
   filterAndSortWorkers,
   formatSecsAgo,
+  persistentErrorsLabel,
   type WorkerFilter,
 } from '@/lib/workers'
 import { PAGE_POLLING } from '@/lib/polling'
@@ -246,7 +247,7 @@ function WorkersPage() {
                         </>
                       )}
                       {worker.persistentErrors != null && worker.persistentErrors > 0 && (
-                        <span>永続エラー: <span className="font-medium">{worker.persistentErrors.toLocaleString()}</span></span>
+                        <span>{persistentErrorsLabel(worker)}: <span className="font-medium">{worker.persistentErrors.toLocaleString()}</span></span>
                       )}
                       {worker.queueLength != null && worker.queueLength > 0 && (
                         <span>キュー: <span className="font-medium">{worker.queueLength.toLocaleString()}</span></span>
