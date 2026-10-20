@@ -3,10 +3,10 @@ name: Backend
 on:
   push:
     branches: [main]
-    paths: ['backend/**']
+    paths: ['backend/**', 'frontend/src/lib/console-scope.golden.json']
   pull_request:
     branches: [main]
-    paths: ['backend/**']
+    paths: ['backend/**', 'frontend/src/lib/console-scope.golden.json']
 
 jobs:
   lint-and-test:
