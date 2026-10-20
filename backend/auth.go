@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -24,7 +26,25 @@ const (
 	sessionKeyState  = "oauth_state"
 	sessionKeyUser   = "username"
 	sessionKeyAvatar = "avatar_url"
+	sessionKeyNext   = "login_next"
+	// sessionKeyIssuedAt is the unix time of the GitHub login that created
+	// the session; sessionKeyRefreshedAt is the last time the cookie was
+	// re-issued. Both are int64 seconds.
+	sessionKeyIssuedAt    = "issued_at"
+	sessionKeyRefreshedAt = "refreshed_at"
 )
+
+// Session lifetime policy. The cookie's MaxAge (3600s) is an idle timeout:
+// authMiddleware re-issues it at most every sessionRefreshInterval while the
+// user keeps making requests, up to sessionAbsoluteMax after login.
+const (
+	sessionRefreshInterval = 5 * time.Minute
+	sessionAbsoluteMax     = 12 * time.Hour
+	maxLoginNextLen        = 2048
+)
+
+// now is the clock used by the session lifetime checks; tests replace it.
+var now = time.Now
 
 var (
 	sessionStore *sessions.CookieStore
@@ -91,7 +111,9 @@ func initAuth() {
 // ---------------------------------------------------------------------------
 
 // handleLogin generates a random state, stores it in the session, and
-// redirects the user to GitHub's OAuth authorization page.
+// redirects the user to GitHub's OAuth authorization page. An optional
+// ?next=<path> is validated with safeNextPath and kept in the session so the
+// callback can return the user to the page they were on.
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	state, err := randomState()
 	if err != nil {
@@ -107,6 +129,11 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess.Values[sessionKeyState] = state
+	if next := safeNextPath(r.URL.Query().Get("next")); next != "" {
+		sess.Values[sessionKeyNext] = next
+	} else {
+		delete(sess.Values, sessionKeyNext)
+	}
 	if err := sess.Save(r, w); err != nil {
 		slog.ErrorContext(r.Context(), "failed to save session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -119,7 +146,8 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleCallback is the OAuth callback handler. It verifies the state
 // parameter, exchanges the code for a token, checks org/team membership,
-// regenerates the session, and redirects to /.
+// regenerates the session, and redirects to the path saved by handleLogin
+// (or / when there is none).
 func handleCallback(w http.ResponseWriter, r *http.Request) {
 	sess, err := sessionStore.Get(r, sessionName)
 	if err != nil {
@@ -135,6 +163,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		slog.WarnContext(r.Context(), "OAuth state mismatch")
 		http.Error(w, "Forbidden: state mismatch", http.StatusForbidden)
 		return
+	}
+
+	// Take the return path out of the old session before it is discarded.
+	// It was validated in handleLogin; check again so a value written by an
+	// older build cannot become an open redirect.
+	redirectTo := "/"
+	if saved, _ := sess.Values[sessionKeyNext].(string); safeNextPath(saved) != "" {
+		redirectTo = saved
 	}
 
 	// Exchange code for token.
@@ -176,8 +212,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	// CookieStore.New decodes the existing cookie, so start from an empty
+	// map to make sure nothing (state, next, old timestamps) carries over.
+	newSess.Values = map[interface{}]interface{}{}
 	newSess.Values[sessionKeyUser] = userInfo.Login
 	newSess.Values[sessionKeyAvatar] = userInfo.AvatarURL
+	loginAt := now().Unix()
+	newSess.Values[sessionKeyIssuedAt] = loginAt
+	newSess.Values[sessionKeyRefreshedAt] = loginAt
 	newSess.Options = sessionStore.Options
 	if err := newSess.Save(r, w); err != nil {
 		slog.ErrorContext(r.Context(), "failed to save new session", "error", err)
@@ -186,7 +228,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	auditAuthEvent(r, "login", userInfo.Login)
-	http.Redirect(w, r, "/", http.StatusFound)
+	http.Redirect(w, r, redirectTo, http.StatusFound)
 }
 
 // handleMe returns the current session user info as JSON.
@@ -231,7 +273,10 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 // Middleware
 // ---------------------------------------------------------------------------
 
-// authMiddleware validates the session cookie on protected routes.
+// authMiddleware validates the session cookie on protected routes and
+// implements the sliding session: the cookie is re-issued (extending its
+// MaxAge) when it was last refreshed sessionRefreshInterval or more ago, and
+// the session is rejected once sessionAbsoluteMax has passed since login.
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess, err := sessionStore.Get(r, sessionName)
@@ -244,6 +289,33 @@ func authMiddleware(next http.Handler) http.Handler {
 		if !ok || username == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
+		}
+
+		current := now()
+		issuedAt, hasIssued := sess.Values[sessionKeyIssuedAt].(int64)
+		refreshedAt, hasRefreshed := sess.Values[sessionKeyRefreshedAt].(int64)
+		if !hasIssued {
+			// Sessions created before issued_at existed: start the absolute
+			// limit now instead of logging everyone out on deploy.
+			issuedAt = current.Unix()
+			sess.Values[sessionKeyIssuedAt] = issuedAt
+		}
+		if current.Sub(time.Unix(issuedAt, 0)) > sessionAbsoluteMax {
+			sess.Options.MaxAge = -1
+			if err := sess.Save(r, w); err != nil {
+				slog.ErrorContext(r.Context(), "failed to expire session", "error", err)
+			}
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		// Logout expires the cookie itself; a refresh here would only add a
+		// second Set-Cookie for the same name.
+		if r.URL.Path != "/api/auth/logout" &&
+			(!hasIssued || !hasRefreshed || current.Sub(time.Unix(refreshedAt, 0)) >= sessionRefreshInterval) {
+			sess.Values[sessionKeyRefreshedAt] = current.Unix()
+			if err := sess.Save(r, w); err != nil {
+				slog.ErrorContext(r.Context(), "failed to refresh session", "error", err)
+			}
 		}
 
 		next.ServeHTTP(w, r)
@@ -387,6 +459,36 @@ func checkTeamMembership(ctx context.Context, accessToken, username string) erro
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// safeNextPath returns raw if it is a same-origin path that is safe to
+// redirect to after login, or "" otherwise. Accepted values start with a
+// single "/", carry no scheme or host, contain no control characters or
+// backslashes, are at most maxLoginNextLen bytes, and are not under /api/
+// (the callback must land on a SPA page, not an API endpoint).
+func safeNextPath(raw string) string {
+	if raw == "" || len(raw) > maxLoginNextLen || raw[0] != '/' {
+		return ""
+	}
+	if strings.HasPrefix(raw, "//") || strings.ContainsRune(raw, '\\') {
+		return ""
+	}
+	for _, c := range raw {
+		if c < 0x20 || c == 0x7f {
+			return ""
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
+		return ""
+	}
+	// Compare on the cleaned, decoded path so "/x/../api/..." or
+	// "/%61pi/..." cannot point the redirect at the API.
+	cleaned := path.Clean(u.Path)
+	if cleaned == "/api" || strings.HasPrefix(cleaned, "/api/") {
+		return ""
+	}
+	return raw
+}
 
 // randomState generates a cryptographically random hex string for the OAuth
 // state parameter.

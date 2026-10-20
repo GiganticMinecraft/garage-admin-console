@@ -1,6 +1,7 @@
 import { createRootRoute, Outlet, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { fetchMe, logout } from '@/api'
+import { loginUrlFor } from '@/lib/auth'
 import { AppSidebar } from '@/components/app-sidebar'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
@@ -52,7 +53,9 @@ function RootLayout() {
         <div className="text-center">
           <h1 className="mb-4 text-2xl font-bold">Garage Admin Console</h1>
           <Button asChild>
-            <a href="/api/auth/login">GitHub でサインイン</a>
+            <a href={loginUrlFor(window.location.pathname, window.location.search)}>
+              GitHub でサインイン
+            </a>
           </Button>
         </div>
       </div>
