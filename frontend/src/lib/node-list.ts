@@ -37,12 +37,59 @@ export const NO_ZONE_LABEL = 'ゾーン未割り当て'
 
 const ROLE_ORDER: NodeRoleKind[] = ['storage', 'gateway', 'draining', 'unassigned']
 
+/** Natural order for labels and names, so garage-2 < garage-10. */
+export function compareLabels(a: string, b: string): number {
+  return a.localeCompare(b, 'ja', { numeric: true })
+}
+
+type NamedNode = Pick<ClusterNode, 'id' | 'hostname'>
+
 /** Orders nodes by display name (natural order, so garage-2 < garage-10), then full ID. */
-export function compareNodes(a: ClusterNode, b: ClusterNode): number {
-  return (
-    nodeDisplayName(a).localeCompare(nodeDisplayName(b), 'ja', { numeric: true }) ||
-    a.id.localeCompare(b.id)
-  )
+export function compareNodes(a: NamedNode, b: NamedNode): number {
+  return compareLabels(nodeDisplayName(a), nodeDisplayName(b)) || a.id.localeCompare(b.id)
+}
+
+/** A display group: groups sort by rank, then by label in natural order. */
+export interface Bucket {
+  key: string
+  label: string
+  rank: number
+}
+
+/** Zone group; nodes without a zone (null) go last under NO_ZONE_LABEL. */
+export function zoneBucket(zone: string | null): Bucket {
+  return zone != null
+    ? { key: `zone:${zone}`, label: zone, rank: 0 }
+    : { key: 'zone-none', label: NO_ZONE_LABEL, rank: 1 }
+}
+
+/** Role group, in ROLE_ORDER with ROLE_LABELS. */
+export function roleBucket(kind: NodeRoleKind): Bucket {
+  return { key: `role:${kind}`, label: ROLE_LABELS[kind], rank: ROLE_ORDER.indexOf(kind) }
+}
+
+/**
+ * Splits items into the buckets `bucketOf` assigns, ordered by rank then
+ * label (natural order). Only non-empty buckets are returned, and items
+ * inside a bucket are sorted with compareNodes.
+ */
+export function bucketize<T extends NamedNode>(
+  items: readonly T[],
+  bucketOf: (item: T) => Bucket,
+): { key: string; label: string; items: T[] }[] {
+  const buckets = new Map<string, Bucket & { items: T[] }>()
+  for (const item of items) {
+    const b = bucketOf(item)
+    let g = buckets.get(b.key)
+    if (!g) {
+      g = { ...b, items: [] }
+      buckets.set(b.key, g)
+    }
+    g.items.push(item)
+  }
+  return [...buckets.values()]
+    .sort((a, b) => a.rank - b.rank || compareLabels(a.label, b.label))
+    .map(({ key, label, items }) => ({ key, label, items: [...items].sort(compareNodes) }))
 }
 
 /**
@@ -52,30 +99,13 @@ export function compareNodes(a: ClusterNode, b: ClusterNode): number {
  * nodes inside a group are sorted with compareNodes.
  */
 export function groupNodes(nodes: readonly ClusterNode[], groupBy: NodeGroupBy): NodeGroup[] {
-  const buckets = new Map<string, NodeGroup & { rank: number }>()
-  const add = (key: string, label: string, rank: number, node: ClusterNode) => {
-    let g = buckets.get(key)
-    if (!g) {
-      g = { key, label, rank, nodes: [] }
-      buckets.set(key, g)
+  return bucketize(nodes, (node): Bucket => {
+    if (groupBy === 'zone') return zoneBucket(node.role?.zone ?? null)
+    if (groupBy === 'connectivity') {
+      return node.isUp ? { key: 'up', label: '接続中', rank: 0 } : { key: 'down', label: '切断中', rank: 1 }
     }
-    g.nodes.push(node)
-  }
-  for (const node of nodes) {
-    if (groupBy === 'zone') {
-      if (node.role) add(`zone:${node.role.zone}`, node.role.zone, 0, node)
-      else add('zone-none', NO_ZONE_LABEL, 1, node)
-    } else if (groupBy === 'connectivity') {
-      if (node.isUp) add('up', '接続中', 0, node)
-      else add('down', '切断中', 1, node)
-    } else {
-      const kind = nodeRoleKind(node)
-      add(`role:${kind}`, ROLE_LABELS[kind], ROLE_ORDER.indexOf(kind), node)
-    }
-  }
-  return [...buckets.values()]
-    .sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label, 'ja', { numeric: true }))
-    .map(({ key, label, nodes }) => ({ key, label, nodes: [...nodes].sort(compareNodes) }))
+    return roleBucket(nodeRoleKind(node))
+  }).map(({ key, label, items }) => ({ key, label, nodes: items }))
 }
 
 // ---------------------------------------------------------------------------

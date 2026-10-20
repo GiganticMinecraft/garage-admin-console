@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { LayoutNodeRole, NodeRoleChange } from '@/api'
 import { GIB } from './format'
-import { capacityToGiB, draftFromNode, draftToChange, parseTags } from './layout-draft'
+import {
+  capacityToGiB,
+  changeKind,
+  draftFromNode,
+  draftToChange,
+  groupDrafts,
+  layoutRoleRows,
+  layoutTotals,
+  parseTags,
+  revertChangeFor,
+} from './layout-draft'
 
 const node = { id: 'a'.repeat(64), hostname: 'garage-0', isUp: true }
 
@@ -162,5 +172,192 @@ describe('capacityToGiB / parseTags', () => {
   it('splits on commas and drops empty tags', () => {
     expect(parseTags(' a, b ,,c ')).toEqual(['a', 'b', 'c'])
     expect(parseTags('')).toEqual([])
+  })
+})
+
+// Garage v2.4.1 has no "unstage one node" API. GetClusterLayout drops staged
+// roles equal to the applied one (src/api/admin/layout.rs), so reverting is
+// re-staging the applied role, or a removal when there is none.
+describe('revertChangeFor', () => {
+  it('re-stages the applied role over a staged update', () => {
+    const staged: NodeRoleChange = { id: node.id, zone: 'dc2', tags: [], capacity: 5 * GIB }
+    expect(revertChangeFor(node, appliedRole(), staged)).toEqual({
+      id: node.id,
+      zone: 'dc1',
+      tags: ['ssd'],
+      capacity: 10 * GIB,
+    })
+  })
+
+  it('re-stages the applied role over a staged removal', () => {
+    expect(revertChangeFor(node, appliedRole(), { id: node.id, remove: true })).toEqual({
+      id: node.id,
+      zone: 'dc1',
+      tags: ['ssd'],
+      capacity: 10 * GIB,
+    })
+  })
+
+  it('stages a removal when the node has no applied role', () => {
+    const staged: NodeRoleChange = { id: node.id, zone: 'dc1', tags: [], capacity: GIB }
+    expect(revertChangeFor(node, undefined, staged)).toEqual({ id: node.id, remove: true })
+  })
+
+  it('keeps an applied gateway as capacity null, not 0 or absent', () => {
+    const staged: NodeRoleChange = { id: node.id, zone: 'dc1', tags: [], capacity: 5 * GIB }
+    const c = revertChangeFor(node, appliedRole({ capacity: null }), staged)
+    expect(c).toEqual({ id: node.id, zone: 'dc1', tags: ['ssd'], capacity: null })
+    expect(c).toHaveProperty('capacity', null)
+  })
+
+  it('restores the applied tags (in order) when only tags were staged', () => {
+    const applied = appliedRole({ tags: ['b', 'a'], capacity: 1_000_000_000_000 })
+    const staged: NodeRoleChange = { id: node.id, zone: 'dc1', tags: ['b', 'a', 'edge'], capacity: 1_000_000_000_000 }
+    expect(revertChangeFor(node, applied, staged)).toEqual({
+      id: node.id,
+      zone: 'dc1',
+      tags: ['b', 'a'],
+      capacity: 1_000_000_000_000,
+    })
+  })
+
+  it('returns null when nothing is staged', () => {
+    expect(revertChangeFor(node, appliedRole(), undefined)).toBeNull()
+    expect(revertChangeFor(node, undefined, undefined)).toBeNull()
+  })
+})
+
+describe('groupDrafts', () => {
+  const mk = (id: string, hostname: string, applied?: LayoutNodeRole, staged?: NodeRoleChange) =>
+    draftFromNode({ id, hostname, isUp: true }, applied, staged)
+  const role = (id: string, zone: string, capacity: number | null): LayoutNodeRole => ({
+    id,
+    zone,
+    tags: [],
+    capacity,
+    storedPartitions: null,
+    usableCapacity: null,
+  })
+  const storB = mk('b', 'node-b', role('b', 'dc2', GIB))
+  const storA = mk('a', 'node-a', role('a', 'dc2', GIB))
+  const gw = mk('g', 'node-g', role('g', 'dc1', null))
+  const removed = mk('r', 'node-r', role('r', 'dc1', GIB), { id: 'r', remove: true })
+  const added = mk('n', 'node-n', undefined, { id: 'n', zone: 'dc3', tags: [], capacity: GIB })
+  const moved = mk('m', 'node-m', role('m', 'dc1', GIB), { id: 'm', zone: 'dc3', tags: [], capacity: null })
+  const unassigned = mk('u', 'node-u')
+  const all = [unassigned, storB, gw, removed, added, storA, moved]
+  const summarize = (gs: ReturnType<typeof groupDrafts>) => gs.map((g) => [g.label, g.rows.map((d) => d.id)])
+
+  it('keeps the input order in a single group for "none"', () => {
+    expect(summarize(groupDrafts(all, 'none'))).toEqual([['', ['u', 'b', 'g', 'r', 'n', 'a', 'm']]])
+  })
+
+  it('groups by zone sorted by name, rows by name, unassigned last', () => {
+    expect(summarize(groupDrafts(all, 'zone'))).toEqual([
+      ['dc1', ['g', 'r']],
+      ['dc2', ['a', 'b']],
+      ['dc3', ['m', 'n']],
+      ['ゾーン未割り当て', ['u']],
+    ])
+  })
+
+  it('groups by zone of the applied layout when asked', () => {
+    expect(summarize(groupDrafts([moved, added], 'zone', 'applied'))).toEqual([
+      ['dc1', ['m']],
+      ['ゾーン未割り当て', ['n']],
+    ])
+  })
+
+  it('groups by role in the order storage, gateway, unassigned', () => {
+    expect(summarize(groupDrafts(all, 'role'))).toEqual([
+      ['ストレージ', ['a', 'b', 'n', 'r']],
+      ['ゲートウェイ', ['g', 'm']],
+      ['未割り当て', ['u']],
+    ])
+    expect(summarize(groupDrafts([moved], 'role', 'applied'))).toEqual([['ストレージ', ['m']]])
+  })
+
+  it('groups by staged state: changed, removed, unchanged', () => {
+    expect(summarize(groupDrafts(all, 'change'))).toEqual([
+      ['変更あり', ['m', 'n']],
+      ['削除', ['r']],
+      ['変更なし', ['a', 'b', 'g', 'u']],
+    ])
+    expect(changeKind(added)).toBe('changed')
+  })
+
+  it('omits empty groups and handles no rows', () => {
+    expect(groupDrafts([], 'zone')).toEqual([])
+    expect(summarize(groupDrafts([gw], 'role'))).toEqual([['ゲートウェイ', ['g']]])
+  })
+
+  it('sorts node names and zone names in natural order (garage-2 before garage-10)', () => {
+    const rows = [
+      mk('x', 'garage-10', role('x', 'zone-10', GIB)),
+      mk('y', 'garage-2', role('y', 'zone-2', GIB)),
+      mk('z', 'garage-1', role('z', 'zone-10', GIB)),
+    ]
+    expect(summarize(groupDrafts(rows, 'zone'))).toEqual([
+      ['zone-2', ['y']],
+      ['zone-10', ['z', 'x']],
+    ])
+    expect(summarize(groupDrafts(rows, 'role'))).toEqual([['ストレージ', ['z', 'y', 'x']]])
+  })
+
+  it('groups read-only current-role rows built by layoutRoleRows', () => {
+    const roles = [role('b', 'dc1', GIB), role('a', 'dc2', null), role('c', 'dc1', GIB)]
+    const staged = new Map<string, NodeRoleChange>([
+      ['b', { id: 'b', remove: true }],
+      ['c', { id: 'c', zone: 'dc3', tags: [], capacity: null }],
+    ])
+    const rows = layoutRoleRows(roles, staged, (id) => `node-${id}`)
+    expect(rows.map((r) => [r.id, r.hostname, r.staged != null, r.effective != null])).toEqual([
+      ['b', 'node-b', true, false],
+      ['a', 'node-a', false, true],
+      ['c', 'node-c', true, true],
+    ])
+    expect(summarize(groupDrafts(rows, 'change'))).toEqual([
+      ['変更あり', ['c']],
+      ['削除', ['b']],
+      ['変更なし', ['a']],
+    ])
+    // The current table groups by the applied role, not the staged one.
+    expect(summarize(groupDrafts(rows, 'zone', 'applied'))).toEqual([
+      ['dc1', ['b', 'c']],
+      ['dc2', ['a']],
+    ])
+  })
+})
+
+describe('layoutTotals', () => {
+  const role = (id: string, zone: string, capacity: number | null): LayoutNodeRole => ({
+    id,
+    zone,
+    tags: [],
+    capacity,
+    storedPartitions: null,
+    usableCapacity: null,
+  })
+  const roles = [role('a', 'dc1', 10 * GIB), role('b', 'dc2', 20 * GIB), role('g', 'dc2', null)]
+
+  it('is the same before and after when nothing is staged', () => {
+    const t = layoutTotals(roles, [])
+    expect(t.before).toEqual({ assignedNodes: 3, zones: 2, capacity: 30 * GIB })
+    expect(t.after).toEqual(t.before)
+  })
+
+  it('applies staged additions, updates and removals', () => {
+    const t = layoutTotals(roles, [
+      { id: 'a', remove: true },
+      { id: 'b', zone: 'dc3', tags: [], capacity: 5 * GIB },
+      { id: 'n', zone: 'dc4', tags: [], capacity: GIB },
+    ])
+    expect(t.before).toEqual({ assignedNodes: 3, zones: 2, capacity: 30 * GIB })
+    expect(t.after).toEqual({ assignedNodes: 3, zones: 3, capacity: 6 * GIB })
+  })
+
+  it('counts a node turned into a gateway as assigned with no capacity', () => {
+    const t = layoutTotals(roles, [{ id: 'b', zone: 'dc2', tags: [] }])
+    expect(t.after).toEqual({ assignedNodes: 3, zones: 2, capacity: 10 * GIB })
   })
 })

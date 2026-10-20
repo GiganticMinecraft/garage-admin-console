@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import {
   getClusterLayout,
@@ -30,7 +30,19 @@ import { LayoutPreview } from '@/components/layout-preview'
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
 import { formatBytes } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
-import { draftFromNode, draftToChange, type RoleDraft } from '@/lib/layout-draft'
+import {
+  draftFromNode,
+  draftToChange,
+  groupDrafts,
+  layoutRoleRows,
+  layoutTotals,
+  revertChangeFor,
+  LAYOUT_GROUP_BY_OPTIONS,
+  type LayoutGroupBy,
+  type RoleDraft,
+  type RowGroup,
+} from '@/lib/layout-draft'
+import { GroupByToggle } from '@/components/group-by-toggle'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/layout')({
@@ -46,6 +58,45 @@ function formatRedundancy(z: ZoneRedundancy): string {
   return z === 'maximum' ? 'maximum' : `atLeast ${z.atLeast}`
 }
 
+/** Summary value; the value before the staged changes is struck through when it differs. */
+function SummaryDiff({ before, after, format = String }: { before: number; after: number; format?: (n: number) => string }) {
+  return (
+    <>
+      {format(after)}
+      {before !== after && (
+        <s className="ml-2 text-xs text-muted-foreground">
+          <span className="sr-only">変更前: </span>
+          {format(before)}
+        </s>
+      )}
+    </>
+  )
+}
+
+/** Table rows for each group, with a heading row per group (none for the single ungrouped group). */
+function GroupedRows<T>({
+  groups,
+  colSpan,
+  renderRow,
+}: {
+  groups: RowGroup<T>[]
+  colSpan: number
+  renderRow: (row: T) => ReactNode
+}) {
+  return groups.map((g) => (
+    <Fragment key={g.key}>
+      {g.label && (
+        <TableRow className="bg-muted/50 hover:bg-muted/50">
+          <TableCell colSpan={colSpan} className="py-1.5 text-xs font-semibold">
+            {g.label} <span className="font-normal text-muted-foreground">({g.rows.length})</span>
+          </TableCell>
+        </TableRow>
+      )}
+      {g.rows.map(renderRow)}
+    </Fragment>
+  ))
+}
+
 function LayoutPage() {
   useDocumentTitle('レイアウト')
   const queryClient = useQueryClient()
@@ -55,6 +106,9 @@ function LayoutPage() {
   const [redundancyN, setRedundancyN] = useState('1')
   const [showApply, setShowApply] = useState(false)
   const [showRevert, setShowRevert] = useState(false)
+  const [groupBy, setGroupBy] = useState<LayoutGroupBy>('none')
+  // Node whose staged change the operator is about to revert.
+  const [revertNodeId, setRevertNodeId] = useState<string | null>(null)
 
   const layout = useQuery({ queryKey: ['cluster', 'layout'], queryFn: getClusterLayout })
   const status = useQuery({ queryKey: ['cluster', 'status'], queryFn: getClusterStatus })
@@ -109,19 +163,31 @@ function LayoutPage() {
     onError: (error) => toast.error(`取り消しに失敗しました: ${error.message}`),
   })
 
+  // Garage cannot unstage a single node; re-staging its applied role (or a
+  // removal when it has none) makes its staged entry disappear.
+  const revertNodeMutation = useMutation({
+    mutationFn: (change: NodeRoleChange) => stageLayout({ roles: [change] }),
+    onSuccess: (_res, change) => {
+      invalidate()
+      applyMutation.reset()
+      toast.success(`${nameOf(change.id)} のステージ中の変更を戻しました`)
+    },
+    onError: (error) => toast.error(`変更を戻せませんでした: ${error.message}`),
+  })
+
   const data: ClusterLayout | undefined = layout.data
+  const appliedById = useMemo(() => new Map((data?.roles ?? []).map((r) => [r.id, r])), [data])
+  const stagedById = useMemo(() => new Map((data?.stagedRoleChanges ?? []).map((c) => [c.id, c])), [data])
 
   const startEditing = () => {
     if (!data) return
-    const roleById = new Map(data.roles.map((r) => [r.id, r]))
-    const stagedById = new Map(data.stagedRoleChanges.map((c) => [c.id, c]))
     const nodes = status.data?.nodes ?? []
     const known = new Set(nodes.map((n) => n.id))
-    const rows = nodes.map((n) => draftFromNode(n, roleById.get(n.id), stagedById.get(n.id)))
+    const rows = nodes.map((n) => draftFromNode(n, appliedById.get(n.id), stagedById.get(n.id)))
     // Roles or staged changes for nodes the status endpoint does not know about (e.g. gone) stay editable.
-    for (const id of new Set([...roleById.keys(), ...stagedById.keys()])) {
+    for (const id of new Set([...appliedById.keys(), ...stagedById.keys()])) {
       if (!known.has(id)) {
-        rows.push(draftFromNode({ id, hostname: null, isUp: false }, roleById.get(id), stagedById.get(id)))
+        rows.push(draftFromNode({ id, hostname: null, isUp: false }, appliedById.get(id), stagedById.get(id)))
       }
     }
     setDrafts(rows)
@@ -172,6 +238,31 @@ function LayoutPage() {
   const nextVersion = (data?.version ?? 0) + 1
   const preview = previewMutation.data ?? null
   const applied = applyMutation.data ?? null
+  const totals = useMemo(
+    () => layoutTotals(data?.roles ?? [], data?.stagedRoleChanges ?? []),
+    [data],
+  )
+  // The read-only current-roles table groups by the applied role; the edit
+  // table by the role after staged changes (what its form starts from).
+  const currentGroups = useMemo(
+    () => groupDrafts(layoutRoleRows(data?.roles ?? [], stagedById, (id) => hostnames.get(id) ?? null), groupBy, 'applied'),
+    [data, stagedById, hostnames, groupBy],
+  )
+  const draftGroups = useMemo(() => groupDrafts(drafts, groupBy), [drafts, groupBy])
+  const revertChange = revertNodeId
+    ? revertChangeFor({ id: revertNodeId }, appliedById.get(revertNodeId), stagedById.get(revertNodeId))
+    : null
+  const revertButton = (id: string) => (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 px-2 text-xs"
+      aria-label={`${nameOf(id)} の変更を戻す`}
+      onClick={() => setRevertNodeId(id)}
+    >
+      変更を戻す
+    </Button>
+  )
 
   return (
     <div className="space-y-6">
@@ -194,7 +285,7 @@ function LayoutPage() {
       ) : data ? (
         <>
           <div className="rounded-lg border p-4">
-            <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4 xl:grid-cols-7">
               <div>
                 <p className="text-muted-foreground">バージョン</p>
                 <p className="font-medium">{data.version}</p>
@@ -220,6 +311,27 @@ function LayoutPage() {
                   {hasStaged
                     ? <Badge variant="destructive">{stagedCount} 件保留中</Badge>
                     : <span className="text-muted-foreground">なし</span>}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">割り当てノード数</p>
+                <p className="font-medium">
+                  <SummaryDiff before={totals.before.assignedNodes} after={totals.after.assignedNodes} />
+                  {status.data && (
+                    <span className="ml-1 text-xs text-muted-foreground">/ 既知 {status.data.nodes.length}</span>
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">ゾーン数</p>
+                <p className="font-medium">
+                  <SummaryDiff before={totals.before.zones} after={totals.after.zones} />
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">割り当て容量の合計</p>
+                <p className="font-medium">
+                  <SummaryDiff before={totals.before.capacity} after={totals.after.capacity} format={formatBytes} />
                 </p>
               </div>
             </div>
@@ -265,7 +377,7 @@ function LayoutPage() {
               </div>
               <ul className="space-y-1 text-sm">
                 {staged.map((c) => {
-                  const before = data.roles.find((r) => r.id === c.id)
+                  const before = appliedById.get(c.id)
                   return (
                     <li key={c.id} className="flex flex-wrap items-baseline gap-2">
                       <span className="font-medium">{nameOf(c.id)}</span>
@@ -282,6 +394,7 @@ function LayoutPage() {
                           </span>
                         </>
                       )}
+                      {revertButton(c.id)}
                     </li>
                   )
                 })}
@@ -297,7 +410,10 @@ function LayoutPage() {
 
           {editing ? (
             <div className="space-y-3 rounded-lg border p-4">
-              <h2 className="text-lg font-semibold">ロールの編集</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold">ロールの編集</h2>
+                <GroupByToggle options={LAYOUT_GROUP_BY_OPTIONS} value={groupBy} onChange={setGroupBy} />
+              </div>
               <p className="text-sm text-muted-foreground">
                 ここで保存しても即時反映はされません。ステージ → プレビュー → 適用の順に進みます。容量は GiB 単位で、空欄にするとゲートウェイノードになります。
               </p>
@@ -313,7 +429,7 @@ function LayoutPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {drafts.map((d) => {
+                    <GroupedRows groups={draftGroups} colSpan={5} renderRow={(d) => {
                       const name = nodeDisplayName(d)
                       return (
                         <TableRow key={d.id} className={d.remove ? 'opacity-60' : undefined}>
@@ -375,7 +491,7 @@ function LayoutPage() {
                           </TableCell>
                         </TableRow>
                       )
-                    })}
+                    }} />
                   </TableBody>
                 </Table>
                 <datalist id="layout-zones">
@@ -414,7 +530,12 @@ function LayoutPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              <h2 className="text-lg font-semibold">現在のロール (v{data.version})</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold">現在のロール (v{data.version})</h2>
+                {data.roles.length > 0 && (
+                  <GroupByToggle options={LAYOUT_GROUP_BY_OPTIONS} value={groupBy} onChange={setGroupBy} />
+                )}
+              </div>
               {data.roles.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   ロールが割り当てられたノードがありません。「ロールを編集」からゾーンと容量を設定してください。
@@ -430,10 +551,14 @@ function LayoutPage() {
                         <TableHead className="text-right">利用可能</TableHead>
                         <TableHead className="text-right">パーティション</TableHead>
                         <TableHead>タグ</TableHead>
+                        <TableHead><span className="sr-only">ステージ中の変更</span></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {data.roles.map((role) => (
+                      <GroupedRows groups={currentGroups} colSpan={7} renderRow={(row) => {
+                        const role = row.applied
+                        const change = row.staged
+                        return (
                         <TableRow key={role.id}>
                           <TableCell>
                             <div className="font-medium">{nameOf(role.id)}</div>
@@ -450,8 +575,19 @@ function LayoutPage() {
                               ? role.tags.map((t) => <Badge key={t} variant="outline" className="mr-1">{t}</Badge>)
                               : <span className="text-muted-foreground">-</span>}
                           </TableCell>
+                          <TableCell className="text-right">
+                            {change && (
+                              <div className="flex items-center justify-end gap-1">
+                                <Badge variant={'remove' in change ? 'destructive' : 'secondary'}>
+                                  {'remove' in change ? '削除をステージ中' : '変更をステージ中'}
+                                </Badge>
+                                {revertButton(role.id)}
+                              </div>
+                            )}
+                          </TableCell>
                         </TableRow>
-                      ))}
+                        )
+                      }} />
                     </TableBody>
                   </Table>
                 </div>
@@ -481,6 +617,21 @@ function LayoutPage() {
         pendingLabel="取り消し中..."
         onConfirm={() => revertMutation.mutateAsync()}
         isPending={revertMutation.isPending}
+      />
+      <ConfirmDialog
+        open={revertNodeId != null}
+        onOpenChange={(open) => { if (!open) setRevertNodeId(null) }}
+        title={revertNodeId ? `${nameOf(revertNodeId)} の変更を戻す` : '変更を戻す'}
+        description={
+          revertNodeId && appliedById.has(revertNodeId)
+            ? 'このノードのステージ中の変更だけを破棄し、適用済みのロール (ゾーン・容量・タグ) に戻します。他のノードの変更とパラメータ変更はそのまま残ります。'
+            : 'このノードのステージ中の追加だけを破棄し、ロール未割当に戻します。他のノードの変更とパラメータ変更はそのまま残ります。'
+        }
+        confirmLabel="戻す"
+        pendingLabel="戻し中..."
+        confirmVariant="default"
+        onConfirm={() => (revertChange ? revertNodeMutation.mutateAsync(revertChange) : setRevertNodeId(null))}
+        isPending={revertNodeMutation.isPending}
       />
     </div>
   )
