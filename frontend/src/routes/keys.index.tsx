@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { listKeys, deleteKey } from '@/api'
@@ -6,6 +6,7 @@ import type { KeyListItem, KeyDetail } from '@/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CreateKeyDialog } from '@/components/create-key-dialog'
+import { ImportKeyDialog } from '@/components/import-key-dialog'
 import {
   Table,
   TableHeader,
@@ -56,7 +57,9 @@ function matchesKey(k: KeyListItem, q: string): boolean {
 function KeysPage() {
   useDocumentTitle('キー')
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
+  const [showImport, setShowImport] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<KeyListItem | null>(null)
   const [createdKey, setCreatedKey] = useState<KeyDetail | null>(null)
   const [search, setSearch] = useState('')
@@ -84,6 +87,13 @@ function KeysPage() {
     setCreatedKey(created)
   }
 
+  const handleImported = (imported: KeyDetail) => {
+    queryClient.invalidateQueries({ queryKey: ['keys'] })
+    toast.success('キーをインポートしました')
+    // The operator already holds the secret; go straight to the key to grant buckets.
+    void navigate({ to: '/keys/$id', params: { id: imported.accessKeyId } })
+  }
+
   const deleteMutation = useMutation({
     mutationFn: deleteKey,
     onSuccess: () => {
@@ -102,12 +112,18 @@ function KeysPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">キー</h1>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          キーを作成
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setShowImport(true)}>
+            キーをインポート
+          </Button>
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            キーを作成
+          </Button>
+        </div>
       </div>
 
       <CreateKeyDialog open={showCreate} onOpenChange={setShowCreate} onCreated={handleCreated} />
+      <ImportKeyDialog open={showImport} onOpenChange={setShowImport} onImported={handleImported} />
 
       {isLoading ? (
         <p className="text-muted-foreground">読み込み中...</p>

@@ -71,6 +71,7 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 		r.Route("/api/keys", func(r chi.Router) {
 			r.Get("/", handleListKeys(garageAdmin))
 			r.Post("/", handleCreateKey(garageAdmin))
+			r.Post("/import", handleImportKey(garageAdmin))
 			r.Get("/{id}", handleGetKey(garageAdmin))
 			r.Put("/{id}", handleUpdateKey(garageAdmin))
 			r.Delete("/{id}", handleDeleteKey(garageAdmin))
