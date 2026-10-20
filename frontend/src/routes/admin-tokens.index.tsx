@@ -39,7 +39,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ALL_SCOPE, isFullScope, scopeScore } from '@/lib/admin-scopes'
+import { ALL_SCOPE, escalationMessage, isFullScope, scopeScore } from '@/lib/admin-scopes'
 import { expirationBody, expirationFromIso, expirationValid } from '@/lib/expiration'
 import type { ExpirationValue } from '@/lib/expiration'
 import { formatDateTime } from '@/lib/format'
@@ -311,6 +311,7 @@ function CurrentTokenCard({ query }: { query: UseQueryResult<AdminToken> }) {
         <p className="text-amber-700 dark:text-amber-400">
           フル権限(<code className="font-mono">*</code>)のトークンです。コンソールが乗っ取られた場合にクラスタ全体を操作されるため、
           必要なエンドポイントだけに絞ったトークンへの切り替えを検討してください。
+          「トークンを作成」の作成ダイアログで「コンソール用スコープを適用」を押すと、このコンソールが呼び出すエンドポイントだけを許可したスコープになります。
         </p>
       ) : (
         token.scope.length > 0 && (
@@ -336,6 +337,9 @@ function CreateAdminTokenDialog({
   const [name, setName] = useState('')
   const [expiration, setExpiration] = useState<ExpirationValue>(() => expirationFromIso(null))
   const [scope, setScope] = useState<string[]>([ALL_SCOPE])
+  // Creating a token whose scope amounts to * goes through a confirmation.
+  const [confirmEscalation, setConfirmEscalation] = useState(false)
+  const escalation = escalationMessage(scope)
 
   const reset = () => {
     setName('')
@@ -386,7 +390,9 @@ function CreateAdminTokenDialog({
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault()
-            if (canSubmit) mutation.mutate()
+            if (!canSubmit) return
+            if (escalation) setConfirmEscalation(true)
+            else mutation.mutate()
           }}
         >
           <div className="space-y-1">
@@ -407,7 +413,7 @@ function CreateAdminTokenDialog({
           </div>
           <div className="space-y-1">
             <p className="text-sm font-medium">許可エンドポイント</p>
-            <AdminScopeEditor value={scope} onChange={setScope} disabled={mutation.isPending} />
+            <AdminScopeEditor value={scope} onChange={setScope} disabled={mutation.isPending} consolePreset />
           </div>
           {mutation.isError && (
             <p className="text-sm text-destructive">{mutation.error.message}</p>
@@ -426,6 +432,16 @@ function CreateAdminTokenDialog({
             </Button>
           </DialogFooter>
         </form>
+        <ConfirmDialog
+          open={confirmEscalation}
+          onOpenChange={setConfirmEscalation}
+          title="* と同等の権限を持つトークンの作成"
+          description={`${escalation ?? ''} このまま作成しますか？`}
+          onConfirm={() => mutation.mutateAsync()}
+          isPending={mutation.isPending}
+          confirmLabel="作成"
+          pendingLabel="作成中..."
+        />
       </DialogContent>
     </Dialog>
   )
