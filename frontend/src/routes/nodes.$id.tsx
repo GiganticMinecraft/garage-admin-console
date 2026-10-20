@@ -22,7 +22,7 @@ import {
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
 import { formatBytes } from '@/lib/format'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
-import { STATE_RANK, describeState, formatSecsAgo } from '@/lib/workers'
+import { STATE_RANK, describeState, formatSecsAgo, persistentErrorsLabel } from '@/lib/workers'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -693,7 +693,7 @@ function WorkersSection({ nodeId }: { nodeId: string }) {
                         {w.tranquility != null && <span>tranquility: <span className="font-medium">{w.tranquility}</span></span>}
                         {w.progress != null && <span>進捗: <span className="font-medium">{w.progress}</span></span>}
                         {w.persistentErrors != null && w.persistentErrors > 0 && (
-                          <span>永続エラー: <span className="font-medium">{w.persistentErrors}</span></span>
+                          <span>{persistentErrorsLabel(w)}: <span className="font-medium">{w.persistentErrors}</span></span>
                         )}
                         {w.freeform.length > 0 && <span className="basis-full text-xs">{w.freeform.join(' / ')}</span>}
                       </div>
