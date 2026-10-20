@@ -337,6 +337,8 @@ export interface BucketListItem {
   bytes: number | null
   unfinishedMultipartUploads: number | null
   keyCount: number | null
+  /** Every key with permissions on the bucket; null like the stats. */
+  keys: { accessKeyId: string; read: boolean; write: boolean; owner: boolean }[] | null
   quotas: { maxSize: number | null; maxObjects: number | null } | null
 }
 

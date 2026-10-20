@@ -30,6 +30,11 @@ type garageBucketInfo struct {
 	Keys          []struct {
 		AccessKeyID        string   `json:"accessKeyId"`
 		BucketLocalAliases []string `json:"bucketLocalAliases"`
+		Permissions        struct {
+			Read  bool `json:"read"`
+			Write bool `json:"write"`
+			Owner bool `json:"owner"`
+		} `json:"permissions"`
 	} `json:"keys"`
 	Objects                    int64        `json:"objects"`
 	Bytes                      int64        `json:"bytes"`
@@ -45,8 +50,17 @@ type garageBucketListItem struct {
 	LocalAliases  []bucketLocalAlias `json:"localAliases"`
 }
 
-// bucketListItem is one row of GET /api/buckets. The stats are null when
-// Garage could not be asked for this bucket's info.
+// bucketListKey is one key's permissions on a bucket, as listed in a row of
+// GET /api/buckets.
+type bucketListKey struct {
+	AccessKeyID string `json:"accessKeyId"`
+	Read        bool   `json:"read"`
+	Write       bool   `json:"write"`
+	Owner       bool   `json:"owner"`
+}
+
+// bucketListItem is one row of GET /api/buckets. The stats (and keys) are
+// null when Garage could not be asked for this bucket's info.
 type bucketListItem struct {
 	ID                         string             `json:"id"`
 	GlobalAliases              []string           `json:"globalAliases"`
@@ -56,6 +70,7 @@ type bucketListItem struct {
 	Bytes                      *int64             `json:"bytes"`
 	UnfinishedMultipartUploads *int64             `json:"unfinishedMultipartUploads"`
 	KeyCount                   *int               `json:"keyCount"`
+	Keys                       []bucketListKey    `json:"keys"`
 	Quotas                     *bucketQuotas      `json:"quotas"`
 }
 
@@ -75,6 +90,10 @@ func (item *bucketListItem) withInfo(info *garageBucketInfo) {
 	item.UnfinishedMultipartUploads = &info.UnfinishedMultipartUploads
 	n := len(info.Keys)
 	item.KeyCount = &n
+	item.Keys = make([]bucketListKey, len(info.Keys))
+	for i, k := range info.Keys {
+		item.Keys[i] = bucketListKey{AccessKeyID: k.AccessKeyID, Read: k.Permissions.Read, Write: k.Permissions.Write, Owner: k.Permissions.Owner}
+	}
 	q := info.Quotas
 	item.Quotas = &q
 	if item.Created == nil {
