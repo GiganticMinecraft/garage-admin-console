@@ -393,6 +393,7 @@ func TestS3ConnectionInfo(t *testing.T) {
 			t.Setenv("GARAGE_S3_PUBLIC_ENDPOINT", tc.public)
 			t.Setenv("GARAGE_S3_ENDPOINT", tc.internal)
 			t.Setenv("GARAGE_S3_REGION", tc.region)
+			t.Setenv("GARAGE_S3_ACCESS_KEY", "")
 
 			// The router reads the environment when it is built.
 			c := newNodeTestClient(t, "http://127.0.0.1:1")

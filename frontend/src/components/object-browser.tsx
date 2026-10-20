@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import {
   ApiError,
   MAX_BATCH_DOWNLOAD_KEYS,
@@ -24,7 +25,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useBucketKeyPermissionMutations } from '@/hooks/use-bucket-key-permissions'
+import { useConsoleKey } from '@/hooks/use-console-access'
 import { formatBytes, formatDateTime } from '@/lib/format'
+import {
+  consoleAccessView,
+  emptyObjectsMessage,
+  isConsoleKeyAccessDenied,
+  shouldRetryObjectList,
+  type ConsoleGrantResult,
+} from '@/lib/object-browser'
 import { toast } from 'sonner'
 import { ArrowDown, ArrowUp, ArrowUpDown, Folder, FolderUp } from 'lucide-react'
 
@@ -509,14 +519,48 @@ export function ObjectBrowser({
     initialPageParam: '' as string,
     getNextPageParam: (lastPage) =>
       lastPage.isTruncated ? lastPage.nextContinuationToken : undefined,
+    // 4xx (e.g. the console's key has no access) is shown at once.
+    retry: (failureCount, error) => shouldRetryObjectList(failureCount, error),
   })
 
+  // --- Console key without access to this bucket ---------------------------
+  const { grantConsole } = useBucketKeyPermissionMutations()
+  const [lastConsoleGrant, setLastConsoleGrant] = useState<ConsoleGrantResult | null>(null)
+  // A grant outcome only explains the 403s that follow it. Once the listing
+  // works again it is forgotten, so a later revoke (by another operator)
+  // offers the grant again instead of blaming the key.
+  if (objects.isSuccess && lastConsoleGrant !== null) setLastConsoleGrant(null)
+  const listDenied = objects.isError && isConsoleKeyAccessDenied(objects.error)
+  const consoleKey = useConsoleKey(listDenied)
+  const accessView = consoleAccessView({
+    listError: objects.isError ? objects.error : null,
+    listErrorAt: objects.errorUpdatedAt,
+    lastGrant: lastConsoleGrant,
+    keyLookupError: consoleKey.lookupError,
+    keyExpired: consoleKey.expired,
+  })
+  // While S3 refuses the console's key, every object operation would fail
+  // the same way, so they are hidden or disabled.
+  const accessDenied = accessView !== 'list'
+  const [consoleAccessOpen, setConsoleAccessOpen] = useState(false)
+  const grantConsoleAccess = () =>
+    grantConsole.mutateAsync({ bucketId }).then(
+      (result) => setLastConsoleGrant({ changed: result.changed, at: Date.now() }),
+      (error: unknown) => {
+        setLastConsoleGrant({ error })
+        throw error
+      },
+    )
+
+  // react-query keeps the previous pages when a refetch fails: do not show
+  // (and let operators click) stale folders and objects under the 403 panel.
+  const visiblePages = accessDenied ? undefined : objects.data?.pages
   const allObjects = useMemo(
-    () => objects.data?.pages.flatMap((p) => p.objects ?? []) ?? [],
-    [objects.data],
+    () => visiblePages?.flatMap((p) => p.objects ?? []) ?? [],
+    [visiblePages],
   )
   const allPrefixes = [
-    ...new Set(objects.data?.pages.flatMap((p) => p.prefixes ?? []) ?? []),
+    ...new Set(visiblePages?.flatMap((p) => p.prefixes ?? []) ?? []),
   ]
 
   const [sortKey, setSortKey] = useState<SortKey>('name')
@@ -662,8 +706,9 @@ export function ObjectBrowser({
           placeholder="プレフィックスで絞り込み"
           className="min-w-48 flex-1"
           aria-label="プレフィックス"
+          disabled={accessDenied}
         />
-        {prefix && (
+        {prefix && !accessDenied && (
           <Button
             size="sm"
             variant="outline"
@@ -676,7 +721,9 @@ export function ObjectBrowser({
         )}
       </div>
 
-      <ObjectUploader bucketId={bucketId} prefix={prefix} onUploaded={invalidateObjects} />
+      {!accessDenied && (
+        <ObjectUploader bucketId={bucketId} prefix={prefix} onUploaded={invalidateObjects} />
+      )}
 
       {/* Batch action bar */}
       {selectedKeys.size > 0 && (
@@ -720,7 +767,7 @@ export function ObjectBrowser({
         <Button
           variant="link"
           size="sm"
-          className="flex h-auto items-center gap-1.5 p-0"
+          className="flex h-auto max-w-full items-center justify-start gap-1.5 p-0"
           onClick={() => goToPrefix(parentPrefix(prefix))}
         >
           <FolderUp className="h-4 w-4" />
@@ -732,16 +779,70 @@ export function ObjectBrowser({
           key={p}
           variant="link"
           size="sm"
-          className="flex h-auto items-center gap-1.5 p-0"
+          className="flex h-auto max-w-full items-start justify-start gap-1.5 p-0 text-left whitespace-normal"
           onClick={() => goToPrefix(p)}
         >
-          <Folder className="h-4 w-4" />
-          {p}
+          <Folder className="mt-0.5 h-4 w-4" />
+          <span className="min-w-0 break-all">{p}</span>
         </Button>
       ))}
 
       {objects.isLoading ? (
         <p className="text-muted-foreground">オブジェクトを読み込み中...</p>
+      ) : accessView === 'grant' ? (
+        <div className="space-y-2 rounded-lg border border-amber-500/50 bg-amber-500/5 p-4 text-sm">
+          <p className="font-medium">
+            コンソールのキー（<span className="break-all">{consoleKey.label}</span>）にこのバケットの権限がありません
+          </p>
+          <p className="text-muted-foreground">
+            オブジェクトの一覧・アップロード・ダウンロードには、コンソールが使う S3 キーにこのバケットの read / write 権限が必要です。
+          </p>
+          <Button
+            size="sm"
+            onClick={() => setConsoleAccessOpen(true)}
+            disabled={grantConsole.isPending}
+          >
+            コンソールのキーに read/write を付与
+          </Button>
+        </div>
+      ) : accessView === 'key-expired' ? (
+        <div className="space-y-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+          <p className="font-medium text-destructive">
+            コンソールのキー（<span className="break-all">{consoleKey.label}</span>）は有効期限切れです
+          </p>
+          <p className="text-muted-foreground">
+            {consoleKey.expiration ? `有効期限: ${formatDateTime(consoleKey.expiration)}。` : ''}
+            キーの詳細ページで有効期限を延長するか、期限なしにしてください。権限を付与し直しても解決しません。
+          </p>
+          {consoleKey.accessKeyId && (
+            <Link
+              to="/keys/$id"
+              params={{ id: consoleKey.accessKeyId }}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              キーの詳細を開く
+            </Link>
+          )}
+        </div>
+      ) : accessView === 'key-missing' ? (
+        <div className="space-y-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+          <p className="font-medium text-destructive">
+            コンソールのキー（<span className="break-all">{consoleKey.label}</span>）が Garage に存在しません
+          </p>
+          <p className="text-muted-foreground">
+            キーが削除された可能性があります。コンソールに設定されたキー（GARAGE_S3_ACCESS_KEY / GARAGE_S3_SECRET_KEY）を、存在するキーに設定し直してください。権限を付与しても解決しません。
+          </p>
+        </div>
+      ) : accessView === 'key-invalid' ? (
+        <div className="space-y-2 rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+          <p className="font-medium text-destructive">
+            コンソールのキー（<span className="break-all">{consoleKey.label}</span>）にはこのバケットの read / write 権限がありますが、S3 へのアクセスが拒否されています
+          </p>
+          <p className="text-muted-foreground">
+            キー自体（認証情報）が無効になっている可能性があります。コンソールに設定されたシークレットキー（GARAGE_S3_SECRET_KEY）が正しいかを確認してください。権限を付与し直しても解決しません。
+          </p>
+          <p className="break-all text-xs text-muted-foreground">{objects.error?.message}</p>
+        </div>
       ) : objects.isError ? (
         <p className="text-destructive">
           オブジェクトの読み込みに失敗しました: {objects.error.message}
@@ -817,7 +918,7 @@ export function ObjectBrowser({
               {sortedObjects.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                    オブジェクトがありません
+                    {emptyObjectsMessage(allPrefixes.length, objects.hasNextPage)}
                   </TableCell>
                 </TableRow>
               )}
@@ -842,6 +943,18 @@ export function ObjectBrowser({
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={consoleAccessOpen}
+        onOpenChange={setConsoleAccessOpen}
+        title="コンソールのキーに権限を付与"
+        description={`コンソールのキー（${consoleKey.label}）に「${bucketName ?? bucketId}」の read / write 権限を付与しますか？owner 権限は付与しません。権限は「キーの権限」からいつでも変更・取り消しできます。`}
+        onConfirm={grantConsoleAccess}
+        isPending={grantConsole.isPending}
+        confirmLabel="付与"
+        pendingLabel="付与中..."
+        confirmVariant="default"
+      />
 
       <ConfirmDialog
         open={deleteObjectTarget !== null}
