@@ -77,8 +77,10 @@ func TestListBucketsUsesInfoEndpointWithPagination(t *testing.T) {
 			return map[string]any{
 				"id": id, "created": "2026-01-01T00:00:00Z", "globalAliases": []string{"alias-" + id},
 				"keys": []map[string]any{
-					{"accessKeyId": "GK1", "name": "k", "bucketLocalAliases": []string{"local-" + id}},
-					{"accessKeyId": "GK2", "name": "k2", "bucketLocalAliases": []string{}},
+					{"accessKeyId": "GK1", "name": "k", "bucketLocalAliases": []string{"local-" + id},
+						"permissions": map[string]any{"read": true, "write": true, "owner": false}},
+					{"accessKeyId": "GK2", "name": "k2", "bucketLocalAliases": []string{},
+						"permissions": map[string]any{"read": true}},
 				},
 				"objects": 3, "bytes": 1024, "unfinishedMultipartUploads": 1,
 				"quotas": map[string]any{"maxSize": 4096, "maxObjects": nil},
@@ -117,6 +119,13 @@ func TestListBucketsUsesInfoEndpointWithPagination(t *testing.T) {
 	}
 	if b.Created == nil || *b.Created != "2026-01-01T00:00:00Z" {
 		t.Errorf("created not filled: %v", b.Created)
+	}
+	wantKeys := []bucketListKey{
+		{AccessKeyID: "GK1", Read: true, Write: true},
+		{AccessKeyID: "GK2", Read: true},
+	}
+	if fmt.Sprint(b.Keys) != fmt.Sprint(wantKeys) {
+		t.Errorf("keys not filled from ListBucketsInfo: got %+v, want %+v", b.Keys, wantKeys)
 	}
 	// 5 items, page size 2, each later page repeats the offset entry:
 	// [b1 b2] [b2 b3] [b3 b4] [b4 b5] [b5] -> 5 calls.
@@ -194,7 +203,7 @@ func newLegacyBucketServer(t *testing.T, ids []string, missing string) *legacyBu
 			w.Write([]byte(`{"code":"NoSuchBucket","message":"Bucket not found"}`))
 			return
 		}
-		fmt.Fprintf(w, `{"id":%q,"keys":[{"accessKeyId":"GK1","bucketLocalAliases":[]}],"objects":7,"bytes":70,"unfinishedMultipartUploads":0,"quotas":{"maxSize":null,"maxObjects":10}}`, id)
+		fmt.Fprintf(w, `{"id":%q,"keys":[{"accessKeyId":"GK1","name":"k","bucketLocalAliases":[],"permissions":{"read":true,"write":false,"owner":true}}],"objects":7,"bytes":70,"unfinishedMultipartUploads":0,"quotas":{"maxSize":null,"maxObjects":10}}`, id)
 	})
 	mux.HandleFunc("/v2/CreateBucket", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"new"}`))
@@ -228,7 +237,7 @@ func TestListBucketsFallsBackToLegacyAPI(t *testing.T) {
 			t.Errorf("%s: local aliases from ListBuckets lost: %+v", b.ID, b.LocalAliases)
 		}
 		if b.ID == "bucket03" {
-			if b.Objects != nil || b.KeyCount != nil || b.Quotas != nil {
+			if b.Objects != nil || b.KeyCount != nil || b.Quotas != nil || b.Keys != nil {
 				t.Errorf("failed lookup should leave stats null: %+v", b)
 			}
 			continue
@@ -238,6 +247,9 @@ func TestListBucketsFallsBackToLegacyAPI(t *testing.T) {
 		}
 		if b.Quotas == nil || b.Quotas.MaxObjects == nil || *b.Quotas.MaxObjects != 10 {
 			t.Errorf("%s: quotas not filled: %+v", b.ID, b.Quotas)
+		}
+		if len(b.Keys) != 1 || b.Keys[0] != (bucketListKey{AccessKeyID: "GK1", Read: true, Owner: true}) {
+			t.Errorf("%s: keys not filled from GetBucketInfo: %+v", b.ID, b.Keys)
 		}
 	}
 	if got := gs.maxInFlight.Load(); got > int32(enrichWorkers) {

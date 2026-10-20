@@ -3,9 +3,14 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getClusterHealth,
+  getClusterLayout,
   getClusterStatistics,
   getClusterStatus,
+  getLayoutHistory,
+  getS3Connection,
   getStorageHealth,
+  listAdminTokens,
+  listBuckets,
   listKeys,
   type ClusterHealth,
   type ClusterNode,
@@ -19,6 +24,8 @@ import {
 
 const StorageCharts = lazy(() => import('@/components/storage-charts'))
 import { LayoutUpdateTracker } from '@/components/layout-update-tracker'
+import { AttentionPanel } from '@/components/attention-panel'
+import { collectAttentionItems } from '@/lib/attention'
 import { formatBytes, formatCount, formatDateTime, formatUsage, usagePercent } from '@/lib/format'
 import { isStorageNode, nodeDisplayName } from '@/lib/nodes'
 import { describeState } from '@/lib/workers'
@@ -43,6 +50,12 @@ export const Route = createFileRoute('/')({
 /** Polling periods; polling pauses while the tab is hidden. */
 const STATUS_REFETCH_MS = 15_000
 const STATISTICS_REFETCH_MS = 30_000
+/**
+ * The lists behind the attention panel fan out per item on the backend (or
+ * change rarely), so they are not polled; a revisit within this window reuses
+ * the cache and the 更新 button refreshes them.
+ */
+const LIST_STALE_MS = 60_000
 
 function ProgressBar({
   label,
@@ -676,22 +689,51 @@ function DashboardPage() {
     ...pollEvery(STATISTICS_REFETCH_MS),
   })
 
-  // The key list fans out per key on the backend, so it is not polled; the
-  // 更新 button refreshes it. Shares the cache with the keys page.
-  const keys = useQuery({ queryKey: ['keys'], queryFn: listKeys })
+  // The key and bucket lists fan out per item on the backend, so they are not
+  // polled; the 更新 button refreshes them. They share the cache with the list pages.
+  const keys = useQuery({ queryKey: ['keys'], queryFn: listKeys, staleTime: LIST_STALE_MS })
+  const buckets = useQuery({ queryKey: ['buckets'], queryFn: listBuckets, staleTime: LIST_STALE_MS })
+  const adminTokens = useQuery({ queryKey: ['admin-tokens'], queryFn: listAdminTokens, staleTime: LIST_STALE_MS })
+  const s3Connection = useQuery({ queryKey: ['s3-connection'], queryFn: getS3Connection, staleTime: Infinity })
+  // Staged changes (same cache as the layout page) and the update history
+  // (the tracker's query; polled here too in case the tracker is not mounted).
+  const layout = useQuery({ queryKey: ['cluster', 'layout'], queryFn: getClusterLayout, staleTime: LIST_STALE_MS })
+  const layoutHistory = useQuery({
+    queryKey: ['cluster', 'layout', 'history'],
+    queryFn: getLayoutHistory,
+    ...pollEvery(STATISTICS_REFETCH_MS),
+  })
 
   // Latest successful fetch of the 15 s group (health / status / storage
   // health); the slower statistics poll does not hold it back.
   const updatedAt = Math.max(health.dataUpdatedAt, status.dataUpdatedAt, storageHealth.dataUpdatedAt)
 
+  const attention = collectAttentionItems({
+    // The latest fetch stands in for "now" (render must stay pure); it
+    // advances with the 15 s polling, which is precise enough for expirations.
+    now: Math.max(updatedAt, keys.dataUpdatedAt, adminTokens.dataUpdatedAt),
+    health,
+    status,
+    storageHealth,
+    corruptionIncreases: storageHealth.data?.increases,
+    layout,
+    layoutHistory,
+    keys,
+    adminTokens,
+    buckets,
+    s3Connection,
+  })
+
   // Manual refresh: everything under ['cluster'] (including the layout
-  // history behind the tracker) plus the key list. The spinner reflects only
-  // this, not background polling.
+  // history behind the tracker) plus the key, bucket and admin token lists.
+  // The spinner reflects only this, not background polling.
   const queryClient = useQueryClient()
   const refreshAll = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ['cluster'] }),
       queryClient.invalidateQueries({ queryKey: ['keys'] }),
+      queryClient.invalidateQueries({ queryKey: ['buckets'] }),
+      queryClient.invalidateQueries({ queryKey: ['admin-tokens'], exact: true }),
     ])
 
   // GetClusterStatus roles are the current layout's, which is all the
@@ -706,6 +748,8 @@ function DashboardPage() {
         <h1 className="text-2xl font-bold">ダッシュボード</h1>
         <RefreshIndicator updatedAt={updatedAt} onRefresh={refreshAll} />
       </div>
+
+      <AttentionPanel result={attention} />
 
       {status.data && <LayoutUpdateTracker roles={trackerRoles} compact />}
 
