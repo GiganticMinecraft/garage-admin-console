@@ -5,6 +5,7 @@ import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ClusterNode, PartitionUsage } from '@/api'
+import { useChartChrome, type PartitionKind } from '@/lib/chart-theme'
 import { clampUsed, formatBytes, formatUsage, usagePercent } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
@@ -18,26 +19,22 @@ const ReactEChartsCore = ('default' in EChartsReactCore
   : EChartsReactCore) as typeof EChartsReactCore
 
 // One hue per partition kind (the same blue / purple as the node table's
-// bars): the used part is the saturated step, free space the light step of
-// that hue. At or above the thresholds the used colour switches to a status
-// colour so the chart signals pressure, not only magnitude.
-type PartitionKind = 'data' | 'meta'
-
-const PALETTE: Record<PartitionKind, { used: string; free: string }> = {
-  data: { used: '#3b82f6', free: '#bfdbfe' }, // blue-500 / blue-200
-  meta: { used: '#a855f7', free: '#e9d5ff' }, // purple-500 / purple-200
+// bars): the used part is the saturated step of that hue, free space a
+// theme-dependent secondary step (lib/chart-theme.ts). At or above the
+// thresholds the used colour switches to a status colour so the chart
+// signals pressure, not only magnitude.
+const USED: Record<PartitionKind, string> = {
+  data: '#3b82f6', // blue-500
+  meta: '#a855f7', // purple-500
 }
 const WARN_COLOR = '#f59e0b' // amber-500
 const CRIT_COLOR = '#ef4444' // red-500
 const WARN_PERCENT = USAGE_WARN * 100
 const CRIT_PERCENT = USAGE_CRIT * 100
 
-// Chart chrome uses neutral text colours, never the series colour.
-const AXIS_TEXT = '#71717a' // zinc-500
-const LABEL_TEXT = '#52525b' // zinc-600
-const GRID_LINE = 'rgba(113, 113, 122, 0.2)'
-// Surface-coloured edge that leaves a 2px gap between touching segments.
-const SURFACE = '#ffffff'
+// Chart chrome (axis / label text, grid, the surface-coloured edge that leaves
+// a gap between touching segments, tooltip box) follows the colour theme and
+// never uses the series colour; see lib/chart-theme.ts.
 const LABEL_FONT_SIZE = 12
 // Below Tailwind's `sm` breakpoint the bars drop their end labels (the
 // tooltip still carries the numbers) so the bars keep usable width.
@@ -51,7 +48,7 @@ const TITLES: Record<PartitionKind, string> = {
 function usedColor(kind: PartitionKind, percent: number): string {
   if (percent >= CRIT_PERCENT) return CRIT_COLOR
   if (percent >= WARN_PERCENT) return WARN_COLOR
-  return PALETTE[kind].used
+  return USED[kind]
 }
 
 interface Usage {
@@ -126,10 +123,12 @@ function Swatch({ color, label }: { color: string; label: string }) {
 
 /** Cluster-wide donut for one partition kind, with the usage in its centre. */
 function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
+  const chrome = useChartChrome()
   const color = usedColor(kind, u.percent)
   const option = useMemo(
     () => ({
       tooltip: {
+        ...chrome.tooltip,
         trigger: 'item' as const,
         formatter: () => usageTooltip(TITLES[kind], u),
       },
@@ -141,15 +140,15 @@ function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
           label: { show: false },
           labelLine: { show: false },
           emphasis: { scale: false },
-          itemStyle: { borderColor: SURFACE, borderWidth: 2 },
+          itemStyle: { borderColor: chrome.surface, borderWidth: 2 },
           data: [
             { value: u.used, name: '使用中', itemStyle: { color: usedColor(kind, u.percent) } },
-            { value: u.free, name: '空き', itemStyle: { color: PALETTE[kind].free } },
+            { value: u.free, name: '空き', itemStyle: { color: chrome.free[kind] } },
           ],
         },
       ],
     }),
-    [kind, u],
+    [kind, u, chrome],
   )
 
   return (
@@ -166,7 +165,7 @@ function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
       </div>
       <div className="flex flex-wrap justify-center gap-3 text-xs text-muted-foreground">
         <Swatch color={color} label="使用中" />
-        <Swatch color={PALETTE[kind].free} label="空き" />
+        <Swatch color={chrome.free[kind]} label="空き" />
       </div>
     </div>
   )
@@ -174,6 +173,7 @@ function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
 
 /** One horizontal used + free stacked bar per node, on the panel's own scale. */
 function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: MeasuredNode[]; narrow: boolean }) {
+  const chrome = useChartChrome()
   const option = useMemo(() => {
     const rows = nodes.map((n) => ({ name: n.name, u: n[kind], label: formatUsage(n[kind].used, n[kind].total) }))
     const maxTotal = Math.max(0, ...rows.map((r) => r.u.total))
@@ -182,6 +182,7 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
     const rowAt = (p: { dataIndex: number }) => rows[p.dataIndex]
     return {
       tooltip: {
+        ...chrome.tooltip,
         trigger: 'item' as const,
         confine: true,
         formatter: (p: { dataIndex: number }) => {
@@ -194,8 +195,8 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
         type: 'value' as const,
         max: maxTotal > 0 ? maxTotal : undefined,
         splitNumber: narrow ? 2 : 3,
-        axisLabel: { color: AXIS_TEXT, formatter: (v: number) => formatBytes(v) },
-        splitLine: { lineStyle: { color: GRID_LINE } },
+        axisLabel: { color: chrome.axisText, formatter: (v: number) => formatBytes(v) },
+        splitLine: { lineStyle: { color: chrome.gridLine } },
       },
       yAxis: {
         type: 'category' as const,
@@ -203,7 +204,7 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
         data: rows.map((r) => r.name),
         axisTick: { show: false },
         axisLine: { show: false },
-        axisLabel: { color: AXIS_TEXT, width: narrow ? 88 : 140, overflow: 'truncate' as const },
+        axisLabel: { color: chrome.axisText, width: narrow ? 88 : 140, overflow: 'truncate' as const },
       },
       series: [
         {
@@ -213,7 +214,7 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
           barMaxWidth: 18,
           data: rows.map((r) => ({
             value: r.u.used,
-            itemStyle: { color: usedColor(kind, r.u.percent), borderColor: SURFACE, borderWidth: 1 },
+            itemStyle: { color: usedColor(kind, r.u.percent), borderColor: chrome.surface, borderWidth: 1 },
           })),
         },
         {
@@ -222,15 +223,15 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
           stack: 'usage',
           barMaxWidth: 18,
           itemStyle: {
-            color: PALETTE[kind].free,
-            borderColor: SURFACE,
+            color: chrome.free[kind],
+            borderColor: chrome.surface,
             borderWidth: 1,
             borderRadius: [0, 4, 4, 0],
           },
           label: {
             show: !narrow,
             position: 'right' as const,
-            color: LABEL_TEXT,
+            color: chrome.labelText,
             fontSize: LABEL_FONT_SIZE,
             formatter: (p: { dataIndex: number }) => rowAt(p)?.label ?? '',
           },
@@ -238,15 +239,15 @@ function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: Measur
         },
       ],
     }
-  }, [kind, nodes, narrow])
+  }, [kind, nodes, narrow, chrome])
 
   return (
     <div className="rounded-lg border p-4">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-medium text-muted-foreground">{TITLES[kind]} (ノード別)</h3>
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <Swatch color={PALETTE[kind].used} label="使用中" />
-          <Swatch color={PALETTE[kind].free} label="空き" />
+          <Swatch color={USED[kind]} label="使用中" />
+          <Swatch color={chrome.free[kind]} label="空き" />
         </div>
       </div>
       <ReactEChartsCore echarts={echarts} option={option} style={{ height: 40 + nodes.length * 36 }} />

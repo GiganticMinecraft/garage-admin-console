@@ -1,4 +1,6 @@
-import { ChevronsUpDown, LogOut } from "lucide-react"
+import { ChevronsUpDown, LogOut, Monitor, Moon, Sun } from "lucide-react"
+import { useId } from "react"
+import { useTheme } from "next-themes"
 
 import {
   Avatar,
@@ -10,6 +12,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -19,6 +23,12 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+
+const THEME_OPTIONS = [
+  { value: "system", label: "システム", icon: Monitor },
+  { value: "light", label: "ライト", icon: Sun },
+  { value: "dark", label: "ダーク", icon: Moon },
+] as const
 
 export function NavUser({
   user,
@@ -31,6 +41,8 @@ export function NavUser({
   onLogout: () => void
 }) {
   const { isMobile } = useSidebar()
+  const { theme, setTheme } = useTheme()
+  const themeLabelId = useId()
 
   return (
     <SidebarMenu>
@@ -72,6 +84,27 @@ export function NavUser({
                 </div>
               </div>
             </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel id={themeLabelId} className="text-xs font-normal text-muted-foreground">
+              テーマ
+            </DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              aria-labelledby={themeLabelId}
+              value={theme ?? "system"}
+              onValueChange={setTheme}
+            >
+              {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
+                <DropdownMenuRadioItem
+                  key={value}
+                  value={value}
+                  // Keep the menu open so the change can be seen and undone.
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  <Icon />
+                  {label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLogout}>
               <LogOut />

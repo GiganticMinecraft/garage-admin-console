@@ -204,7 +204,7 @@ function LayoutPage() {
                 <p className="font-medium">
                   {formatRedundancy(data.parameters.zoneRedundancy)}
                   {data.stagedParameters && (
-                    <span className="ml-2 text-xs text-amber-600">
+                    <span className="ml-2 text-xs text-amber-600 dark:text-amber-400">
                       → {formatRedundancy(data.stagedParameters.zoneRedundancy)} (保留中)
                     </span>
                   )}
@@ -240,7 +240,7 @@ function LayoutPage() {
           )}
 
           {hasStaged && !editing && (
-            <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50/50 p-4 dark:bg-amber-950/20">
+            <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50/50 dark:border-amber-500/40 p-4 dark:bg-amber-950/20">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-lg font-semibold">ステージ中の変更</h2>
                 <div className="flex gap-2">

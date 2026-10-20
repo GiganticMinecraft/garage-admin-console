@@ -83,7 +83,7 @@ export function ListTruncatedBanner({ children }: { children: ReactNode }) {
       role="status"
       className="flex items-start gap-3 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
     >
-      <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+      <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
       <p>{children}</p>
     </div>
   )

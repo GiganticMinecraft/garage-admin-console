@@ -222,7 +222,7 @@ function StatsSection({ stats }: { stats: NodeStatistics }) {
 
 function QueueCell({ value }: { value: number }) {
   return (
-    <TableCell className={`text-right tabular-nums ${value > 0 ? 'font-medium text-amber-600' : 'text-muted-foreground'}`}>
+    <TableCell className={`text-right tabular-nums ${value > 0 ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
       {value.toLocaleString()}
     </TableCell>
   )

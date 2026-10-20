@@ -5,6 +5,26 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Garage Admin Console</title>
+    <!--
+      Apply the saved theme before first paint so dark mode does not flash
+      light while the bundle loads. Mirrors next-themes (attribute="class",
+      storageKey="theme", defaultTheme="system") configured in src/App.tsx.
+    -->
+    <script>
+      (function () {
+        var theme = 'system'
+        try {
+          theme = localStorage.getItem('theme') || 'system'
+        } catch (e) {}
+        if (theme === 'system') {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        }
+        var root = document.documentElement
+        root.classList.remove('light', 'dark')
+        root.classList.add(theme === 'dark' ? 'dark' : 'light')
+        root.style.colorScheme = theme === 'dark' ? 'dark' : 'light'
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
