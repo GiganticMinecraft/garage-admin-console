@@ -3,10 +3,10 @@ name: Frontend
 on:
   push:
     branches: [main]
-    paths: ['frontend/**']
+    paths: ['frontend/**', 'backend/testdata/console_scope.json']
   pull_request:
     branches: [main]
-    paths: ['frontend/**']
+    paths: ['frontend/**', 'backend/testdata/console_scope.json']
 
 jobs:
   lint-and-test:
