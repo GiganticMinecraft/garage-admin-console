@@ -14,9 +14,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { sameScope } from '@/lib/admin-scopes'
+import { escalationMessage, sameScope, scopeCoversConsole, scopeEscalates } from '@/lib/admin-scopes'
 import { expirationBody, expirationFromIso, expirationValid, sameExpiration } from '@/lib/expiration'
 import { formatDateTime } from '@/lib/format'
+import { useConsoleScope } from '@/hooks/use-console-scope'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export const Route = createFileRoute('/admin-tokens/$id')({
@@ -119,7 +120,10 @@ function AdminTokenDetailPage() {
               </div>
               <div>
                 <p className="text-muted-foreground">許可エンドポイント</p>
-                <ScopeCell scope={data.scope} />
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <ScopeCell scope={data.scope} />
+                  <ScopeBadges scope={data.scope} />
+                </div>
               </div>
             </div>
           </div>
@@ -185,10 +189,19 @@ function EditAdminTokenForm({
       if (isCurrent) queryClient.invalidateQueries({ queryKey: ['admin-tokens', 'current'] })
       toast.success('管理トークンを更新しました')
     },
+    // The escalation confirmation stays open over the form on failure, so
+    // also report it where it is visible.
+    onError: (err) => {
+      toast.error(`管理トークンの更新に失敗しました: ${err.message}`)
+    },
   })
 
   const canSave =
     dirty && name.trim() !== '' && expirationValid(expiration) && scope.length > 0 && !mutation.isPending
+  // Saving a scope change that newly amounts to * goes through a
+  // confirmation; narrowing an already escalating token does not.
+  const [confirmEscalation, setConfirmEscalation] = useState(false)
+  const escalation = scopeDirty && !scopeEscalates(token.scope).escalates ? escalationMessage(scope) : null
 
   const reset = () => {
     setName(token.name)
@@ -198,50 +211,104 @@ function EditAdminTokenForm({
   }
 
   return (
-    <form
-      className="space-y-4 rounded-lg border p-4"
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (canSave) mutation.mutate()
-      }}
-    >
-      <h2 className="text-lg font-semibold">設定</h2>
-      <div className="max-w-md space-y-1">
-        <label htmlFor="admin-token-name" className="text-sm font-medium">
-          名前
-        </label>
-        <Input
-          id="admin-token-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          disabled={mutation.isPending}
-        />
-      </div>
-      <div className="space-y-1">
-        <p className="text-sm font-medium">有効期限</p>
-        <ExpirationInput value={expiration} onChange={setExpiration} disabled={mutation.isPending} />
-      </div>
-      <div className="space-y-1">
-        <p className="text-sm font-medium">許可エンドポイント</p>
-        {isCurrent && (
-          <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            このコンソール自身のトークンです。必要なエンドポイントを外すとコンソールの該当機能が動かなくなります。
-          </p>
-        )}
-        <AdminScopeEditor value={scope} onChange={setScope} disabled={mutation.isPending} />
-      </div>
-      {mutation.isError && <p className="text-sm text-destructive">{mutation.error.message}</p>}
-      <div className="flex gap-2">
-        <Button type="submit" disabled={!canSave}>
-          {mutation.isPending ? '保存中...' : '保存'}
-        </Button>
-        {dirty && (
-          <Button type="button" variant="ghost" onClick={reset} disabled={mutation.isPending}>
-            変更を破棄
+    <>
+      <form
+        className="space-y-4 rounded-lg border p-4"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!canSave) return
+          if (escalation) setConfirmEscalation(true)
+          else mutation.mutate()
+        }}
+      >
+        <h2 className="text-lg font-semibold">設定</h2>
+        <div className="max-w-md space-y-1">
+          <label htmlFor="admin-token-name" className="text-sm font-medium">
+            名前
+          </label>
+          <Input
+            id="admin-token-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={mutation.isPending}
+          />
+        </div>
+        <div className="space-y-1">
+          <p className="text-sm font-medium">有効期限</p>
+          <ExpirationInput value={expiration} onChange={setExpiration} disabled={mutation.isPending} />
+        </div>
+        <div className="space-y-1">
+          <p className="text-sm font-medium">許可エンドポイント</p>
+          {isCurrent && (
+            <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              このコンソール自身のトークンです。必要なエンドポイントを外すとコンソールの該当機能が動かなくなります。
+            </p>
+          )}
+          <AdminScopeEditor value={scope} onChange={setScope} disabled={mutation.isPending} consolePreset />
+        </div>
+        {mutation.isError && <p className="text-sm text-destructive">{mutation.error.message}</p>}
+        <div className="flex gap-2">
+          <Button type="submit" disabled={!canSave}>
+            {mutation.isPending ? '保存中...' : '保存'}
           </Button>
-        )}
-      </div>
-    </form>
+          {dirty && (
+            <Button type="button" variant="ghost" onClick={reset} disabled={mutation.isPending}>
+              変更を破棄
+            </Button>
+          )}
+        </div>
+      </form>
+      <ConfirmDialog
+        open={confirmEscalation}
+        onOpenChange={setConfirmEscalation}
+        title="* と同等の権限への変更"
+        description={`${escalation ?? ''} このままスコープを保存しますか？`}
+        onConfirm={() => mutation.mutateAsync()}
+        isPending={mutation.isPending}
+        confirmLabel="保存"
+        pendingLabel="保存中..."
+        confirmVariant="default"
+      />
+    </>
+  )
+}
+
+/**
+ * Whether the saved scope amounts to * and whether it grants everything the
+ * console preset needs. An unavailable console scope is shown as 判定不可,
+ * not as covered.
+ */
+function ScopeBadges({ scope }: { scope: string[] }) {
+  const consoleScope = useConsoleScope()
+  const escalation = scopeEscalates(scope)
+  const coverage = consoleScope.data ? scopeCoversConsole(scope, consoleScope.data) : null
+  return (
+    <>
+      {escalation.escalates && (
+        <Badge
+          variant="outline"
+          className="border-amber-500/50 text-amber-700 dark:text-amber-400"
+          title={escalation.reason ?? undefined}
+        >
+          <TriangleAlert />* と同等
+        </Badge>
+      )}
+      {coverage ? (
+        coverage.covers ? (
+          <Badge variant="outline" title="このコンソールが呼び出すエンドポイント(CreateAdminToken / UpdateAdminToken を除く)をすべて許可しています">
+            コンソール用を満たす
+          </Badge>
+        ) : (
+          <Badge variant="secondary" title={`不足: ${coverage.missing.join(', ')}`}>
+            コンソール用に {coverage.missing.length} 件不足
+          </Badge>
+        )
+      ) : consoleScope.isError ? (
+        <Badge variant="outline" className="text-muted-foreground" title={consoleScope.error.message}>
+          コンソール用: 判定不可
+        </Badge>
+      ) : null}
+    </>
   )
 }

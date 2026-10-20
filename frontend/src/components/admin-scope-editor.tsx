@@ -1,15 +1,21 @@
 import { useId, useState } from 'react'
 import { ChevronRight, TriangleAlert } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { useConsoleScope } from '@/hooks/use-console-scope'
 import {
   ADMIN_SCOPE_CATEGORIES,
   ALL_ADMIN_ENDPOINTS,
   ALL_SCOPE,
   ENDPOINT_MIN_VERSION,
+  ESCALATION_WARNING,
   PRIVILEGE_ESCALATION_ENDPOINTS,
+  consolePresetScope,
   isFullScope,
   knownScopeCount,
+  sameScope,
+  scopeEscalates,
   unknownScopeEntries,
 } from '@/lib/admin-scopes'
 import type { AdminScopeCategory } from '@/lib/admin-scopes'
@@ -19,6 +25,8 @@ interface AdminScopeEditorProps {
   value: string[]
   onChange: (value: string[]) => void
   disabled?: boolean
+  /** Show the 「コンソール用スコープを適用」 button. */
+  consolePreset?: boolean
 }
 
 /**
@@ -27,13 +35,13 @@ interface AdminScopeEditorProps {
  * selected, with x/y counters). Scope entries this console does not know are
  * kept untouched so saving never silently drops them.
  */
-export function AdminScopeEditor({ value, onChange, disabled }: AdminScopeEditorProps) {
+export function AdminScopeEditor({ value, onChange, disabled, consolePreset }: AdminScopeEditorProps) {
   const id = useId()
   const full = isFullScope(value)
   const selected = new Set(value)
   const unknown = unknownScopeEntries(value)
   const knownCount = knownScopeCount(value)
-  const escalation = !full && PRIVILEGE_ESCALATION_ENDPOINTS.some((e) => selected.has(e))
+  const escalation = scopeEscalates(value)
 
   const setEndpoints = (endpoints: readonly string[], on: boolean) => {
     const next = new Set(value)
@@ -67,17 +75,20 @@ export function AdminScopeEditor({ value, onChange, disabled }: AdminScopeEditor
         </span>
       </div>
 
-      {full && (
-        <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+      {consolePreset && <ConsolePresetButton value={value} onChange={onChange} disabled={disabled} />}
+
+      {escalation.escalates && (
+        <div
+          role="alert"
+          className="flex items-start gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/5 p-2 text-xs text-amber-700 dark:text-amber-400"
+        >
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          今後追加されるものも含め、すべての Admin API エンドポイントを呼び出せます。
-        </p>
-      )}
-      {escalation && (
-        <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          CreateAdminToken / UpdateAdminToken を許可したトークンは自分の権限を広げられるため、実質的に「すべて」と同等です。
-        </p>
+          <div>
+            <p className="font-medium">{ESCALATION_WARNING}</p>
+            <p>{escalation.reason}</p>
+            {full && <p>今後追加されるものも含め、すべての Admin API エンドポイントを呼び出せます。</p>}
+          </div>
+        </div>
       )}
       {!full && value.length === 0 && (
         <p className="text-xs text-destructive">エンドポイントが 1 つも選択されていません(どの API も呼び出せません)</p>
@@ -108,6 +119,51 @@ export function AdminScopeEditor({ value, onChange, disabled }: AdminScopeEditor
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * 「コンソール用スコープを適用」: replaces the scope with what the console
+ * backend calls, minus CreateAdminToken / UpdateAdminToken (see
+ * consolePresetScope).
+ */
+function ConsolePresetButton({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string[]
+  onChange: (value: string[]) => void
+  disabled?: boolean
+}) {
+  const consoleScope = useConsoleScope()
+  const preset = consoleScope.data ? consolePresetScope(consoleScope.data) : null
+  const applied = preset !== null && sameScope(value, preset)
+  return (
+    <div className="space-y-1 rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={disabled || preset === null || applied}
+          onClick={() => preset && onChange(preset)}
+        >
+          コンソール用スコープを適用
+        </Button>
+        {consoleScope.isLoading && <span>読み込み中...</span>}
+        {consoleScope.isError && (
+          <span className="text-destructive">
+            コンソールが使うエンドポイントを取得できませんでした: {consoleScope.error.message}
+          </span>
+        )}
+        {applied && <span>適用済み</span>}
+      </div>
+      <p>
+        このコンソールが呼び出すエンドポイント{preset ? `(${preset.length} 件)` : ''}だけを許可します。
+        権限昇格になる CreateAdminToken / UpdateAdminToken は含めないため、このスコープのトークンを使うコンソールからは管理トークンの作成と編集ができません。
+      </p>
     </div>
   )
 }

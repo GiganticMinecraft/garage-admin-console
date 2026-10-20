@@ -1218,6 +1218,15 @@ export async function getCurrentAdminToken(): Promise<AdminToken> {
   return fetchJSON('/admin-tokens/current')
 }
 
+/**
+ * Garage Admin API v2 endpoint names the console backend calls, sorted. It
+ * includes CreateAdminToken / UpdateAdminToken; see consolePresetScope for the
+ * non-escalating preset built from it.
+ */
+export async function getConsoleScope(): Promise<string[]> {
+  return fetchJSON('/admin-tokens/console-scope')
+}
+
 export async function getAdminToken(id: string): Promise<AdminToken> {
   return fetchJSON(`/admin-tokens/${encodeURIComponent(id)}`)
 }

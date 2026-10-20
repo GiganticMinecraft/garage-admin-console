@@ -137,3 +137,87 @@ export function sameScope(a: readonly string[], b: readonly string[]): boolean {
   return b.every((s) => set.has(s))
 }
 
+/** Heading of the escalation warning shown in the scope editor and on create / update confirmation. */
+export const ESCALATION_WARNING = 'このスコープは * と同等の権限になります'
+
+export interface ScopeEscalation {
+  escalates: boolean
+  /** Why the scope is equivalent to `*` (null when it is not). */
+  reason: string | null
+  /** The escalating entries present: `*` and / or the PRIVILEGE_ESCALATION_ENDPOINTS. */
+  endpoints: string[]
+}
+
+/**
+ * Whether a scope is (or can make itself) equivalent to `*`: `*` itself, or
+ * CreateAdminToken / UpdateAdminToken, with which the token can mint a `*`
+ * token or widen its own scope.
+ */
+export function scopeEscalates(scope: readonly string[]): ScopeEscalation {
+  if (isFullScope(scope)) {
+    return {
+      escalates: true,
+      reason: 'すべてのエンドポイント(*)を許可しています。',
+      endpoints: [ALL_SCOPE],
+    }
+  }
+  const endpoints = PRIVILEGE_ESCALATION_ENDPOINTS.filter((e) => scope.includes(e))
+  if (endpoints.length === 0) return { escalates: false, reason: null, endpoints: [] }
+  return {
+    escalates: true,
+    reason: `${endpoints.join(' / ')} を許可したトークンは、* のトークンを作成したり自分のスコープを広げたりできます。`,
+    endpoints,
+  }
+}
+
+/** `ESCALATION_WARNING` plus the reason, as one message for confirmation dialogs. */
+export function escalationMessage(scope: readonly string[]): string | null {
+  const { reason } = scopeEscalates(scope)
+  return reason === null ? null : `${ESCALATION_WARNING}。${reason}`
+}
+
+/**
+ * Endpoints Garage allows for every valid token regardless of its scope
+ * (`src/api/admin/api_server.rs`), so a scope never needs to list them.
+ */
+export const SCOPE_EXEMPT_ENDPOINTS: readonly string[] = ['GetCurrentAdminTokenInfo']
+
+/**
+ * The 「コンソール用スコープ」 preset: what the console backend calls
+ * (`GET /api/admin-tokens/console-scope`) minus `*`, the escalation endpoints
+ * (so the preset never amounts to `*`) and the scope-exempt endpoints. Known endpoints keep the
+ * editor's category order; names the editor does not list come last, sorted.
+ * A token with this scope cannot create admin tokens or change their settings
+ * from the console.
+ */
+export function consolePresetScope(consoleScope: readonly string[]): string[] {
+  const wanted = new Set(
+    consoleScope.filter(
+      (e) => e !== ALL_SCOPE && !PRIVILEGE_ESCALATION_ENDPOINTS.includes(e) && !SCOPE_EXEMPT_ENDPOINTS.includes(e),
+    ),
+  )
+  const known = ALL_ADMIN_ENDPOINTS.filter((e) => wanted.has(e))
+  const knownSet = new Set(known)
+  const rest = [...wanted].filter((e) => !knownSet.has(e)).sort()
+  return [...known, ...rest]
+}
+
+export interface ConsoleCoverage {
+  covers: boolean
+  /** Preset endpoints the scope lacks, in preset order. */
+  missing: string[]
+}
+
+/**
+ * Whether a scope grants everything in the console preset
+ * (`consolePresetScope(consoleScope)`); `*` always does. The escalation
+ * endpoints are not required (the preset leaves them out on purpose), nor
+ * are the scope-exempt ones.
+ */
+export function scopeCoversConsole(scope: readonly string[], consoleScope: readonly string[]): ConsoleCoverage {
+  if (isFullScope(scope)) return { covers: true, missing: [] }
+  const have = new Set(scope)
+  const missing = consolePresetScope(consoleScope).filter((e) => !have.has(e))
+  return { covers: missing.length === 0, missing }
+}
+
