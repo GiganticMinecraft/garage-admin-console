@@ -12,16 +12,28 @@ import {
   getNodeWorkerVariables,
   launchNodeRepair,
   listNodeWorkers,
+  listWorkers,
   setNodeWorkerVariable,
+  type ClusterHealth,
+  type ClusterStatus,
   type MultiResponse,
   type NodeInfo,
   type NodeStatistics,
   type PartitionUsage,
   type RepairType,
   type WorkerVariables,
+  type WorkersResponse,
 } from '@/api'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
-import { evaluateRepairGuard, isDestructiveRepair, repairGuardHint } from '@/lib/repair-guard'
+import {
+  DESTRUCTIVE_REPAIR_NOTE,
+  assertRepairAllowed,
+  evaluateRepairGuard,
+  isDestructiveRepair,
+  repairGuardHint,
+  type GuardInputs,
+} from '@/lib/repair-guard'
+import { isStorageNode } from '@/lib/nodes'
 import { fetchState } from '@/lib/maintenance-status'
 import { PAGE_POLLING } from '@/lib/polling'
 import { formatBytes } from '@/lib/format'
@@ -484,12 +496,29 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
 
   // Same gate as the cluster-wide page (and the backend): a destructive repair
   // on one node still looks parents up on the other nodes, so a disconnected
-  // peer is just as dangerous.
+  // or syncing peer is just as dangerous.
   const health = useQuery({ queryKey: ['cluster', 'health'], queryFn: getClusterHealth, ...PAGE_POLLING })
-  const guard = evaluateRepairGuard(choice.value, { state: fetchState(health), data: health.data })
+  const workers = useQuery({ queryKey: ['workers'], queryFn: listWorkers, ...PAGE_POLLING })
+  const status = useQuery({ queryKey: ['cluster', 'status'], queryFn: getClusterStatus })
+  const toInputs = (
+    h: { isPending: boolean; isError: boolean; data?: ClusterHealth },
+    w: { isPending: boolean; isError: boolean; data?: WorkersResponse },
+    st: { data?: ClusterStatus },
+  ): GuardInputs => ({
+    health: { state: fetchState(h), data: h.data },
+    workers: { state: fetchState(w), data: w.data },
+    storageNodeIds: st.data ? st.data.nodes.filter(isStorageNode).map((n) => n.id) : undefined,
+    nodeNames: new Map((st.data?.nodes ?? []).flatMap((n) => (n.hostname ? [[n.id, n.hostname] as const] : []))),
+  })
+  const guard = evaluateRepairGuard(choice.value, toInputs(health, workers, status))
 
   const repair = useMutation({
+    // The re-check is part of the mutation so its pending state covers it.
     mutationFn: async (c: RepairChoice) => {
+      await assertRepairAllowed(c.value, async () => {
+        const [h, w, st] = await Promise.all([health.refetch(), workers.refetch(), status.refetch()])
+        return toInputs(h, w, st)
+      })
       reportMulti(await launchNodeRepair(nodeId, c.value), c.label)
     },
     onError: (error) => toast.error(`修復操作に失敗しました: ${error.message}`),
@@ -538,6 +567,7 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
         </div>
         <p className="text-sm text-muted-foreground">{choice.description}</p>
         {choice.caution && <p className="text-sm text-amber-700 dark:text-amber-500">注意: {choice.caution}</p>}
+        {isDestructiveRepair(choice.value) && <p className="text-sm text-muted-foreground">{DESTRUCTIVE_REPAIR_NOTE}</p>}
         {!guard.allowed && (
           <p className="text-sm text-amber-700 dark:text-amber-500" role="status">
             実行不可: {repairGuardHint(guard)}
@@ -571,18 +601,7 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
             ? `${nodeName} で最終手段の操作を実行します。ブロックエラーページで原因を確認し、必要な purge を済ませたうえで実行してください。`
             : `${nodeName} に対してこの操作を実行します。ノードの負荷が一時的に上がる可能性があります。`
         }
-        onConfirm={async () => {
-          if (isDestructiveRepair(choice.value)) {
-            // Re-check against fresh health; the enabled button may rest on a stale snapshot.
-            const fresh = await health.refetch()
-            const g = evaluateRepairGuard(choice.value, { state: fresh.isError ? 'error' : 'success', data: fresh.data })
-            if (!g.allowed) {
-              toast.error(`実行を中止しました: ${repairGuardHint(g)}`)
-              return
-            }
-          }
-          return repair.mutateAsync(choice)
-        }}
+        onConfirm={() => repair.mutateAsync(choice)}
         isPending={repair.isPending}
         confirmLabel="実行"
         pendingLabel="実行中..."

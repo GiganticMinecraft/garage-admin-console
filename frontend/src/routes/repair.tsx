@@ -7,6 +7,7 @@ import {
   getStorageHealth,
   launchRepair,
   listBlockErrors,
+  listWorkers,
   type RepairType,
 } from '@/api'
 import {
@@ -30,7 +31,15 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
-import { evaluateRepairGuard, isDestructiveRepair, repairGuardHint } from '@/lib/repair-guard'
+import {
+  DESTRUCTIVE_REPAIR_NOTE,
+  assertRepairAllowed,
+  evaluateRepairGuard,
+  isDestructiveRepair,
+  repairGuardHint,
+  type GuardInputs,
+} from '@/lib/repair-guard'
+import { isStorageNode } from '@/lib/nodes'
 import { PAGE_POLLING } from '@/lib/polling'
 import { RefreshIndicator } from '@/components/refresh-indicator'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -169,8 +178,16 @@ function RepairPage() {
     queryFn: getStorageHealth,
     ...PAGE_POLLING,
   })
-  const refreshAll = () => Promise.all([health.refetch(), blockErrors.refetch(), storageHealth.refetch()])
-  const updatedAt = Math.max(health.dataUpdatedAt, blockErrors.dataUpdatedAt, storageHealth.dataUpdatedAt)
+  // Table sync / Merkle / insert workers: a destructive repair must not run
+  // while any storage node is still converging its tables (see repair-guard).
+  const workers = useQuery({
+    queryKey: ['workers'],
+    queryFn: listWorkers,
+    ...PAGE_POLLING,
+  })
+  const refreshAll = () =>
+    Promise.all([health.refetch(), blockErrors.refetch(), storageHealth.refetch(), workers.refetch()])
+  const updatedAt = Math.max(health.dataUpdatedAt, blockErrors.dataUpdatedAt, storageHealth.dataUpdatedAt, workers.dataUpdatedAt)
 
   // Hostnames for the per-node breakdown, and which nodes hold no blocks
   // (gateways are left out of block-level coverage); shares the dashboard's cache.
@@ -184,8 +201,35 @@ function RepairPage() {
   )
   const skip = useMemo(() => nonStorageNodeIds(status.data?.nodes), [status.data])
 
+  const storageNodeIds = useMemo(
+    () => (status.data ? status.data.nodes.filter(isStorageNode).map((n) => n.id) : undefined),
+    [status.data],
+  )
+  const guardInputs: GuardInputs = {
+    health: { state: fetchState(health), data: health.data },
+    workers: { state: fetchState(workers), data: workers.data },
+    storageNodeIds,
+    nodeNames,
+  }
+  const guardFor = (repairType: RepairType) => evaluateRepairGuard(repairType, guardInputs)
+  // Fresh inputs for the pre-launch re-check (polling pauses in background tabs).
+  const refetchGuardInputs = async (): Promise<GuardInputs> => {
+    const [h, w, st] = await Promise.all([health.refetch(), workers.refetch(), status.refetch()])
+    return {
+      health: { state: fetchState(h), data: h.data },
+      workers: { state: fetchState(w), data: w.data },
+      storageNodeIds: st.data ? st.data.nodes.filter(isStorageNode).map((n) => n.id) : undefined,
+      nodeNames,
+    }
+  }
+
   const mutation = useMutation({
-    mutationFn: (repairType: RepairType) => launchRepair(repairType),
+    // The re-check is part of the mutation so its pending state covers it:
+    // the dialog cannot be cancelled or re-submitted while it runs.
+    mutationFn: async (repairType: RepairType) => {
+      await assertRepairAllowed(repairType, refetchGuardInputs)
+      return launchRepair(repairType)
+    },
     onSuccess: (resp) => {
       showMultiResponseToast(resp, {
         action: '操作',
@@ -207,8 +251,6 @@ function RepairPage() {
   }
 
   const isClusterHealthy = health.data?.status === 'healthy'
-  const guardFor = (repairType: RepairType) =>
-    evaluateRepairGuard(repairType, { state: fetchState(health), data: health.data })
   const coverage = blockErrorsCoverage(blockErrors.data, skip)
   const blockErrorsInput = {
     state: fetchState(blockErrors),
@@ -358,8 +400,8 @@ function RepairPage() {
         <h2 className="text-lg font-semibold">修復操作</h2>
         <p className="text-sm text-muted-foreground">
           メタデータを削除扱いにする操作 (バージョン修復・ブロック参照修復・ブロック参照カウント修復・ブロック整合性検証・マルチパートアップロード修復) は、
-          全ストレージノードが稼働し全パーティションのレプリカが揃っているときだけ実行できます (サーバー側でも同じ条件で拒否します)。
-          ノード切断中に実行すると、到達できないだけの親を「存在しない」と誤判定して生きたデータを削除扱いにします。
+          全ストレージノードが稼働し、全パーティションのレプリカが揃い、テーブルの同期ワーカーが idle のときだけ実行できます (サーバー側でも同じ条件で拒否します)。
+          ノード切断中や同期中に実行すると、到達できないだけの親を「存在しない」と誤判定して生きたデータを削除扱いにします。
         </p>
         <div className="grid gap-3">
           {REPAIR_OPERATIONS.map((op) => {
@@ -397,6 +439,7 @@ function RepairPage() {
                 <div className="rounded-md bg-muted/40 p-3">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">注意</p>
                   <p className="mt-1 text-sm">{op.caution}</p>
+                  {isDestructiveRepair(op.value) && <p className="mt-1 text-sm">{DESTRUCTIVE_REPAIR_NOTE}</p>}
                 </div>
               </div>
             </div>
@@ -442,25 +485,11 @@ function RepairPage() {
           pendingSeverity === 'high'
             ? 'この操作は最終手段です。ブロックエラーページで原因を確認し、必要な purge を済ませたうえで実行してください。'
             : pendingRepairType && isDestructiveRepair(pendingRepairType)
-              ? 'この操作は親が見つからないメタデータを削除扱いにします。実行前にクラスタの状態を取り直して確認します。全ノードに対して実行し、クラスタの負荷が一時的に上がる可能性があります。'
+              ? 'この操作は親が見つからないメタデータを削除扱いにします。実行前にクラスタとワーカーの状態を取り直して確認します。全ノードに対して実行し、クラスタの負荷が一時的に上がる可能性があります。'
               : 'この操作を全ノードに対して実行します。クラスタの負荷が一時的に上がる可能性があります。'
         }
-        onConfirm={async () => {
-          if (!pendingRepairType) return
-          if (isDestructiveRepair(pendingRepairType)) {
-            // Re-check against fresh health: polling pauses in a background tab,
-            // so the snapshot the button was enabled on may be minutes old.
-            const fresh = await health.refetch()
-            const guard = evaluateRepairGuard(pendingRepairType, {
-              state: fresh.isError ? 'error' : 'success',
-              data: fresh.data,
-            })
-            if (!guard.allowed) {
-              toast.error(`実行を中止しました: ${repairGuardHint(guard)}`)
-              return
-            }
-          }
-          return mutation.mutateAsync(pendingRepairType)
+        onConfirm={() => {
+          if (pendingRepairType) return mutation.mutateAsync(pendingRepairType)
         }}
         isPending={mutation.isPending}
         confirmLabel="実行"
