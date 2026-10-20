@@ -27,11 +27,17 @@ function ItemLink({ link, children }: { link: AttentionLink; children: React.Rea
 function ItemRow({ item }: { item: AttentionItem }) {
   const danger = item.severity === 'danger'
   const Icon = danger ? CircleAlert : TriangleAlert
-  const text = <span className="min-w-0 break-words">{item.message}</span>
+  const text = (
+    <span className="min-w-0 break-words">
+      {item.message}
+      {item.hint && <span className="block text-xs text-muted-foreground">{item.hint}</span>}
+    </span>
+  )
   return (
     <li className="flex items-start gap-2 py-1.5 text-sm">
       <Icon
         className={`mt-0.5 h-4 w-4 shrink-0 ${danger ? 'text-destructive' : 'text-amber-600 dark:text-amber-400'}`}
+        role="img"
         aria-label={danger ? '危険' : '警告'}
       />
       {item.link ? (

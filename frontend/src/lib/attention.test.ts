@@ -99,7 +99,6 @@ function inputs(over: Partial<AttentionInputs> = {}): AttentionInputs {
     storageHealth: ok({ nodes: { n1: nodeHealth(), n2: nodeHealth() } }),
     corruptionIncreases: {},
     layout: ok(emptyLayout),
-    layoutHistory: ok({ currentVersion: 3, minAck: 3, versions: [], updateTrackers: null }),
     keys: ok({ items: [key('GK1')], truncated: false }),
     adminTokens: ok([token()]),
     buckets: ok({ items: [bucket('b1')], truncated: false }),
@@ -160,7 +159,7 @@ describe('collectAttentionItems', () => {
       // Role-less nodes have no detail page.
       expect.objectContaining({ id: 'node-draining:drain', severity: 'warning', link: { to: '/layout' } }),
     ])
-    expect(r.items[0].message).toContain('最終確認 10 分前')
+    expect(r.items[0].message).toContain('最終確認 10分前')
     // The down node not answering storage health is already flagged.
     expect(r.unknown).toEqual([])
   })
@@ -184,15 +183,45 @@ describe('collectAttentionItems', () => {
     expect(ids({ storageHealth: ok({ nodes: { n1: nodeHealth({ scrubCorruptions: 9 }), n2: nodeHealth() } }) })).toEqual([])
   })
 
-  it('reports up storage nodes without resync data as unknown', () => {
-    const r = collectAttentionItems(
+  it('reports storage health fan-out errors as unknown', () => {
+    const fanOut = collectAttentionItems(
       inputs({ storageHealth: ok({ nodes: { n1: nodeHealth({ resyncErrors: null }) }, statsError: 'boom' }) }),
     )
-    expect(r.items).toEqual([])
-    expect(r.unknown).toEqual(['Storage health(一部のノード)'])
+    expect(fanOut.items).toEqual([])
+    expect(fanOut.unknown).toEqual(['Storage health(一部のノード)'])
+    const perNode = collectAttentionItems(
+      inputs({ storageHealth: ok({ nodes: { n1: nodeHealth(), n2: nodeHealth({ resyncErrors: null, error: 'timeout' }) } }) }),
+    )
+    expect(perNode.unknown).toEqual(['Storage health(一部のノード)'])
   })
 
-  it('flags staged layout changes and a layout update in flight', () => {
+  it('ignores nodes present in only one of cluster status and storage health', () => {
+    // n2 just joined (not in storage health yet); n3 just left the status.
+    const r = collectAttentionItems(
+      inputs({ storageHealth: ok({ nodes: { n1: nodeHealth() } }) }),
+    )
+    expect(r).toEqual({ items: [], unknown: [], pending: false })
+    const extra = collectAttentionItems(
+      inputs({ storageHealth: ok({ nodes: { n1: nodeHealth(), n2: nodeHealth(), n3: nodeHealth({ resyncErrors: null }) } }) }),
+    )
+    expect(extra.unknown).toEqual([])
+  })
+
+  it('ignores errors of down nodes and gateways (already flagged / irrelevant)', () => {
+    const r = collectAttentionItems(
+      inputs({
+        status: ok({
+          layoutVersion: 3,
+          nodes: [node('n1', { isUp: false }), node('gw', { role: { zone: 'z', tags: [], capacity: null } })],
+        }),
+        storageHealth: ok({ nodes: { n1: nodeHealth({ error: 'down' }), gw: nodeHealth({ error: 'x' }) } }),
+      }),
+    )
+    expect(r.items.map((i) => i.id)).toEqual(['node-down:n1'])
+    expect(r.unknown).toEqual([])
+  })
+
+  it('flags staged layout changes', () => {
     const r = collectAttentionItems(
       inputs({
         layout: ok({
@@ -200,21 +229,10 @@ describe('collectAttentionItems', () => {
           stagedRoleChanges: [{ id: 'n3', remove: true }],
           stagedParameters: { zoneRedundancy: { atLeast: 2 } },
         }),
-        layoutHistory: ok({
-          currentVersion: 4,
-          minAck: 3,
-          versions: [],
-          updateTrackers: {
-            n1: { ack: 4, sync: 4, syncAck: 4 },
-            n2: { ack: 4, sync: 4, syncAck: 3 },
-            old: { ack: 3, sync: 3, syncAck: 3 },
-          },
-        }),
       }),
     )
     expect(r.items.map((i) => [i.id, i.message])).toEqual([
       ['layout-staged', 'レイアウトに未適用の変更があります(ノード 1 件、パラメータ)'],
-      ['layout-inflight', 'レイアウト v4 を適用中です(未反映のノード 2 台)'],
     ])
   })
 
@@ -261,7 +279,7 @@ describe('collectAttentionItems', () => {
     ).toEqual(['multipart:b10'])
   })
 
-  it('flags buckets where the console key lacks read or write', () => {
+  it('aggregates buckets where the console key lacks read or write into one line', () => {
     const r = collectAttentionItems(
       inputs({
         buckets: ok({
@@ -275,12 +293,21 @@ describe('collectAttentionItems', () => {
         }),
       }),
     )
-    expect(r.items.map((i) => [i.id, i.message])).toEqual([
-      ['console-key:none', expect.stringContaining('alias-none の read / write 権限がありません')],
-      ['console-key:ro', expect.stringContaining('alias-ro の write 権限がありません')],
-      ['console-key:other', expect.stringContaining('read / write')],
+    expect(r.items).toEqual([
+      {
+        id: 'console-key',
+        severity: 'warning',
+        message: expect.stringContaining('権限のないバケットが 3 件'),
+        hint: 'alias-none、alias-ro、alias-other',
+        link: { to: '/buckets' },
+      },
     ])
-    expect(r.items[0].link).toEqual({ to: '/buckets/$id', id: 'none' })
+  })
+
+  it('names only the first 5 buckets without console access', () => {
+    const items = Array.from({ length: 7 }, (_, i) => bucket(`b${i}`, { keys: [] }))
+    const [item] = collectAttentionItems(inputs({ buckets: ok({ items, truncated: false }) })).items
+    expect(item.hint).toBe('alias-b0、alias-b1、alias-b2、alias-b3、alias-b4 ほか 2 件')
   })
 
   it('skips the console key check when no console key is configured', () => {

@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useMemo } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -6,7 +6,6 @@ import {
   getClusterLayout,
   getClusterStatistics,
   getClusterStatus,
-  getLayoutHistory,
   getS3Connection,
   getStorageHealth,
   listAdminTokens,
@@ -695,12 +694,11 @@ function DashboardPage() {
   const buckets = useQuery({ queryKey: ['buckets'], queryFn: listBuckets, staleTime: LIST_STALE_MS })
   const adminTokens = useQuery({ queryKey: ['admin-tokens'], queryFn: listAdminTokens, staleTime: LIST_STALE_MS })
   const s3Connection = useQuery({ queryKey: ['s3-connection'], queryFn: getS3Connection, staleTime: Infinity })
-  // Staged changes (same cache as the layout page) and the update history
-  // (the tracker's query; polled here too in case the tracker is not mounted).
-  const layout = useQuery({ queryKey: ['cluster', 'layout'], queryFn: getClusterLayout, staleTime: LIST_STALE_MS })
-  const layoutHistory = useQuery({
-    queryKey: ['cluster', 'layout', 'history'],
-    queryFn: getLayoutHistory,
+  // Staged changes (same cache as the layout page). Polled so that changes
+  // staged by another operator show up; it is a single light request.
+  const layout = useQuery({
+    queryKey: ['cluster', 'layout'],
+    queryFn: getClusterLayout,
     ...pollEvery(STATISTICS_REFETCH_MS),
   })
 
@@ -708,24 +706,40 @@ function DashboardPage() {
   // health); the slower statistics poll does not hold it back.
   const updatedAt = Math.max(health.dataUpdatedAt, status.dataUpdatedAt, storageHealth.dataUpdatedAt)
 
-  const attention = collectAttentionItems({
-    // The latest fetch stands in for "now" (render must stay pure); it
-    // advances with the 15 s polling, which is precise enough for expirations.
-    now: Math.max(updatedAt, keys.dataUpdatedAt, adminTokens.dataUpdatedAt),
-    health,
-    status,
-    storageHealth,
-    corruptionIncreases: storageHealth.data?.increases,
-    layout,
-    layoutHistory,
-    keys,
-    adminTokens,
-    buckets,
-    s3Connection,
-  })
+  // The latest fetch stands in for "now" (render must stay pure); it
+  // advances with the 15 s polling, which is precise enough for expirations.
+  const attentionNow = Math.max(updatedAt, keys.dataUpdatedAt, adminTokens.dataUpdatedAt)
+  const attention = useMemo(
+    () =>
+      collectAttentionItems({
+        now: attentionNow,
+        health: { data: health.data, isError: health.isError },
+        status: { data: status.data, isError: status.isError },
+        storageHealth: { data: storageHealth.data, isError: storageHealth.isError },
+        corruptionIncreases: storageHealth.data?.increases,
+        layout: { data: layout.data, isError: layout.isError },
+        keys: { data: keys.data, isError: keys.isError },
+        adminTokens: { data: adminTokens.data, isError: adminTokens.isError },
+        buckets: { data: buckets.data, isError: buckets.isError },
+        s3Connection: { data: s3Connection.data, isError: s3Connection.isError },
+      }),
+    [
+      attentionNow,
+      health.data, health.isError,
+      status.data, status.isError,
+      storageHealth.data, storageHealth.isError,
+      layout.data, layout.isError,
+      keys.data, keys.isError,
+      adminTokens.data, adminTokens.isError,
+      buckets.data, buckets.isError,
+      s3Connection.data, s3Connection.isError,
+    ],
+  )
 
   // Manual refresh: everything under ['cluster'] (including the layout
-  // history behind the tracker) plus the key, bucket and admin token lists.
+  // history behind the tracker) plus the key, bucket and admin token lists
+  // and the console's S3 connection (cached forever otherwise, so a failed
+  // fetch would never recover).
   // The spinner reflects only this, not background polling.
   const queryClient = useQueryClient()
   const refreshAll = () =>
@@ -734,6 +748,7 @@ function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: ['keys'] }),
       queryClient.invalidateQueries({ queryKey: ['buckets'] }),
       queryClient.invalidateQueries({ queryKey: ['admin-tokens'], exact: true }),
+      queryClient.invalidateQueries({ queryKey: ['s3-connection'] }),
     ])
 
   // GetClusterStatus roles are the current layout's, which is all the

@@ -6,7 +6,6 @@ import type {
   ClusterNode,
   ClusterStatus,
   KeyListItem,
-  LayoutHistory,
   ListResult,
   S3Connection,
   StorageHealth,
@@ -14,6 +13,7 @@ import type {
 import { bucketDisplayLabel, bucketDisplayName } from '@/lib/bucket-name'
 import { formatCount } from '@/lib/format'
 import { isStorageNode, nodeDisplayName } from '@/lib/nodes'
+import { formatSecsAgo } from '@/lib/workers'
 
 /**
  * The part of a useQuery result the attention panel reads, so query results
@@ -35,7 +35,6 @@ export interface AttentionInputs {
   /** Corruption counter rises seen since the page was loaded, by node ID. */
   corruptionIncreases?: Record<string, { delta: number }>
   layout: AttentionSource<ClusterLayout>
-  layoutHistory: AttentionSource<LayoutHistory>
   keys: AttentionSource<ListResult<KeyListItem>>
   adminTokens: AttentionSource<AdminToken[]>
   buckets: AttentionSource<ListResult<BucketListItem>>
@@ -47,13 +46,15 @@ export type AttentionSeverity = 'danger' | 'warning'
 /** Where an item links to: a detail page (with its ID) or a list page. */
 export type AttentionLink =
   | { to: '/nodes/$id' | '/keys/$id' | '/admin-tokens/$id' | '/buckets/$id'; id: string }
-  | { to: '/blocks' | '/layout' | '/admin-tokens' }
+  | { to: '/blocks' | '/layout' | '/admin-tokens' | '/buckets' }
 
 export interface AttentionItem {
   /** Stable React key. */
   id: string
   severity: AttentionSeverity
   message: string
+  /** Secondary detail, e.g. the first few affected names. */
+  hint?: string
   link?: AttentionLink
 }
 
@@ -89,12 +90,8 @@ export function expiryAttention(
   }
 }
 
-/** Nodes of the layout update that have not switched to the current version yet. */
-function nodesBehind(h: LayoutHistory, roleIds: ReadonlySet<string>): number {
-  return Object.entries(h.updateTrackers ?? {}).filter(
-    ([id, t]) => t.ack < h.currentVersion || (roleIds.has(id) && t.syncAck < h.currentVersion),
-  ).length
-}
+/** Buckets named in the hint of the aggregated console-key item. */
+const CONSOLE_KEY_HINT_COUNT = 5
 
 function nodeLink(node: Pick<ClusterNode, 'id' | 'role'> | undefined, id: string, fallback: AttentionLink): AttentionLink {
   // Garage resolves node=<id> against the layout, so role-less nodes have no detail page.
@@ -145,7 +142,7 @@ export function collectAttentionItems(inputs: AttentionInputs): AttentionResult 
     if (!n.isUp) {
       const notes = [
         n.draining && 'draining',
-        n.lastSeenSecsAgo != null && `最終確認 ${formatCount(Math.floor(n.lastSeenSecsAgo / 60))} 分前`,
+        n.lastSeenSecsAgo != null && `最終確認 ${formatSecsAgo(n.lastSeenSecsAgo)}`,
       ].filter(Boolean)
       items.push({
         id: `node-down:${n.id}`,
@@ -185,19 +182,23 @@ export function collectAttentionItems(inputs: AttentionInputs): AttentionResult 
         })
       }
     }
-    // Storage nodes that are up but did not report: their resync errors are
-    // unknown. Down nodes are already flagged above. Without the node list,
-    // only the fan-out errors tell.
-    const silent = status
-      ? nodes.filter(isStorageNode).some((n) => {
-          const h = sh.nodes[n.id]
-          return n.isUp && (!h || h.resyncErrors == null || h.scrubCorruptions == null)
-        })
-      : Boolean(sh.statsError || sh.varsError)
+    // Unchecked = the storage-health answer's own fan-out errors. Cluster
+    // status and storage health poll independently, so a node present in only
+    // one of them (just added or back) is ignored rather than flashing as
+    // unknown; nodes known to be down or not to store data are flagged above
+    // or irrelevant.
+    const relevant = (id: string) => {
+      const n = nodeById.get(id)
+      return !status || !n || (isStorageNode(n) && n.isUp)
+    }
+    const silent =
+      Boolean(sh.statsError || sh.varsError) ||
+      Object.entries(sh.nodes).some(([id, h]) => relevant(id) && Boolean(h.error))
     if (silent) unknown.push('Storage health(一部のノード)')
   }
 
-  // 4. Layout: staged changes and an update in flight.
+  // 4. Layout: staged changes. An update in flight is shown by the layout
+  // update tracker right below the panel, so it is not repeated here.
   const layout = take(inputs.layout, 'レイアウト')
   if (layout) {
     const changes = layout.stagedRoleChanges.length
@@ -210,16 +211,6 @@ export function collectAttentionItems(inputs: AttentionInputs): AttentionResult 
         link: { to: '/layout' },
       })
     }
-  }
-  const history = take(inputs.layoutHistory, 'レイアウト更新状況')
-  if (history?.updateTrackers) {
-    const roleIds = new Set(nodes.filter((n) => n.role).map((n) => n.id))
-    items.push({
-      id: 'layout-inflight',
-      severity: 'warning',
-      message: `レイアウト v${history.currentVersion} を適用中です(未反映のノード ${nodesBehind(history, roleIds)} 台)`,
-      link: { to: '/layout' },
-    })
   }
 
   // 5. Access keys.
@@ -262,6 +253,8 @@ export function collectAttentionItems(inputs: AttentionInputs): AttentionResult 
     // An empty ID means the console has no S3 key configured: nothing to check.
     const consoleKey = conn?.accessKeyId || undefined
     let partial = false
+    // Aggregated into one line: buckets may be left ungranted on purpose.
+    const noConsoleAccess: string[] = []
     for (const b of buckets.items) {
       const name = bucketDisplayLabel(bucketDisplayName(b.id, b.globalAliases, b.localAliases.map((a) => a.alias)))
       const link: AttentionLink = { to: '/buckets/$id', id: b.id }
@@ -280,15 +273,18 @@ export function collectAttentionItems(inputs: AttentionInputs): AttentionResult 
         continue
       }
       const perm = b.keys.find((k) => k.accessKeyId === consoleKey)
-      const missing = [!perm?.read && 'read', !perm?.write && 'write'].filter(Boolean)
-      if (missing.length > 0) {
-        items.push({
-          id: `console-key:${b.id}`,
-          severity: 'warning',
-          message: `コンソールの S3 キーにバケット ${name} の ${missing.join(' / ')} 権限がありません(オブジェクトを閲覧・操作できません)`,
-          link,
-        })
-      }
+      if (!perm?.read || !perm.write) noConsoleAccess.push(name)
+    }
+    if (noConsoleAccess.length > 0) {
+      const head = noConsoleAccess.slice(0, CONSOLE_KEY_HINT_COUNT).join('、')
+      const rest = noConsoleAccess.length - CONSOLE_KEY_HINT_COUNT
+      items.push({
+        id: 'console-key',
+        severity: 'warning',
+        message: `コンソールの S3 キーに read / write 権限のないバケットが ${formatCount(noConsoleAccess.length)} 件あります(オブジェクトブラウザで閲覧・操作できません)`,
+        hint: rest > 0 ? `${head} ほか ${formatCount(rest)} 件` : head,
+        link: { to: '/buckets' },
+      })
     }
     if (partial) unknown.push('バケット(一部の詳細)')
   }
