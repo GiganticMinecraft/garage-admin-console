@@ -344,3 +344,115 @@ func TestAuthMiddleware_SlidingSession(t *testing.T) {
 		}
 	})
 }
+
+// garbageCookieRequest builds a request whose session cookie does not decode
+// with the current key (as after a SESSION_SECRET rotation).
+func garbageCookieRequest(method, target string) *http.Request {
+	req := httptest.NewRequest(method, target, nil)
+	other := sessions.NewCookieStore([]byte("another-secret-that-is-32-bytes!"), []byte("another-secret-that-is-32-bytes!"))
+	sess, _ := other.New(req, sessionName)
+	sess.Values[sessionKeyUser] = "testuser"
+	rec := httptest.NewRecorder()
+	sess.Save(req, rec)
+	for _, c := range rec.Result().Cookies() {
+		req.AddCookie(c)
+	}
+	return req
+}
+
+func TestUndecodableCookie(t *testing.T) {
+	router, store := setupTestRouter(t, "http://127.0.0.1:1")
+
+	t.Run("login continues with a fresh session", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, garbageCookieRequest(http.MethodGet, "/api/auth/login?next=%2Fbuckets"))
+		if rec.Code != http.StatusFound {
+			t.Fatalf("status = %d, want 302", rec.Code)
+		}
+		sess := decodeSession(t, store, rec)
+		if got, _ := sess.Values[sessionKeyNext].(string); got != "/buckets" {
+			t.Errorf("next = %q", got)
+		}
+		if _, ok := sess.Values[sessionKeyUser]; ok {
+			t.Error("fresh session carries a user")
+		}
+	})
+
+	t.Run("callback rejects by state, not 500", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, garbageCookieRequest(http.MethodGet, "/api/auth/callback?state=x&code=y"))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", rec.Code)
+		}
+	})
+
+	t.Run("protected route clears the cookie and is 401", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, garbageCookieRequest(http.MethodGet, "/api/auth/me"))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", rec.Code)
+		}
+		if c := sessionCookie(rec); c == nil || c.MaxAge >= 0 {
+			t.Errorf("cookie not cleared: %v", c)
+		}
+	})
+}
+
+func TestAuthMiddleware_IdleTimeout(t *testing.T) {
+	router, store := setupTestRouter(t, "http://127.0.0.1:1")
+	loginAt := time.Date(2026, 10, 20, 2, 0, 0, 0, time.UTC)
+	clock := setClock(t, loginAt)
+	maxIdle := time.Duration(store.Options.MaxAge) * time.Second
+
+	*clock = loginAt.Add(maxIdle)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, sessionRequest(t, store, "/api/auth/me", loginAt, loginAt))
+	if rec.Code != http.StatusOK {
+		t.Errorf("idle == MaxAge: status = %d, want 200", rec.Code)
+	}
+
+	*clock = loginAt.Add(maxIdle + time.Second)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, sessionRequest(t, store, "/api/auth/me", loginAt, loginAt))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("idle > MaxAge: status = %d, want 401", rec.Code)
+	}
+	if c := sessionCookie(rec); c == nil || c.MaxAge >= 0 {
+		t.Errorf("idle session cookie not cleared: %v", c)
+	}
+}
+
+// TestAuthMiddleware_RefreshYieldsToHandlerCookie checks that the refresh
+// happens when the response goes out and never overrides a session cookie
+// the handler set (logout expiring it), and that a handler writing nothing
+// still gets the refresh.
+func TestAuthMiddleware_RefreshYieldsToHandlerCookie(t *testing.T) {
+	_, store := setupTestRouter(t, "http://127.0.0.1:1")
+	loginAt := time.Date(2026, 10, 20, 2, 0, 0, 0, time.UTC)
+	setClock(t, loginAt.Add(30*time.Minute))
+
+	expiring := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sess, _ := sessionStore.Get(r, sessionName)
+		sess.Options.MaxAge = -1
+		sess.Save(r, w)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	rec := httptest.NewRecorder()
+	expiring.ServeHTTP(rec, sessionRequest(t, store, "/api/anything", loginAt, loginAt))
+	var cookies []*http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionName {
+			cookies = append(cookies, c)
+		}
+	}
+	if len(cookies) != 1 || cookies[0].MaxAge >= 0 {
+		t.Errorf("want only the expiring cookie, got %v", cookies)
+	}
+
+	silent := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	rec = httptest.NewRecorder()
+	silent.ServeHTTP(rec, sessionRequest(t, store, "/api/anything", loginAt, loginAt))
+	if c := sessionCookie(rec); c == nil || c.MaxAge != 3600 {
+		t.Errorf("silent handler: refresh cookie = %v", c)
+	}
+}

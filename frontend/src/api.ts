@@ -11,7 +11,6 @@ let redirectingToLogin = false
 function redirectToLogin(): void {
   if (redirectingToLogin) return
   const { pathname, search } = window.location
-  if (pathname.startsWith(`${BASE}/auth/`)) return
   redirectingToLogin = true
   window.location.href = loginUrlFor(pathname, search, BASE)
 }
