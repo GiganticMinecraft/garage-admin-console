@@ -119,13 +119,16 @@ describe('isNoteworthyWorker', () => {
     expect(isNoteworthyWorker(finishedRepair)).toBe(false)
   })
 
-  it('still flags a done worker that is failing', () => {
-    expect(isNoteworthyWorker(worker({ state: 'done', errors: 1, consecutiveErrors: 1 }))).toBe(true)
+  it('ignores a done worker whatever its last snapshot says', () => {
+    expect(isNoteworthyWorker(worker({ state: 'done', queueLength: 12 }))).toBe(false)
+    // Unreachable on Garage v2.4.1 (Done resets consecutive_errors) but
+    // representable in the API type: done wins over the error check.
+    expect(isNoteworthyWorker(worker({ state: 'done', errors: 1, consecutiveErrors: 1 }))).toBe(false)
   })
 
-  it('ignores an empty queue, zero persistent errors, empty progress and done', () => {
+  it('ignores an idle worker with an empty queue, zero persistent errors and empty progress', () => {
     expect(
-      isNoteworthyWorker(worker({ queueLength: 0, persistentErrors: 0, progress: '', state: 'done' })),
+      isNoteworthyWorker(worker({ queueLength: 0, persistentErrors: 0, progress: '', state: 'idle' })),
     ).toBe(false)
   })
 })

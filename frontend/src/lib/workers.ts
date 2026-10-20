@@ -48,14 +48,18 @@ export function isDisabledWorker(w: Worker): boolean {
  * persisted all-time total that is never reset, so an idle scrub worker would
  * stay listed forever after a single corruption was found.
  * A `done` worker is finished, so its leftover progress line (repair workers
- * keep e.g. "705705 (553)" after completion) does not count as running either;
- * only consecutive errors keep a done worker listed.
+ * keep e.g. "705705 (553)" after completion) or queue length does not count
+ * as running either.
  */
 export function isNoteworthyWorker(w: Worker): boolean {
-  if (w.consecutiveErrors > 0) return true
   const { kind } = describeState(w.state)
+  // A done worker is finished: in Garage v2.4.1 (src/util/background/worker.rs,
+  // WorkerHandler::step) Done is only reached through an Ok result, which
+  // resets consecutive_errors, and the progress / queue it keeps reporting is
+  // its last snapshot, not activity.
   if (kind === 'done') return false
   return (
+    w.consecutiveErrors > 0 ||
     kind === 'busy' ||
     kind === 'throttled' ||
     (w.queueLength != null && w.queueLength > 0) ||
@@ -69,6 +73,10 @@ export function isNoteworthyWorker(w: Worker): boolean {
  * count of corrupted blocks found by scrubs, so it gets the same wording as
  * the dashboard's Storage health. Any other worker keeps the generic label.
  */
+/** What the 「稼働中 / エラー継続中のみ」 filter keeps; shown next to the checkbox. */
+export const NOTEWORTHY_FILTER_HELP =
+  'busy / throttled・キュー残あり・進捗ありのワーカーと、連続エラー中のワーカーだけを表示します。回復済みの過去のエラー、累積の破損検出数、完了済み (done) のワーカーは対象外です。'
+
 export function persistentErrorsLabel(w: Pick<Worker, 'name'>): string {
   return w.name.toLowerCase().includes('scrub') ? '破損検出数 (累積)' : '永続エラー'
 }

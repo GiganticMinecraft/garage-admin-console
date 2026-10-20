@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { getClusterStatus, listWorkers, type Worker } from '@/api'
 import {
   DEFAULT_WORKER_FILTER,
+  NOTEWORTHY_FILTER_HELP,
   describeState,
   filterAndSortWorkers,
   formatSecsAgo,
@@ -145,11 +146,7 @@ function WorkersPage() {
             checked={filter.onlyNoteworthy}
             onCheckedChange={(c) => update({ onlyNoteworthy: c === true })}
           />
-          <label
-            htmlFor="workers-only-noteworthy"
-            className="text-sm"
-            title="busy / throttled・キュー残あり・進捗ありの稼働中ワーカーと、連続エラー中のワーカーだけを表示します。回復済みの過去のエラーや累積の破損検出数、完了済み (done) のワーカーは対象外です"
-          >
+          <label htmlFor="workers-only-noteworthy" className="text-sm">
             稼働中 / エラー継続中のみ
           </label>
         </div>
@@ -169,6 +166,7 @@ function WorkersPage() {
           </span>
         )}
       </div>
+      {filter.onlyNoteworthy && <p className="text-xs text-muted-foreground">{NOTEWORTHY_FILTER_HELP}</p>}
 
       {isLoading ? (
         <p className="text-muted-foreground">読み込み中...</p>
