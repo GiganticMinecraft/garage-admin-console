@@ -40,18 +40,22 @@ export function isDisabledWorker(w: Worker): boolean {
 
 /**
  * true when the worker needs a look right now: failing (consecutive errors),
- * an active state, a non-empty queue or reported progress.
+ * or still running (busy / throttled, a non-empty queue, or reported progress).
  * The cumulative `errors` / `lastError` are not counted: Garage never resets
  * them, so a worker that recovered long ago would stay listed forever.
  * `persistentErrors` is not counted either: in Garage v2.4.1 the block scrub
  * worker reports `corruptions_detected` there (src/block/repair.rs), a
  * persisted all-time total that is never reset, so an idle scrub worker would
  * stay listed forever after a single corruption was found.
+ * A `done` worker is finished, so its leftover progress line (repair workers
+ * keep e.g. "705705 (553)" after completion) does not count as running either;
+ * only consecutive errors keep a done worker listed.
  */
 export function isNoteworthyWorker(w: Worker): boolean {
+  if (w.consecutiveErrors > 0) return true
   const { kind } = describeState(w.state)
+  if (kind === 'done') return false
   return (
-    w.consecutiveErrors > 0 ||
     kind === 'busy' ||
     kind === 'throttled' ||
     (w.queueLength != null && w.queueLength > 0) ||
