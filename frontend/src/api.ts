@@ -551,6 +551,21 @@ export async function createKey(body: KeySettingsRequest): Promise<KeyDetail> {
   })
 }
 
+/**
+ * Imports an existing access key / secret pair (Garage ImportKey). The
+ * response is the key's info without the secret.
+ */
+export async function importKey(body: {
+  accessKeyId: string
+  secretAccessKey: string
+  name: string | null
+}): Promise<KeyDetail> {
+  return fetchJSON('/keys/import', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function updateKey(id: string, body: KeySettingsRequest): Promise<KeyDetail> {
   return fetchJSON(`/keys/${id}`, {
     method: 'PUT',

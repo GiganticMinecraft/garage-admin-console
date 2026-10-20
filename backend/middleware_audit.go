@@ -86,6 +86,7 @@ var auditExtractors = []struct {
 	{http.MethodPost, regexp.MustCompile(`^/api/cluster/layout/skip-dead-nodes$`), extractLayoutVersion},
 	{http.MethodPost, regexp.MustCompile(`^/api/buckets/[^/]+/cleanup-uploads$`), extractOlderThanSecs},
 	{http.MethodPut, regexp.MustCompile(`^/api/buckets/[^/]+/keys/[^/]+$`), extractPermissions},
+	{http.MethodPost, regexp.MustCompile(`^/api/keys/import$`), extractImportedKeyID},
 }
 
 // auditResponseDetail lists routes whose detail comes from the response
@@ -344,6 +345,22 @@ func extractPermissions(body []byte, complete bool) map[string]any {
 		return nil
 	}
 	return map[string]any{"read": p.Read, "write": p.Write, "owner": p.Owner}
+}
+
+// extractImportedKeyID returns {"accessKeyId": ...} for the POST
+// /api/keys/import body, so the audit line says which key was imported (the
+// route has no {id}). The secretAccessKey in the same body is never decoded.
+func extractImportedKeyID(body []byte, complete bool) map[string]any {
+	if !complete {
+		return nil
+	}
+	var req struct {
+		AccessKeyID string `json:"accessKeyId"`
+	}
+	if json.Unmarshal(body, &req) != nil || req.AccessKeyID == "" {
+		return nil
+	}
+	return map[string]any{"accessKeyId": truncateUTF8(req.AccessKeyID, auditMaxValueBytes)}
 }
 
 // cappedBuffer keeps the first max bytes written to it and remembers whether
