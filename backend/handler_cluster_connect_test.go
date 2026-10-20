@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -108,6 +109,42 @@ func TestConnectNodesUpstreamProblems(t *testing.T) {
 				t.Fatalf("status = %d body = %s, want %d containing %q", rec.Code, rec.Body.String(), tc.wantStatus, tc.wantBody)
 			}
 		})
+	}
+}
+
+// A slow ConnectClusterNodes (Garage waits for every peer attempt) must not
+// be cut off by the client's general timeout, only by connectNodesTimeout.
+func TestConnectNodesUsesItsOwnDeadline(t *testing.T) {
+	garage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"success":true,"error":null},{"success":false,"error":"timeout"}]`))
+	}))
+	defer garage.Close()
+	admin := &GarageAdminClient{baseURL: garage.URL, token: "t", httpClient: &http.Client{Timeout: 50 * time.Millisecond}}
+	body := fmt.Sprintf(`{"nodes":[%q,%q]}`, peerA, peerB)
+	call := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		handleConnectNodes(admin)(rec, httptest.NewRequest(http.MethodPost, "/api/cluster/connect", strings.NewReader(body)))
+		return rec
+	}
+
+	if rec := call(); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"error":"timeout"`) {
+		t.Fatalf("slow answer within the connect deadline: status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if admin.httpClient.Timeout != 50*time.Millisecond {
+		t.Fatal("handler changed the shared client's timeout")
+	}
+
+	old := connectNodesTimeout
+	connectNodesTimeout = 50 * time.Millisecond
+	defer func() { connectNodesTimeout = old }()
+	if rec := call(); rec.Code != http.StatusBadGateway {
+		t.Fatalf("answer past the connect deadline: status = %d body = %s, want 502", rec.Code, rec.Body.String())
 	}
 }
 

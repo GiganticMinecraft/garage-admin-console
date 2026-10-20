@@ -59,3 +59,12 @@ func (c *GarageAdminClient) doRequest(ctx context.Context, method, path string, 
 	}
 	return c.httpClient.Do(req)
 }
+
+// withoutClientTimeout returns a copy of the client whose requests are not
+// cut off by http.Client.Timeout. Use it only for calls that bound
+// themselves with a context deadline instead.
+func (c *GarageAdminClient) withoutClientTimeout() *GarageAdminClient {
+	hc := *c.httpClient
+	hc.Timeout = 0
+	return &GarageAdminClient{baseURL: c.baseURL, token: c.token, httpClient: &hc}
+}

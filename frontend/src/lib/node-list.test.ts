@@ -6,7 +6,6 @@ import {
   connectOutcome,
   groupNodes,
   lastSeenLabel,
-  nodeRoleKind,
   pairConnectResults,
   parseConnectInput,
 } from './node-list'
@@ -25,15 +24,6 @@ const n = (id: string, over: Partial<ClusterNode> = {}): ClusterNode => ({
 
 const gateway = { zone: 'dc1', tags: [], capacity: null }
 const hex = (c: string) => c.repeat(64)
-
-describe('nodeRoleKind', () => {
-  it('distinguishes storage, gateway, draining and unassigned', () => {
-    expect(nodeRoleKind(n('s'))).toBe('storage')
-    expect(nodeRoleKind(n('g', { role: gateway }))).toBe('gateway')
-    expect(nodeRoleKind(n('d', { role: null, draining: true }))).toBe('draining')
-    expect(nodeRoleKind(n('u', { role: null }))).toBe('unassigned')
-  })
-})
 
 describe('groupNodes', () => {
   const nodes = [

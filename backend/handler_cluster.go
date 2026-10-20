@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"time"
 )
 
 // proxyGarageGET is a helper that proxies a GET request to the Garage Admin API
@@ -114,6 +116,12 @@ func handleClusterStatistics(garageAdmin *GarageAdminClient) http.HandlerFunc {
 	return proxyGarageGET(garageAdmin, "/v2/GetClusterStatistics")
 }
 
+// connectNodesTimeout bounds one ConnectClusterNodes call. Garage tries the
+// peers itself and answers only once every attempt has finished, so one
+// unreachable peer can take longer than the client's usual 10 s timeout;
+// cutting it off would also lose the results of the peers that connected.
+var connectNodesTimeout = 60 * time.Second
+
 // maxConnectNodes caps how many peers one connect request may name.
 const maxConnectNodes = 10
 
@@ -161,8 +169,10 @@ func validateConnectNodes(nodes []string) string {
 // {success, error} entry per peer in request order; that array is returned
 // in the same order so the UI can show each line's result. An answer whose
 // length differs from the request cannot be matched to the peers and
-// becomes a 502. A non-200 answer from Garage is forwarded as-is.
+// becomes a 502. A non-200 answer from Garage is forwarded as-is. The call is
+// bounded by connectNodesTimeout instead of the client's own timeout.
 func handleConnectNodes(garageAdmin *GarageAdminClient) http.HandlerFunc {
+	client := garageAdmin.withoutClientTimeout()
 	return func(w http.ResponseWriter, r *http.Request) {
 		data, ok := readRequestBody(w, r, maxConnectBodyBytes)
 		if !ok {
@@ -184,7 +194,9 @@ func handleConnectNodes(garageAdmin *GarageAdminClient) http.HandlerFunc {
 		}
 
 		const garagePath = "/v2/ConnectClusterNodes"
-		resp, err := garageAdmin.doRequest(r.Context(), http.MethodPost, garagePath, bytes.NewReader(body))
+		ctx, cancel := context.WithTimeout(r.Context(), connectNodesTimeout)
+		defer cancel()
+		resp, err := client.doRequest(ctx, http.MethodPost, garagePath, bytes.NewReader(body))
 		if err != nil {
 			slog.ErrorContext(r.Context(), "garage request failed", "path", garagePath, "error", err)
 			http.Error(w, "Bad Gateway", http.StatusBadGateway)
@@ -213,7 +225,7 @@ func handleConnectNodes(garageAdmin *GarageAdminClient) http.HandlerFunc {
 				if res.Error != nil {
 					msg = *res.Error
 				}
-				slog.WarnContext(r.Context(), "ConnectClusterNodes failed for peer", "index", i, "error", msg)
+				slog.WarnContext(r.Context(), "ConnectClusterNodes failed for peer", "index", i, "peer", req.Nodes[i], "error", msg)
 			}
 		}
 		writeJSON(w, results)

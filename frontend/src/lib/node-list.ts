@@ -1,26 +1,15 @@
 import type { ClusterNode, ConnectNodeResult } from '@/api'
 import { formatSecsAgo } from '@/lib/workers'
+import { nodeDisplayName, nodeRoleKind, type NodeRoleKind } from '@/lib/nodes'
 
 // ---------------------------------------------------------------------------
 // Roles
-
-/**
- * What a node does in the current layout. `draining` is a node removed from
- * the layout that still holds data (Garage only reports it with role null);
- * `unassigned` has no role and holds nothing.
- */
-export type NodeRoleKind = 'storage' | 'gateway' | 'draining' | 'unassigned'
 
 export const ROLE_LABELS: Record<NodeRoleKind, string> = {
   storage: 'ストレージ',
   gateway: 'ゲートウェイ',
   draining: 'draining',
   unassigned: '未割り当て',
-}
-
-export function nodeRoleKind(node: Pick<ClusterNode, 'role' | 'draining'>): NodeRoleKind {
-  if (node.role) return node.role.capacity != null ? 'storage' : 'gateway'
-  return node.draining ? 'draining' : 'unassigned'
 }
 
 // ---------------------------------------------------------------------------
@@ -48,15 +37,10 @@ export const NO_ZONE_LABEL = 'ゾーン未割り当て'
 
 const ROLE_ORDER: NodeRoleKind[] = ['storage', 'gateway', 'draining', 'unassigned']
 
-/** Sort key of a node inside a group: hostname when known, else the full ID. */
-function nodeSortName(node: ClusterNode): string {
-  return node.hostname || node.id
-}
-
-/** Orders nodes by hostname (natural order, so garage-2 < garage-10), then ID. */
+/** Orders nodes by display name (natural order, so garage-2 < garage-10), then full ID. */
 export function compareNodes(a: ClusterNode, b: ClusterNode): number {
   return (
-    nodeSortName(a).localeCompare(nodeSortName(b), 'ja', { numeric: true }) ||
+    nodeDisplayName(a).localeCompare(nodeDisplayName(b), 'ja', { numeric: true }) ||
     a.id.localeCompare(b.id)
   )
 }

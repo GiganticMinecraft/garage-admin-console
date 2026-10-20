@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { useMemo, useRef, useState, type MouseEvent } from 'react'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircleCheck, CircleX, Plus } from 'lucide-react'
 import {
@@ -15,12 +15,12 @@ import {
   connectOutcome,
   groupNodes,
   lastSeenLabel,
-  nodeRoleKind,
   pairConnectResults,
   parseConnectInput,
   type ConnectResultRow,
   type NodeGroupBy,
 } from '@/lib/node-list'
+import { nodeDisplayName, nodeRoleKind } from '@/lib/nodes'
 import { formatUsage, shortId, usagePercent } from '@/lib/format'
 import { pollEvery } from '@/lib/polling'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
@@ -92,16 +92,24 @@ function RoleBadge({ node }: { node: ClusterNode }) {
 }
 
 /**
- * One node. The whole card links to the node page through the name link's
- * ::after overlay, so the copy button can sit above it without nesting a
- * button inside a link.
+ * One node. The name is the real (keyboard-reachable) link to the node page;
+ * a click anywhere else on the card opens it too, except on buttons/links and
+ * when the click ends a text selection, so the address can still be selected
+ * and badge titles still show on hover.
  */
 function NodeCard({ node }: { node: ClusterNode }) {
+  const navigate = useNavigate()
   const kind = nodeRoleKind(node)
   const lastSeen = lastSeenLabel(node)
+  const openNode = (e: MouseEvent<HTMLDivElement>) => {
+    if (e.target instanceof Element && e.target.closest('a, button')) return
+    if (window.getSelection()?.toString()) return
+    navigate({ to: '/nodes/$id', params: { id: node.id } })
+  }
   return (
     <div
-      className={`relative space-y-3 rounded-lg border p-4 transition-colors hover:bg-muted/40 ${
+      onClick={openNode}
+      className={`cursor-pointer space-y-3 rounded-lg border p-4 transition-colors hover:bg-muted/40 ${
         node.isUp ? '' : 'border-red-500/40'
       }`}
     >
@@ -115,13 +123,13 @@ function NodeCard({ node }: { node: ClusterNode }) {
           <Link
             to="/nodes/$id"
             params={{ id: node.id }}
-            className="block truncate font-semibold after:absolute after:inset-0 after:rounded-lg after:content-['']"
+            className="block truncate font-semibold hover:underline"
           >
-            {node.hostname || shortId(node.id)}
+            {nodeDisplayName(node)}
           </Link>
           <div className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
             {shortId(node.id)}
-            <CopyButton value={node.id} label="ノード ID をコピー" className="relative z-10" />
+            <CopyButton value={node.id} label="ノード ID をコピー" />
           </div>
         </div>
         <RoleBadge node={node} />
@@ -129,7 +137,16 @@ function NodeCard({ node }: { node: ClusterNode }) {
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted-foreground">アドレス</dt>
-        <dd className="truncate font-mono">{node.addr ?? '不明'}</dd>
+        <dd className="flex min-w-0 items-center gap-1">
+          {node.addr ? (
+            <>
+              <span className="truncate font-mono" title={node.addr}>{node.addr}</span>
+              <CopyButton value={node.addr} label="アドレスをコピー" />
+            </>
+          ) : (
+            <span className="text-muted-foreground">不明</span>
+          )}
+        </dd>
         <dt className="text-muted-foreground">ゾーン</dt>
         <dd>{node.role?.zone ?? <span className="text-muted-foreground">なし</span>}</dd>
         <dt className="text-muted-foreground">タグ</dt>
@@ -199,20 +216,27 @@ function ConnectNodesDialog({ open, onOpenChange }: { open: boolean; onOpenChang
   const [text, setText] = useState('')
   const [rows, setRows] = useState<ConnectResultRow[] | null>(null)
   const parsed = useMemo(() => parseConnectInput(text), [text])
+  // Bumped whenever the dialog closes; a request answered after that belongs
+  // to a previous session and must not write its results into this one.
+  const session = useRef(0)
 
   const connect = useMutation({
     mutationFn: (peers: string[]) => connectClusterNodes(peers),
-    onSuccess: (results, peers) => {
-      const paired = pairConnectResults(peers, results)
-      setRows(paired)
-      if (paired.some((r) => r.success)) {
+    onSuccess: (results) => {
+      if (results.some((r) => r.success)) {
         queryClient.invalidateQueries({ queryKey: ['cluster', 'status'] })
       }
     },
   })
+  const pending = connect.isPending
 
+  // While a request is in flight the dialog cannot be closed (button, ESC,
+  // overlay and the X all come through here) and the input is locked, so the
+  // results shown always belong to the text above them.
   const handleOpenChange = (next: boolean) => {
+    if (!next && pending) return
     if (!next) {
+      session.current++
       setText('')
       setRows(null)
       connect.reset()
@@ -220,7 +244,18 @@ function ConnectNodesDialog({ open, onOpenChange }: { open: boolean; onOpenChang
     onOpenChange(next)
   }
 
-  const canSubmit = parsed.peers.length > 0 && parsed.errors.length === 0 && !connect.isPending
+  const submit = () => {
+    const peers = parsed.peers
+    const current = session.current
+    setRows(null)
+    connect.mutate(peers, {
+      onSuccess: (results) => {
+        if (session.current === current) setRows(pairConnectResults(peers, results))
+      },
+    })
+  }
+
+  const canSubmit = parsed.peers.length > 0 && parsed.errors.length === 0 && !pending
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -238,15 +273,13 @@ function ConnectNodesDialog({ open, onOpenChange }: { open: boolean; onOpenChang
           className="min-w-0 space-y-3"
           onSubmit={(e) => {
             e.preventDefault()
-            if (canSubmit) {
-              setRows(null)
-              connect.mutate(parsed.peers)
-            }
+            if (canSubmit) submit()
           }}
         >
           <textarea
             aria-label="接続するノード"
             value={text}
+            disabled={pending}
             onChange={(e) => {
               setText(e.target.value)
               setRows(null)
@@ -254,7 +287,7 @@ function ConnectNodesDialog({ open, onOpenChange }: { open: boolean; onOpenChang
             }}
             spellCheck={false}
             placeholder="563e1ac825ee3323aa441e72c26d1030d6d4414aeb3dd25287c531e7fc2bc95d@[fc00:1::1]:3901"
-            className={TEXTAREA_CLASS}
+            className={`${TEXTAREA_CLASS} disabled:opacity-60`}
             aria-invalid={parsed.errors.length > 0}
           />
           {parsed.errors.length > 0 && (
@@ -272,11 +305,11 @@ function ConnectNodesDialog({ open, onOpenChange }: { open: boolean; onOpenChang
           {rows && <ConnectResults rows={rows} />}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={pending}>
               閉じる
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {connect.isPending ? '接続中...' : '接続'}
+              {pending ? '接続中...' : '接続'}
             </Button>
           </DialogFooter>
         </form>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClusterNode } from '@/api'
-import { isStorageNode, nonStorageNodeIds } from './nodes'
+import { isStorageNode, nodeRoleKind, nonStorageNodeIds } from './nodes'
 
 const n = (id: string, over: Partial<ClusterNode> = {}): ClusterNode => ({
   id,
@@ -20,6 +20,15 @@ describe('isStorageNode', () => {
     expect(isStorageNode(n('d', { role: null, draining: true }))).toBe(true)
     expect(isStorageNode(n('g', { role: { zone: 'z', tags: [], capacity: null } }))).toBe(false)
     expect(isStorageNode(n('r', { role: null }))).toBe(false)
+  })
+})
+
+describe('nodeRoleKind', () => {
+  it('distinguishes storage, gateway, draining and unassigned', () => {
+    expect(nodeRoleKind(n('s'))).toBe('storage')
+    expect(nodeRoleKind(n('g', { role: { zone: 'z', tags: [], capacity: null } }))).toBe('gateway')
+    expect(nodeRoleKind(n('d', { role: null, draining: true }))).toBe('draining')
+    expect(nodeRoleKind(n('u', { role: null }))).toBe('unassigned')
   })
 })
 
