@@ -1,4 +1,5 @@
 import type { BucketRoutingRule } from '@/api'
+import { parseRulesJson } from './rules-json'
 
 /**
  * Validation for the website routing rules editor (Garage >= v2.3,
@@ -7,9 +8,6 @@ import type { BucketRoutingRule } from '@/api'
  * so the console reports problems per rule before Garage rejects the whole
  * request with a single "Bad XML: ..." message.
  */
-
-/** Garage rejects more rules than this (WebsiteConfiguration::validate). */
-export const MAX_ROUTING_RULES = 1000
 
 /** HttpRedirectCode values Garage accepts: redirects, plus 200 / 404 rewrites. */
 export const REDIRECT_CODES = [301, 302, 303, 307, 308] as const
@@ -96,8 +94,9 @@ function validateRule(rule: unknown, prefix: string): string[] {
 
   if (present(redirect, 'HttpRedirectCode')) {
     const code = redirect.HttpRedirectCode
-    const hasHost = present(redirect, 'HostName')
-    const hasProtocol = present(redirect, 'Protocol')
+    // Type errors on these fields are reported above; only count well-typed ones.
+    const hasHost = typeof redirect.HostName === 'string'
+    const hasProtocol = typeof redirect.Protocol === 'string'
     if ((REDIRECT_CODES as readonly unknown[]).includes(code)) {
       if (hasProtocol && !hasHost) {
         errors.push(`${prefix}: Redirect.Protocol を指定する場合は HostName も指定してください`)
@@ -120,21 +119,13 @@ function validateRule(rule: unknown, prefix: string): string[] {
 /**
  * Parses the routing rules textarea. Blank text means "no rules" ([]).
  * Returns every problem found, one message per line, so the user can fix
- * them all at once.
+ * them all at once. Garage's admin UpdateBucket checks each rule but sets no
+ * limit on their number (that limit is only on the S3 PutBucketWebsite path),
+ * so the console does not limit it either.
  */
 export function parseRoutingRules(text: string): RoutingRulesParseResult {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text.trim() === '' ? '[]' : text)
-  } catch (e) {
-    return { errors: [`JSON の構文エラー: ${e instanceof Error ? e.message : String(e)}`] }
-  }
-  if (!Array.isArray(parsed)) return { errors: ['ルーティングルールは JSON 配列 ([...]) で指定してください'] }
-
-  const errors: string[] = []
-  if (parsed.length > MAX_ROUTING_RULES) {
-    errors.push(`ルーティングルールは ${MAX_ROUTING_RULES} 件までです (現在 ${parsed.length} 件)`)
-  }
-  parsed.forEach((rule, i) => errors.push(...validateRule(rule, `${i + 1} 番目のルール`)))
-  return errors.length > 0 ? { errors } : { rules: parsed as BucketRoutingRule[] }
+  const parsed = parseRulesJson(text)
+  if ('error' in parsed) return { errors: [parsed.error] }
+  const errors = parsed.rules.flatMap((rule, i) => validateRule(rule, `${i + 1} 番目のルール`))
+  return errors.length > 0 ? { errors } : { rules: parsed.rules as unknown as BucketRoutingRule[] }
 }

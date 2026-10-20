@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_ROUTING_RULES, ROUTING_RULES_EXAMPLE, parseRoutingRules } from './website-routing-rules'
+import { ROUTING_RULES_EXAMPLE, parseRoutingRules } from './website-routing-rules'
 
 function errorsOf(value: unknown): string[] {
   const r = parseRoutingRules(JSON.stringify(value))
@@ -36,15 +36,14 @@ describe('parseRoutingRules', () => {
   })
 
   it('requires an array', () => {
-    expect(errorsOf({ Redirect: {} })).toEqual(['ルーティングルールは JSON 配列 ([...]) で指定してください'])
+    expect(errorsOf({ Redirect: {} })).toEqual(['ルールは JSON 配列 ([...]) で指定してください'])
   })
 
   it('requires each element to be an object with Redirect', () => {
-    expect(errorsOf([1, null, {}, { Redirect: 'x' }])).toEqual([
-      '1 番目のルール: オブジェクトではありません',
-      '2 番目のルール: オブジェクトではありません',
-      '3 番目のルール: Redirect は必須です',
-      '4 番目のルール: Redirect はオブジェクトで指定してください',
+    expect(errorsOf([{ Redirect: {} }, null])).toEqual(['2 番目の要素がオブジェクトではありません'])
+    expect(errorsOf([{}, { Redirect: 'x' }])).toEqual([
+      '1 番目のルール: Redirect は必須です',
+      '2 番目のルール: Redirect はオブジェクトで指定してください',
     ])
   })
 
@@ -119,8 +118,17 @@ describe('parseRoutingRules', () => {
     ])
   })
 
-  it('limits the number of rules', () => {
-    const rules = Array.from({ length: MAX_ROUTING_RULES + 1 }, () => ({ Redirect: {} }))
-    expect(errorsOf(rules)).toEqual([`ルーティングルールは ${MAX_ROUTING_RULES} 件までです (現在 ${MAX_ROUTING_RULES + 1} 件)`])
+  it('does not limit the number of rules (the admin API has no limit)', () => {
+    const rules = Array.from({ length: 1001 }, () => ({ Redirect: {} }))
+    expect(errorsOf(rules)).toEqual([])
+  })
+
+  it('reports a mistyped HostName / Protocol only once', () => {
+    expect(errorsOf([{ Redirect: { Protocol: 1, HttpRedirectCode: 301 } }])).toEqual([
+      '1 番目のルール: Redirect.Protocol は文字列で指定してください',
+    ])
+    expect(errorsOf([{ Redirect: { HostName: 1, HttpRedirectCode: 200 } }])).toEqual([
+      '1 番目のルール: Redirect.HostName は文字列で指定してください',
+    ])
   })
 })
