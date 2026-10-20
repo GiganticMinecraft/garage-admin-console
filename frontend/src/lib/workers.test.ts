@@ -107,6 +107,22 @@ describe('isNoteworthyWorker', () => {
     )
   })
 
+  it('ignores a finished (done) worker that still reports its final progress line', () => {
+    // Production shape of a finished repair worker: Garage keeps the progress
+    // text after completion, e.g. "705705 (553)" on the block_ref repair worker.
+    const finishedRepair = worker({
+      name: 'block_ref repair worker',
+      state: 'done',
+      consecutiveErrors: 0,
+      progress: '705705 (553)',
+    })
+    expect(isNoteworthyWorker(finishedRepair)).toBe(false)
+  })
+
+  it('still flags a done worker that is failing', () => {
+    expect(isNoteworthyWorker(worker({ state: 'done', errors: 1, consecutiveErrors: 1 }))).toBe(true)
+  })
+
   it('ignores an empty queue, zero persistent errors, empty progress and done', () => {
     expect(
       isNoteworthyWorker(worker({ queueLength: 0, persistentErrors: 0, progress: '', state: 'done' })),

@@ -145,8 +145,12 @@ function WorkersPage() {
             checked={filter.onlyNoteworthy}
             onCheckedChange={(c) => update({ onlyNoteworthy: c === true })}
           />
-          <label htmlFor="workers-only-noteworthy" className="text-sm">
-            異常・稼働中のみ
+          <label
+            htmlFor="workers-only-noteworthy"
+            className="text-sm"
+            title="busy / throttled・キュー残あり・進捗ありの稼働中ワーカーと、連続エラー中のワーカーだけを表示します。回復済みの過去のエラーや累積の破損検出数、完了済み (done) のワーカーは対象外です"
+          >
+            稼働中 / エラー継続中のみ
           </label>
         </div>
         <div className="flex items-center gap-2">
