@@ -1,4 +1,5 @@
 import { ChevronsUpDown, LogOut, Monitor, Moon, Sun } from "lucide-react"
+import { useId } from "react"
 import { useTheme } from "next-themes"
 
 import {
@@ -41,6 +42,7 @@ export function NavUser({
 }) {
   const { isMobile } = useSidebar()
   const { theme, setTheme } = useTheme()
+  const themeLabelId = useId()
 
   return (
     <SidebarMenu>
@@ -83,10 +85,14 @@ export function NavUser({
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+            <DropdownMenuLabel id={themeLabelId} className="text-xs font-normal text-muted-foreground">
               テーマ
             </DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
+            <DropdownMenuRadioGroup
+              aria-labelledby={themeLabelId}
+              value={theme ?? "system"}
+              onValueChange={setTheme}
+            >
               {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
                 <DropdownMenuRadioItem
                   key={value}

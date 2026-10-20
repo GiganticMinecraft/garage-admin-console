@@ -1,17 +1,36 @@
+import { useTheme } from 'next-themes'
+
+/** Partition kind a chart series belongs to. */
+export type PartitionKind = 'data' | 'meta'
+
 /**
- * Neutral "chrome" colours for ECharts (axis / label text, grid lines, the
- * surface-coloured gap between segments, tooltip box) per colour theme.
- * ECharts draws on a canvas, so it cannot read the Tailwind tokens; these
- * mirror the values in index.css (`--background`, `--popover`, `--border`,
- * `--muted-foreground`). Series colours (used / free / warn / crit) are
- * mid-tone and shared by both themes.
+ * Theme-dependent colours for ECharts: the neutral "chrome" (axis / label
+ * text, grid lines, the surface-coloured gap between segments, tooltip box)
+ * and the free-space step of each partition hue. ECharts draws on a canvas
+ * and cannot read the Tailwind tokens, so the token-backed values below are
+ * hex conversions of index.css. The used-space and warn / crit colours are
+ * mid-tone and stay the same in both themes (see storage-charts.tsx).
  */
 export interface ChartChrome {
+  /** `--muted-foreground`. */
   axisText: string
+  /**
+   * End-of-bar value labels. Intentionally independent of the tokens: one
+   * step stronger than `--muted-foreground` so the numbers stand out from
+   * the axis text.
+   */
   labelText: string
+  /** `--muted-foreground` at 20% alpha. */
   gridLine: string
-  /** Page background behind the chart, used as the segment border. */
+  /** `--background`, used as the border between touching segments. */
   surface: string
+  /**
+   * Free-space colour per partition kind: a light step of the hue on the
+   * light background, a dark step on the dark one, so free space always
+   * reads as secondary to the saturated "used" colour.
+   */
+  free: Record<PartitionKind, string>
+  /** `--popover` / `--border` / `--popover-foreground`. */
   tooltip: {
     backgroundColor: string
     borderColor: string
@@ -20,34 +39,43 @@ export interface ChartChrome {
 }
 
 const LIGHT: ChartChrome = {
-  axisText: '#71717a', // zinc-500
-  labelText: '#52525b', // zinc-600
-  gridLine: 'rgba(113, 113, 122, 0.2)',
-  surface: '#ffffff', // --background (light)
+  axisText: '#737373', // oklch(0.556 0 0)
+  labelText: '#525252', // neutral-600
+  gridLine: 'rgba(115, 115, 115, 0.2)',
+  surface: '#ffffff', // oklch(1 0 0)
+  free: { data: '#bfdbfe', meta: '#e9d5ff' }, // blue-200 / purple-200
   tooltip: {
-    backgroundColor: '#ffffff', // --popover (light)
-    borderColor: '#e5e5e5', // --border (light)
-    textStyle: { color: '#171717' },
+    backgroundColor: '#ffffff', // oklch(1 0 0)
+    borderColor: '#e5e5e5', // oklch(0.922 0 0)
+    textStyle: { color: '#0a0a0a' }, // oklch(0.145 0 0)
   },
 }
 
 const DARK: ChartChrome = {
-  axisText: '#a1a1aa', // zinc-400
-  labelText: '#d4d4d8', // zinc-300
-  gridLine: 'rgba(161, 161, 170, 0.2)',
-  surface: '#0a0a0a', // --background (dark)
+  axisText: '#a1a1a1', // oklch(0.708 0 0)
+  labelText: '#d4d4d4', // neutral-300
+  gridLine: 'rgba(161, 161, 161, 0.2)',
+  surface: '#0a0a0a', // oklch(0.145 0 0)
+  free: { data: '#1e3a8a', meta: '#581c87' }, // blue-900 / purple-900
   tooltip: {
-    backgroundColor: '#171717', // --popover (dark)
-    borderColor: '#2e2e2e', // --border (dark, 10% white over popover)
-    textStyle: { color: '#fafafa' },
+    backgroundColor: '#171717', // oklch(0.205 0 0)
+    borderColor: '#2e2e2e', // oklch(1 0 0 / 10%) over the popover
+    textStyle: { color: '#fafafa' }, // oklch(0.985 0 0)
   },
 }
 
 /**
  * Chrome for next-themes' `resolvedTheme`. Anything other than "dark"
  * (including undefined before the theme is known) falls back to light, the
- * same as the pre-paint script in index.html.
+ * same as the pre-paint script in index.html. Returns one of two stable
+ * objects, so it is safe as a memo dependency.
  */
 export function chartChrome(resolvedTheme: string | undefined): ChartChrome {
   return resolvedTheme === 'dark' ? DARK : LIGHT
+}
+
+/** Chart chrome for the current colour theme. */
+export function useChartChrome(): ChartChrome {
+  const { resolvedTheme } = useTheme()
+  return chartChrome(resolvedTheme)
 }

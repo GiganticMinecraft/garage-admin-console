@@ -1,12 +1,11 @@
 import { useMemo, useSyncExternalStore } from 'react'
-import { useTheme } from 'next-themes'
 import EChartsReactCore from 'echarts-for-react/lib/core'
 import * as echarts from 'echarts/core'
 import { PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, GridComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ClusterNode, PartitionUsage } from '@/api'
-import { chartChrome, type ChartChrome } from '@/lib/chart-theme'
+import { useChartChrome, type PartitionKind } from '@/lib/chart-theme'
 import { clampUsed, formatBytes, formatUsage, usagePercent } from '@/lib/format'
 import { nodeDisplayName } from '@/lib/nodes'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
@@ -20,14 +19,13 @@ const ReactEChartsCore = ('default' in EChartsReactCore
   : EChartsReactCore) as typeof EChartsReactCore
 
 // One hue per partition kind (the same blue / purple as the node table's
-// bars): the used part is the saturated step, free space the light step of
-// that hue. At or above the thresholds the used colour switches to a status
-// colour so the chart signals pressure, not only magnitude.
-type PartitionKind = 'data' | 'meta'
-
-const PALETTE: Record<PartitionKind, { used: string; free: string }> = {
-  data: { used: '#3b82f6', free: '#bfdbfe' }, // blue-500 / blue-200
-  meta: { used: '#a855f7', free: '#e9d5ff' }, // purple-500 / purple-200
+// bars): the used part is the saturated step of that hue, free space a
+// theme-dependent secondary step (lib/chart-theme.ts). At or above the
+// thresholds the used colour switches to a status colour so the chart
+// signals pressure, not only magnitude.
+const USED: Record<PartitionKind, string> = {
+  data: '#3b82f6', // blue-500
+  meta: '#a855f7', // purple-500
 }
 const WARN_COLOR = '#f59e0b' // amber-500
 const CRIT_COLOR = '#ef4444' // red-500
@@ -50,7 +48,7 @@ const TITLES: Record<PartitionKind, string> = {
 function usedColor(kind: PartitionKind, percent: number): string {
   if (percent >= CRIT_PERCENT) return CRIT_COLOR
   if (percent >= WARN_PERCENT) return WARN_COLOR
-  return PALETTE[kind].used
+  return USED[kind]
 }
 
 interface Usage {
@@ -124,7 +122,8 @@ function Swatch({ color, label }: { color: string; label: string }) {
 }
 
 /** Cluster-wide donut for one partition kind, with the usage in its centre. */
-function UsageDonut({ kind, u, chrome }: { kind: PartitionKind; u: Usage; chrome: ChartChrome }) {
+function UsageDonut({ kind, u }: { kind: PartitionKind; u: Usage }) {
+  const chrome = useChartChrome()
   const color = usedColor(kind, u.percent)
   const option = useMemo(
     () => ({
@@ -144,7 +143,7 @@ function UsageDonut({ kind, u, chrome }: { kind: PartitionKind; u: Usage; chrome
           itemStyle: { borderColor: chrome.surface, borderWidth: 2 },
           data: [
             { value: u.used, name: '使用中', itemStyle: { color: usedColor(kind, u.percent) } },
-            { value: u.free, name: '空き', itemStyle: { color: PALETTE[kind].free } },
+            { value: u.free, name: '空き', itemStyle: { color: chrome.free[kind] } },
           ],
         },
       ],
@@ -166,24 +165,15 @@ function UsageDonut({ kind, u, chrome }: { kind: PartitionKind; u: Usage; chrome
       </div>
       <div className="flex flex-wrap justify-center gap-3 text-xs text-muted-foreground">
         <Swatch color={color} label="使用中" />
-        <Swatch color={PALETTE[kind].free} label="空き" />
+        <Swatch color={chrome.free[kind]} label="空き" />
       </div>
     </div>
   )
 }
 
 /** One horizontal used + free stacked bar per node, on the panel's own scale. */
-function NodePanel({
-  kind,
-  nodes,
-  narrow,
-  chrome,
-}: {
-  kind: PartitionKind
-  nodes: MeasuredNode[]
-  narrow: boolean
-  chrome: ChartChrome
-}) {
+function NodePanel({ kind, nodes, narrow }: { kind: PartitionKind; nodes: MeasuredNode[]; narrow: boolean }) {
+  const chrome = useChartChrome()
   const option = useMemo(() => {
     const rows = nodes.map((n) => ({ name: n.name, u: n[kind], label: formatUsage(n[kind].used, n[kind].total) }))
     const maxTotal = Math.max(0, ...rows.map((r) => r.u.total))
@@ -233,7 +223,7 @@ function NodePanel({
           stack: 'usage',
           barMaxWidth: 18,
           itemStyle: {
-            color: PALETTE[kind].free,
+            color: chrome.free[kind],
             borderColor: chrome.surface,
             borderWidth: 1,
             borderRadius: [0, 4, 4, 0],
@@ -256,8 +246,8 @@ function NodePanel({
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-medium text-muted-foreground">{TITLES[kind]} (ノード別)</h3>
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <Swatch color={PALETTE[kind].used} label="使用中" />
-          <Swatch color={PALETTE[kind].free} label="空き" />
+          <Swatch color={USED[kind]} label="使用中" />
+          <Swatch color={chrome.free[kind]} label="空き" />
         </div>
       </div>
       <ReactEChartsCore echarts={echarts} option={option} style={{ height: 40 + nodes.length * 36 }} />
@@ -267,8 +257,6 @@ function NodePanel({
 
 export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[] }) {
   const narrow = useNarrow()
-  const { resolvedTheme } = useTheme()
-  const chrome = chartChrome(resolvedTheme)
   // Nodes that are down or have no role report null partitions; chart only
   // the ones that actually have numbers.
   const nodes = useMemo<MeasuredNode[]>(
@@ -320,8 +308,8 @@ export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[
         <div className="rounded-lg border p-4 md:row-span-2">
           <h3 className="mb-4 text-sm font-medium text-muted-foreground">全体使用率</h3>
           <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-1 xl:grid-cols-2">
-            <UsageDonut kind="data" u={totals.data} chrome={chrome} />
-            <UsageDonut kind="meta" u={totals.meta} chrome={chrome} />
+            <UsageDonut kind="data" u={totals.data} />
+            <UsageDonut kind="meta" u={totals.meta} />
           </div>
           {unreported > 0 && (
             <p className="mt-4 text-center text-xs text-muted-foreground">
@@ -329,8 +317,8 @@ export default function StorageCharts({ nodes: allNodes }: { nodes: ClusterNode[
             </p>
           )}
         </div>
-        <NodePanel kind="data" nodes={nodes} narrow={narrow} chrome={chrome} />
-        <NodePanel kind="meta" nodes={nodes} narrow={narrow} chrome={chrome} />
+        <NodePanel kind="data" nodes={nodes} narrow={narrow} />
+        <NodePanel kind="meta" nodes={nodes} narrow={narrow} />
       </div>
     </div>
   )
