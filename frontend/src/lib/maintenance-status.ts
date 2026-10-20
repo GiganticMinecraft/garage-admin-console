@@ -5,6 +5,11 @@ import { nodeDisplayName } from '@/lib/nodes'
 /** react-query state of one input, reduced to what the decision needs. */
 export type FetchState = 'pending' | 'error' | 'success'
 
+/** react-query status → FetchState. */
+export function fetchState(q: { isPending: boolean; isError: boolean }): FetchState {
+  return q.isError ? 'error' : q.isPending ? 'pending' : 'success'
+}
+
 /** A per-node fan-out: how many nodes were read and how many were not. */
 export interface FanOutInput {
   state: FetchState

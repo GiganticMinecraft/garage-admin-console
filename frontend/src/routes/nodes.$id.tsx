@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   createMetadataSnapshot,
+  getClusterHealth,
   getClusterStatus,
   getNode,
   getNodeStats,
@@ -20,6 +21,9 @@ import {
   type WorkerVariables,
 } from '@/api'
 import { REPAIR_OPERATIONS, SCRUB_COMMANDS } from '@/lib/repair-operations'
+import { evaluateRepairGuard, isDestructiveRepair, repairGuardHint } from '@/lib/repair-guard'
+import { fetchState } from '@/lib/maintenance-status'
+import { PAGE_POLLING } from '@/lib/polling'
 import { formatBytes } from '@/lib/format'
 import { USAGE_CRIT, USAGE_WARN } from '@/lib/thresholds'
 import { STATE_RANK, describeState, formatSecsAgo, persistentErrorsLabel } from '@/lib/workers'
@@ -478,6 +482,12 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
   const [snapshotAll, setSnapshotAll] = useState(false)
   const choice = REPAIR_CHOICES.find((c) => c.key === choiceKey) ?? REPAIR_CHOICES[0]
 
+  // Same gate as the cluster-wide page (and the backend): a destructive repair
+  // on one node still looks parents up on the other nodes, so a disconnected
+  // peer is just as dangerous.
+  const health = useQuery({ queryKey: ['cluster', 'health'], queryFn: getClusterHealth, ...PAGE_POLLING })
+  const guard = evaluateRepairGuard(choice.value, { state: fetchState(health), data: health.data })
+
   const repair = useMutation({
     mutationFn: async (c: RepairChoice) => {
       reportMulti(await launchNodeRepair(nodeId, c.value), c.label)
@@ -519,7 +529,8 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
           <Button
             size="sm"
             variant={choice.high ? 'destructive' : 'default'}
-            disabled={repair.isPending}
+            disabled={repair.isPending || !guard.allowed}
+            title={guard.allowed ? undefined : repairGuardHint(guard)}
             onClick={() => setRepairOpen(true)}
           >
             このノードで実行
@@ -527,6 +538,11 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
         </div>
         <p className="text-sm text-muted-foreground">{choice.description}</p>
         {choice.caution && <p className="text-sm text-amber-700 dark:text-amber-500">注意: {choice.caution}</p>}
+        {!guard.allowed && (
+          <p className="text-sm text-amber-700 dark:text-amber-500" role="status">
+            実行不可: {repairGuardHint(guard)}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2 border-t pt-4">
@@ -555,7 +571,18 @@ function MaintenanceCard({ nodeId, nodeName }: { nodeId: string; nodeName: strin
             ? `${nodeName} で最終手段の操作を実行します。ブロックエラーページで原因を確認し、必要な purge を済ませたうえで実行してください。`
             : `${nodeName} に対してこの操作を実行します。ノードの負荷が一時的に上がる可能性があります。`
         }
-        onConfirm={() => repair.mutateAsync(choice)}
+        onConfirm={async () => {
+          if (isDestructiveRepair(choice.value)) {
+            // Re-check against fresh health; the enabled button may rest on a stale snapshot.
+            const fresh = await health.refetch()
+            const g = evaluateRepairGuard(choice.value, { state: fresh.isError ? 'error' : 'success', data: fresh.data })
+            if (!g.allowed) {
+              toast.error(`実行を中止しました: ${repairGuardHint(g)}`)
+              return
+            }
+          }
+          return repair.mutateAsync(choice)
+        }}
         isPending={repair.isPending}
         confirmLabel="実行"
         pendingLabel="実行中..."
