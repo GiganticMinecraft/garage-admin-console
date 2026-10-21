@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -131,14 +132,25 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 	return r
 }
 
-// Termination budget. The production Deployment gives the pod
+// Termination budget. The production Deployment (seichi_infra
+// apps/garage-admin/deployment-api.yaml) gives the pod
 // terminationGracePeriodSeconds 30 and spends the first 5s in a preStop
-// sleep, so SIGTERM arrives with ~25s left before SIGKILL. drainTimeout lets
-// in-flight requests (uploads, ZIP downloads) finish within that window, and
-// telemetryShutdownTimeout bounds the final OTLP flush so the whole sequence
-// still ends before the kubelet kills the process.
+// sleep, so SIGTERM arrives with ~25s left before SIGKILL. The steps below
+// add up to 15s + 2s + 4s = 21s, leaving a few seconds of slack:
+//
+//   - drainTimeout: how long in-flight requests get to finish after the
+//     listener closes. Requests that need longer (a multi-GiB upload or ZIP
+//     download, ConnectClusterNodes with its 60s bound) are cut off and the
+//     client sees a network error; a rollout cannot wait for those.
+//   - closeWait: after srv.Close, how long to wait for the cut-off handlers
+//     to return so their spans and access logs are recorded before the
+//     tracer provider shuts down.
+//   - telemetryShutdownTimeout: the final OTLP flush.
+//
+// Changing the grace period or the preStop sleep requires revisiting these.
 const (
-	drainTimeout             = 20 * time.Second
+	drainTimeout             = 15 * time.Second
+	closeWait                = 2 * time.Second
 	telemetryShutdownTimeout = 4 * time.Second
 )
 
@@ -198,31 +210,54 @@ func main() {
 	slog.Info("shutdown complete")
 }
 
-// serve runs srv on ln until it fails or ctx is cancelled. On cancellation it stops
-// accepting new connections and waits up to drain for in-flight requests; any
-// still running after that are cut off with srv.Close. It returns nil after a
-// signal-triggered shutdown and the listener's error otherwise.
+// serve runs srv on ln until ctx is cancelled or the listener fails. Either
+// way it then stops accepting new connections and waits up to drain for
+// in-flight requests; any still running after that are cut off with
+// srv.Close, and serve waits up to closeWait for their handlers to return. It
+// returns nil after a signal-triggered shutdown and the listener's error
+// otherwise.
 func serve(ctx context.Context, srv *http.Server, ln net.Listener, drain time.Duration) error {
+	var active atomic.Int64
+	next := srv.Handler
+	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		active.Add(1)
+		defer active.Add(-1)
+		next.ServeHTTP(w, r)
+	})
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
 
+	var serveErr error
 	select {
-	case err := <-errCh:
-		return err
+	case serveErr = <-errCh:
+		slog.Error("listener failed, draining open connections", "error", serveErr)
 	case <-ctx.Done():
+		slog.Info("shutdown signal received", "drain_timeout", drain.String())
 	}
 
-	slog.Info("shutdown signal received", "drain_timeout", drain.String())
 	sctx, cancel := context.WithTimeout(context.Background(), drain)
 	defer cancel()
 	if err := srv.Shutdown(sctx); err != nil {
-		slog.Warn("drain timed out, closing remaining connections", "error", err)
+		slog.Warn("drain timed out, closing remaining connections",
+			"error", err, "active_requests", active.Load())
 		if err := srv.Close(); err != nil {
 			slog.Warn("failed to close server", "error", err)
 		}
+		// Close cancels the handlers' contexts but does not wait for them.
+		deadline := time.Now().Add(closeWait)
+		for active.Load() > 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if n := active.Load(); n > 0 {
+			slog.Warn("handlers still running after close", "active_requests", n)
+		}
 	}
-	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	if serveErr == nil {
+		serveErr = <-errCh
+	}
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
 	}
 	return nil
 }

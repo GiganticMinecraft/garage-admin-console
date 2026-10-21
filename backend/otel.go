@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/contrib/processors/baggagecopy"
@@ -62,12 +63,20 @@ func initTelemetry(ctx context.Context) (func(context.Context), error) {
 		return nil, err
 	}
 
+	// Shut the providers down in parallel so a slow trace exporter cannot use
+	// up the deadline before the meter provider gets its final export.
 	return func(ctx context.Context) {
-		if err := tp.Shutdown(ctx); err != nil {
-			slog.Error("error shutting down tracer", "error", err)
-		}
-		if err := mp.Shutdown(ctx); err != nil {
-			slog.Error("error shutting down meter", "error", err)
-		}
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			if err := tp.Shutdown(ctx); err != nil {
+				slog.Error("error shutting down tracer", "error", err)
+			}
+		})
+		wg.Go(func() {
+			if err := mp.Shutdown(ctx); err != nil {
+				slog.Error("error shutting down meter", "error", err)
+			}
+		})
+		wg.Wait()
 	}, nil
 }
