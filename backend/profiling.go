@@ -4,17 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
-	"time"
 
 	"github.com/grafana/pyroscope-go"
 )
-
-// pyroscopeUploadTimeout bounds each profile upload. The library default is
-// 30s, which would let the final upload in Stop outlive the termination
-// budget described in main.go.
-const pyroscopeUploadTimeout = 3 * time.Second
 
 // startProfiling starts pushing continuous profiles to Pyroscope when
 // PYROSCOPE_SERVER_ADDRESS is set and returns a function that stops the
@@ -30,14 +23,13 @@ func startProfiling() func(context.Context) {
 	}
 	name := os.Getenv("PYROSCOPE_APPLICATION_NAME")
 	if name == "" {
-		name = "garage-admin-api"
+		name = serviceName
 	}
 
 	profiler, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName: name,
 		ServerAddress:   addr,
 		Logger:          slogPyroscopeLogger{},
-		HTTPClient:      &http.Client{Timeout: pyroscopeUploadTimeout},
 		Tags:            map[string]string{"service_version": version},
 		ProfileTypes: []pyroscope.ProfileType{
 			pyroscope.ProfileCPU,
@@ -55,11 +47,15 @@ func startProfiling() func(context.Context) {
 	slog.Info("pyroscope profiler started", "server_address", addr, "application_name", name)
 
 	return func(ctx context.Context) {
-		// Stop has no context; run it in the background so a slow Pyroscope
-		// cannot hold up the exit past ctx's deadline.
+		// Stop alone only uploads the in-progress CPU profile and may drop
+		// queued uploads, so Flush (which uploads every profile type for the
+		// current window and waits for the uploads) runs first. Neither takes
+		// a context; run them in the background so a slow Pyroscope cannot
+		// hold up the exit past ctx's deadline.
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
+			profiler.Flush(true)
 			if err := profiler.Stop(); err != nil {
 				slog.Error("error stopping pyroscope profiler", "error", err)
 			}
@@ -73,11 +69,12 @@ func startProfiling() func(context.Context) {
 }
 
 // slogPyroscopeLogger forwards pyroscope-go's errors (failed uploads, dropped
-// jobs) to slog and discards its info/debug chatter.
+// jobs) to slog and discards its info/debug chatter. While Pyroscope is down
+// that is one line per profile type every 15s, which is acceptable.
 type slogPyroscopeLogger struct{}
 
 func (slogPyroscopeLogger) Infof(string, ...any)  {}
 func (slogPyroscopeLogger) Debugf(string, ...any) {}
 func (slogPyroscopeLogger) Errorf(format string, args ...any) {
-	slog.Warn("pyroscope: " + fmt.Sprintf(format, args...))
+	slog.Warn("pyroscope client error", "error", fmt.Sprintf(format, args...))
 }
