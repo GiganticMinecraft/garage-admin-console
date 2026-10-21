@@ -17,6 +17,11 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
+// version identifies the build. CI sets it to the commit SHA with
+// -ldflags "-X main.version=..." (see Dockerfile); it ends up in the OTel
+// service.version resource attribute and the Pyroscope service_version tag.
+var version = "dev"
+
 // newRouter builds the chi router with all routes wired up.
 func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 	r := chi.NewRouter()
@@ -145,7 +150,8 @@ func newRouter(garageAdmin *GarageAdminClient, s3Client *S3Client) chi.Router {
 //   - closeWait: after srv.Close, how long to wait for the cut-off handlers
 //     to return so their spans and access logs are recorded before the
 //     tracer provider shuts down.
-//   - telemetryShutdownTimeout: the final OTLP flush.
+//   - telemetryShutdownTimeout: the final OTLP flush and Pyroscope upload,
+//     run in parallel.
 //
 // Changing the grace period or the preStop sleep requires revisiting these.
 const (
