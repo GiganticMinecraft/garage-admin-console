@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/contrib/processors/baggagecopy"
@@ -16,7 +16,10 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
-func initTelemetry(ctx context.Context) (func(), error) {
+// initTelemetry sets up the global tracer and meter providers. The returned
+// function flushes buffered telemetry and shuts both providers down; ctx
+// bounds how long that may take.
+func initTelemetry(ctx context.Context) (func(context.Context), error) {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String("garage-admin-console"),
@@ -59,12 +62,12 @@ func initTelemetry(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 
-	return func() {
+	return func(ctx context.Context) {
 		if err := tp.Shutdown(ctx); err != nil {
-			log.Printf("error shutting down tracer: %v", err)
+			slog.Error("error shutting down tracer", "error", err)
 		}
 		if err := mp.Shutdown(ctx); err != nil {
-			log.Printf("error shutting down meter: %v", err)
+			slog.Error("error shutting down meter", "error", err)
 		}
 	}, nil
 }
