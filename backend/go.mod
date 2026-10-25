@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.23.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.3
 	github.com/aws/smithy-go v1.28.5
-	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/chi/v5 v5.4.0
 	github.com/gorilla/sessions v1.4.0
 	github.com/grafana/pyroscope-go v1.4.3
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
